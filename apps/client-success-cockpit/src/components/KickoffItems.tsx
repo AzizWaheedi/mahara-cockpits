@@ -28,6 +28,7 @@ import {
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { Chip, ExtLink, Kicker, SectionCard } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   askWords,
   type DueRead,
@@ -126,9 +127,13 @@ export function KickoffItems({
   if (!api || load.kind === "hidden") return null;
   if (load.kind === "loading")
     return variant === "sheet" ? (
-      <p className="ki-note" role="status" data-kickoff-items="loading">
-        Reading what the kickoff left open…
-      </p>
+      <div data-kickoff-items="loading">
+        <LoadingSkeleton
+          variant="list"
+          label="Reading what the kickoff left open"
+          rows={3}
+        />
+      </div>
     ) : null;
   if (load.kind === "missing")
     return (

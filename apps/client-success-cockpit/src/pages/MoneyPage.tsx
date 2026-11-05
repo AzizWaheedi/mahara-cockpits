@@ -8,6 +8,7 @@ import {
   winsApi,
 } from "@/components/ClientWins";
 import { PageHeader, Pill, PillRow } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { SopVideo } from "@/components/SopVideo";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import type { WinsRead } from "@/lib/wins";
@@ -75,7 +76,11 @@ export function MoneyPage() {
       {tab === "invoices" ? <InvoicesPage embedded /> : null}
       {tab === "wins" ? <WinsTab /> : null}
       {tab === "offers" ? (
-        <Suspense fallback={<p>Loading offers</p>}>
+        <Suspense
+          fallback={
+            <LoadingSkeleton variant="table" label="Loading offers" rows={5} />
+          }
+        >
           <OffersTab />
         </Suspense>
       ) : null}

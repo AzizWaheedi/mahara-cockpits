@@ -2,6 +2,7 @@ import { UsersRound } from "lucide-react";
 import { pct } from "../lib/format";
 import type { BoardRow } from "../lib/types";
 import { EmptyState, Failed, SectionCard } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * Everyone's rates for the window, and nothing else: counts, cash and pay
@@ -71,20 +72,16 @@ export function NumbersBoard({
         <div className="p-4">
           <Failed what="The team board" error={error} retry={reload} />
         </div>
+      ) : loading && !list.length ? (
+        <div className="p-4">
+          <LoadingSkeleton variant="table" label="Loading the board" />
+        </div>
       ) : !list.length ? (
         <EmptyState
           compact
           icon={UsersRound}
-          title={
-            loading
-              ? "Loading the board…"
-              : "Nobody has calls in this window yet"
-          }
-          text={
-            loading
-              ? undefined
-              : "The board fills from B2B's scorecard, read every 15 minutes."
-          }
+          title="Nobody has calls in this window yet"
+          text="The board fills from B2B's scorecard, read every 15 minutes."
         />
       ) : (
         <>

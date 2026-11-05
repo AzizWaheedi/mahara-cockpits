@@ -13,6 +13,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
@@ -734,10 +735,7 @@ export function IdeationPage({
       </div>
 
       {rows === undefined ? (
-        <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" aria-hidden />
-          Reading the board
-        </p>
+        <LoadingSkeleton variant="cards" label="Reading the board" rows={6} />
       ) : rows.length === 0 ? (
         <p className="rounded-2xl border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
           {emptyText(tab, q)}
@@ -1394,10 +1392,11 @@ function WatchlistPanel() {
             </Button>
           </div>
           {rows === undefined ? (
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
-              Reading the watchlist
-            </p>
+            <LoadingSkeleton
+              variant="list"
+              label="Reading the watchlist"
+              rows={3}
+            />
           ) : rows.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               Nothing watched yet.
@@ -1894,10 +1893,13 @@ function IdeaDetail({
   }, [detail, keyId]);
   if (r === undefined)
     return (
-      <p className="flex items-center gap-2 border-t px-4 py-3 text-sm text-muted-foreground">
-        <LoaderCircle className="size-4 animate-spin" aria-hidden />
-        Reading the breakdown
-      </p>
+      <div className="border-t px-4 py-3">
+        <LoadingSkeleton
+          variant="detail"
+          label="Reading the breakdown"
+          rows={3}
+        />
+      </div>
     );
   if (!r) return null;
   const osd: { at_sec?: number; text?: string }[] = Array.isArray(

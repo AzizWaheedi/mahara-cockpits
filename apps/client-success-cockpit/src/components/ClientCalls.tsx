@@ -3,6 +3,7 @@ import { CalendarClock, FileText, Mic, Video } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Chip, ExtLink, Kicker, type Tone } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -242,9 +243,11 @@ function CallRow({
             <section>
               <Kicker className="mb-1">Transcript</Kicker>
               {transcriptBusy ? (
-                <p className="text-xs text-muted-foreground">
-                  Opening the private transcript...
-                </p>
+                <LoadingSkeleton
+                  variant="list"
+                  label="Opening the private transcript"
+                  rows={3}
+                />
               ) : null}
               {transcriptError ? (
                 <p className="text-xs text-destructive">{transcriptError}</p>

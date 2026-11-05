@@ -1,6 +1,7 @@
 import { type ReactNode, useMemo } from "react";
 import { Link } from "react-router";
-import { Empty, Page, PageHeader, Problem, Spinner } from "../components/bits";
+import { Empty, Page, PageHeader, Problem } from "../components/bits";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { useJobs } from "../lib/data";
 import { day, whenDue } from "../lib/format";
 import { holder, onEditor, stageLabel, stageRank } from "../lib/stages";
@@ -135,7 +136,9 @@ export default function PipelinePage({
           The board could not be read: {error}. Reload the page to try again.
         </Problem>
       ) : null}
-      {loading && !jobs ? <Spinner what="Reading the board" /> : null}
+      {loading && !jobs ? (
+        <LoadingSkeleton variant="board" label="Reading the board" />
+      ) : null}
       {!loading && !error && !columns.length ? (
         <Empty>
           No open jobs on the board. New cards on the Video Pipeline show here

@@ -68,6 +68,7 @@ import {
   Segmented as KitSegmented,
   SectionCard,
 } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 import { CaptureField, LEDGER_TOP, NumberLedger } from "./NumberLedger";
 import { PartNotes } from "./PartNotes";
 import {
@@ -552,11 +553,17 @@ export function ScriptRunner({
           </header>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">{toolbar}</div>
-        <p className="muted text-sm">
-          {script.loading
-            ? "Reading the script…"
-            : "This script is not imported yet. Ask your manager."}
-        </p>
+        {script.loading ? (
+          <LoadingSkeleton
+            variant="detail"
+            label="Reading the script"
+            rows={2}
+          />
+        ) : (
+          <p className="muted text-sm">
+            This script is not imported yet. Ask your manager.
+          </p>
+        )}
       </div>
     );
 

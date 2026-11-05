@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Chip, Dot, Kicker } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -142,9 +143,11 @@ export function PortalTasksButton({
                 </div>
               )
             ) : error ? null : (
-              <p className="text-xs text-muted-foreground">
-                Reading their tag and tasks…
-              </p>
+              <LoadingSkeleton
+                variant="list"
+                label="Reading their tag and tasks"
+                rows={3}
+              />
             )}
 
             {data?.tag ? (

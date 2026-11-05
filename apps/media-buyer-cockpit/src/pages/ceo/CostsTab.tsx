@@ -1,10 +1,11 @@
-import { Loader2, Plus, Receipt, Trash2 } from "lucide-react";
+import { Plus, Receipt, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, money, plural, shortDate } from "@/components/ceo/format";
 import { KICKER } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
@@ -186,10 +187,7 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
   if (busy && !sheet)
     return (
       <SectionCard title="What a month costs" order={0}>
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Reading the sheet
-        </p>
+        <LoadingSkeleton variant="cards" label="Reading the sheet" rows={4} />
       </SectionCard>
     );
   if (error || !sheet || !pay)

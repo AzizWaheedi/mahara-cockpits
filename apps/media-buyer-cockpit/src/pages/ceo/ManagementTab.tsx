@@ -41,6 +41,7 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { addDays, tabWindow } from "@/components/ceo/tabWindow";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { useRefresh } from "@/components/ceo/useCeo";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import {
@@ -971,7 +972,14 @@ function HistoryList({ personKey }: { personKey: string }) {
   const res = useQueries(queries).history as HistoryRow[] | Error | undefined;
   const now = ui?.now ?? Date.now();
   if (res === undefined)
-    return <p className="mt-2 text-xs text-muted-foreground">Loading</p>;
+    return (
+      <LoadingSkeleton
+        variant="list"
+        label="Loading the status changes"
+        rows={2}
+        className="mt-2"
+      />
+    );
   if (res instanceof Error)
     return (
       <p className="mt-2 text-xs text-muted-foreground">

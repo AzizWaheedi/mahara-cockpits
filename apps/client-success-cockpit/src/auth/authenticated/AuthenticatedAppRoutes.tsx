@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
 import { AdBillingReviewPage } from "@/components/AdBillingReview";
 import { AppLayout } from "@/components/AppLayout";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { MarketResearchPage } from "@/components/MarketResearch";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
@@ -101,7 +102,14 @@ export function AuthenticatedRoutes() {
             path="/clients/:key/present/blueprint"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Loading the Blueprint deck"
+                    />
+                  }
+                >
                   <PresentPage deck="blueprint" />
                 </Suspense>
               </DeckRouteBoundary>
@@ -111,7 +119,14 @@ export function AuthenticatedRoutes() {
             path="/clients/:key/present/blueprint/notes"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Loading the Blueprint notes"
+                    />
+                  }
+                >
                   <PresentPage deck="blueprint" notes />
                 </Suspense>
               </DeckRouteBoundary>
@@ -123,7 +138,14 @@ export function AuthenticatedRoutes() {
             path="/practice/present/blueprint"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Loading the practice Blueprint"
+                    />
+                  }
+                >
                   <PracticeDeckPage deck="blueprint" />
                 </Suspense>
               </DeckRouteBoundary>
@@ -133,7 +155,14 @@ export function AuthenticatedRoutes() {
             path="/practice/present/blueprint/notes"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Loading the practice Blueprint notes"
+                    />
+                  }
+                >
                   <PracticeDeckPage deck="blueprint" notes />
                 </Suspense>
               </DeckRouteBoundary>
@@ -149,7 +178,14 @@ export function AuthenticatedRoutes() {
             path="/clients/:key/present/offer/:offer"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Opening the offer"
+                    />
+                  }
+                >
                   <OfferPresentPage />
                 </Suspense>
               </DeckRouteBoundary>
@@ -159,7 +195,14 @@ export function AuthenticatedRoutes() {
             path="/clients/:key/present/offer/:offer/notes"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Opening the offer notes"
+                    />
+                  }
+                >
                   <OfferPresentPage notes />
                 </Suspense>
               </DeckRouteBoundary>
@@ -169,7 +212,11 @@ export function AuthenticatedRoutes() {
             path="/clients/:key/present/:deck"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton variant="media" label="Loading the deck" />
+                  }
+                >
                   <PresentPage />
                 </Suspense>
               </DeckRouteBoundary>
@@ -179,7 +226,14 @@ export function AuthenticatedRoutes() {
             path="/clients/:key/present/:deck/notes"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Loading the deck notes"
+                    />
+                  }
+                >
                   <PresentPage notes />
                 </Suspense>
               </DeckRouteBoundary>
@@ -191,7 +245,14 @@ export function AuthenticatedRoutes() {
             path="/practice/present/:deck"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Loading the practice deck"
+                    />
+                  }
+                >
                   <PracticeDeckPage />
                 </Suspense>
               </DeckRouteBoundary>
@@ -201,7 +262,14 @@ export function AuthenticatedRoutes() {
             path="/practice/present/:deck/notes"
             element={
               <DeckRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="media"
+                      label="Loading the practice deck notes"
+                    />
+                  }
+                >
                   <PracticeDeckPage notes />
                 </Suspense>
               </DeckRouteBoundary>
@@ -213,7 +281,11 @@ export function AuthenticatedRoutes() {
             path="/clients/:key/forms/:form"
             element={
               <FormRouteBoundary>
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton variant="form" label="Opening the form" />
+                  }
+                >
                   <FormWindow />
                 </Suspense>
               </FormRouteBoundary>
@@ -236,7 +308,14 @@ export function AuthenticatedRoutes() {
               path="/clients/:key/proposals/:id"
               element={
                 <DeckRouteBoundary>
-                  <Suspense fallback={null}>
+                  <Suspense
+                    fallback={
+                      <LoadingSkeleton
+                        variant="detail"
+                        label="Opening the proposal"
+                      />
+                    }
+                  >
                     <ProposalPage />
                   </Suspense>
                 </DeckRouteBoundary>
@@ -251,7 +330,14 @@ export function AuthenticatedRoutes() {
             <Route
               path="/practice"
               element={
-                <Suspense fallback={null}>
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton
+                      variant="page"
+                      label="Loading the practice client"
+                    />
+                  }
+                >
                   <PracticePage />
                 </Suspense>
               }

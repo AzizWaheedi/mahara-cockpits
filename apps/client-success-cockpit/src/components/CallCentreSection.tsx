@@ -11,6 +11,7 @@ import {
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Chip, Dot, Kicker, Pill, StatTile, type Tone } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { ResultsSection } from "@/components/ResultsLayout";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -366,22 +367,11 @@ export function CallCentreView({
 
 function Loading({ range }: { range: CallRange }) {
   return (
-    <div className="space-y-4" aria-busy="true">
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Spinner className="shrink-0" />
-        Reading the dialer for {rangeLabel(range)}. This takes a few seconds;
-        the rest of the page works meanwhile.
-      </p>
-      <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-4 @2xl:gap-4">
-        {[0, 1, 2, 3].map(i => (
-          <div
-            key={i}
-            aria-hidden
-            className="h-28 rounded-2xl border bg-card motion-safe:animate-pulse"
-          />
-        ))}
-      </div>
-    </div>
+    <LoadingSkeleton
+      variant="page"
+      label={`Reading the dialer for ${rangeLabel(range)}. This takes a few seconds; the rest of the page works meanwhile.`}
+      rows={6}
+    />
   );
 }
 

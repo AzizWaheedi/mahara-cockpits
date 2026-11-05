@@ -22,6 +22,7 @@ import {
   type Tone,
 } from "@/components/BlueprintCard";
 import { DeckFrame, type FrameTrouble } from "@/components/DeckFrame";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { SopVideo } from "@/components/SopVideo";
 import { Button } from "@/components/ui/button";
 import {
@@ -380,11 +381,7 @@ export function PartsRail({
   now?: number;
 }) {
   if (read === undefined)
-    return (
-      <p className="text-[13px] text-muted-foreground">
-        Reading the Blueprint…
-      </p>
-    );
+    return <LoadingSkeleton variant="detail" label="Reading the Blueprint" />;
   if ("error" in read)
     return (
       <p className="text-[13px]">
@@ -849,11 +846,9 @@ export function BlueprintCall({
           </div>
         ) : null}
         {stage.kind === "ready" ? null : (
-          <StageLine>
+          <StageLine busy={stage.kind === "opening"}>
             {stage.kind === "opening" ? (
-              <p className="text-sm text-muted-foreground">
-                Opening the Blueprint…
-              </p>
+              <LoadingSkeleton variant="media" label="Opening the Blueprint…" />
             ) : stage.kind === "slow" ? (
               <>
                 <p className="text-[15px] font-semibold">
@@ -941,10 +936,16 @@ export function BlueprintCall({
   );
 }
 
-function StageLine({ children }: { children: ReactNode }) {
+function StageLine({
+  children,
+  busy = false,
+}: {
+  children: ReactNode;
+  busy?: boolean;
+}) {
   return (
     <div
-      role="status"
+      role={busy ? undefined : "status"}
       className="absolute inset-0 flex flex-col items-center justify-start gap-3 px-6 pt-24 text-center"
     >
       {children}
@@ -1035,9 +1036,9 @@ function Presenting({
         />
       ) : null}
       {layer.kind === "opening" ? (
-        <p className="absolute inset-0 grid place-content-center text-sm text-deck-ink/60">
-          Opening the deck…
-        </p>
+        <div className="absolute inset-0 p-6">
+          <LoadingSkeleton variant="media" label="Opening the deck…" />
+        </div>
       ) : null}
       {layer.kind === "ended" ? (
         <div

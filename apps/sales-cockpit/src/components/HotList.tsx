@@ -34,6 +34,7 @@ import {
 } from "./HotCells";
 import { useHotTouches } from "./HotSheet";
 import { button, Failed } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * The hot list on one lead's page, with the sheet's fields (type, status,
@@ -154,11 +155,7 @@ export function HotControl({
   if (hot.error && !stored)
     return <Failed what="The hot list" error={hot.error} retry={hot.reload} />;
   if (hot.loading && !hot.data && !stored)
-    return (
-      <p className="muted inline-flex h-8 items-center text-xs">
-        Reading the hot list…
-      </p>
-    );
+    return <LoadingSkeleton variant="inline" label="Reading the hot list" />;
   if (!stored)
     return (
       <button

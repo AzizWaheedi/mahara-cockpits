@@ -19,6 +19,7 @@ import { supabase } from "../lib/supabase";
 import type { Person } from "../lib/types";
 import { readRoomsSetting } from "../lib/videoLink";
 import { Failed, SectionCard } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 import { Say } from "./RoomLine";
 import { HealthLine } from "./RoomPanel";
 
@@ -94,12 +95,14 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
           error={readError(setting.error)}
           retry={setting.reload}
         />
+      ) : setting.loading && !setting.data ? (
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the video rooms setting"
+          rows={1}
+        />
       ) : (
-        <p className="text-sm">
-          {setting.loading && !setting.data
-            ? "Reading the video rooms setting…"
-            : switchesLine(rooms)}
-        </p>
+        <p className="text-sm">{switchesLine(rooms)}</p>
       )}
 
       {health && summary ? (
@@ -123,7 +126,13 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
           retry={workers.reload}
         />
       ) : !workers.data ? (
-        <p className="muted mt-1 text-xs">Loading…</p>
+        <div className="mt-1">
+          <LoadingSkeleton
+            variant="list"
+            label="Loading the job reports"
+            rows={2}
+          />
+        </div>
       ) : (
         <ul className="mt-1.5 space-y-1">
           {lines.map(l => (
@@ -145,7 +154,13 @@ export function RoomsHealthCard({ people }: { people: readonly Person[] }) {
           retry={hosts.reload}
         />
       ) : !hosts.data ? (
-        <p className="muted mt-1 text-xs">Loading…</p>
+        <div className="mt-1">
+          <LoadingSkeleton
+            variant="list"
+            label="Loading the host check"
+            rows={Math.max(1, Math.min(6, seats.length))}
+          />
+        </div>
       ) : !seats.length ? (
         <p className="muted mt-1 text-xs">No active seats.</p>
       ) : (

@@ -1,5 +1,6 @@
 import { CircleAlert, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -142,13 +143,11 @@ export function AlertRules() {
   if (read.status === "loading")
     return (
       <section className="max-w-3xl rounded-2xl border bg-card p-4 sm:p-6">
-        <p
-          className="flex items-center gap-2 text-sm text-muted-foreground"
-          role="status"
-        >
-          <LoaderCircle aria-hidden className="size-4 animate-spin" />
-          Reading your alert settings
-        </p>
+        <LoadingSkeleton
+          variant="form"
+          label="Reading your alert settings"
+          rows={4}
+        />
       </section>
     );
   if (read.status === "error")

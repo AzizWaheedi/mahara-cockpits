@@ -7,6 +7,7 @@ import {
   stillPropsFor,
   useLocalStills,
 } from "@/components/CreativePreview";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/ideation";
@@ -168,7 +169,7 @@ export function WinningAds({
   const stills = local ?? own;
 
   if (!rows) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <LoadingSkeleton variant="cards" label="Loading the winning ads" />;
   }
   if (rows.length === 0) {
     return (

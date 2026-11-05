@@ -5,7 +5,7 @@ import { InvoiceForm } from "@/components/invoices/InvoiceForm";
 import { InvoiceList } from "@/components/invoices/InvoiceList";
 import { InvoicePaper } from "@/components/invoices/InvoicePaper";
 import { Kicker, PageHeader } from "@/components/kit";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   changeInvoice,
   deskProblem,
@@ -248,10 +248,11 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
           </div>
         </div>
       ) : error ? null : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Skeleton className="h-[36rem] rounded-2xl" />
-          <Skeleton className="h-[36rem] rounded-2xl" />
-        </div>
+        <LoadingSkeleton
+          variant="cards"
+          rows={2}
+          label="Reading the invoices"
+        />
       )}
 
       {data ? (

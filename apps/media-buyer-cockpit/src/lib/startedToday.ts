@@ -6,7 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * shows a campaign once it has a full day of spend, so a campaign switched on
  * today is missing from it until after midnight; this read gives it a row
  * straight away with today's figures from Meta's hourly read, and the ClickUp
- * card when the ads board has one.
+ * card when the ads board has one. Rows may have started yesterday (startedOn)
+ * when the sync has not listed them yet (migration 20261105a).
  */
 
 export type StartedTodayRow = {
@@ -16,6 +17,7 @@ export type StartedTodayRow = {
   accountName: string | null;
   clientName: string | null;
   currency: string | null;
+  startedOn: string | null;
   /** Spend in the ad account's own currency. */
   spend: number;
   /** The same spend in USD, when the read can convert it. */
@@ -90,6 +92,7 @@ export function parseStartedToday(data: unknown): StartedTodayRead {
       accountName: text(r.accountName),
       clientName: text(r.clientName),
       currency: text(r.currency),
+      startedOn: text(r.startedOn),
       spend: num(r.spend),
       spendUsd: numOrNull(r.spendUsd),
       leads: num(r.leads),

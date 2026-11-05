@@ -28,6 +28,7 @@ import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
 import { ExceptionAlerts } from "@/components/ExceptionAlerts";
 import { FunnelLine } from "@/components/funnel/FunnelSheet";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { LostLeads } from "@/components/LostLeads";
 import {
   JustLaunched,
@@ -37,7 +38,11 @@ import {
 } from "@/components/launch/LaunchLinks";
 import { Onboardings } from "@/components/Onboardings";
 import { RangePicker } from "@/components/RangePicker";
-import { StartedToday } from "@/components/StartedToday";
+import {
+  StartedTodayCells,
+  StartedTodayError,
+  startedTodayCampaigns,
+} from "@/components/StartedToday";
 import { StatusToggle } from "@/components/StatusToggle";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
@@ -49,7 +54,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { VerdictPlaybook } from "@/components/VerdictPlaybook";
 import { ViktorStatus } from "@/components/ViktorStatus";
@@ -119,6 +123,7 @@ import {
   type Review,
   reviewState,
 } from "@/lib/reviewQueue";
+import type { StartedTodayRead } from "@/lib/startedToday";
 import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
 import { CampaignChat } from "../components/CampaignChat";
@@ -1185,6 +1190,12 @@ function Cockpit({ view }: { view: View }) {
     string,
     Campaign | Error | undefined
   >;
+  // Campaigns that started spending today: ordinary rows in the list until
+  // the sync has a full day for them (Muhammed, 2026-11-04).
+  const startedRead = useQueryState<StartedTodayRead>(
+    api.stats.startedToday,
+    view === "ads" ? {} : "skip",
+  );
   // The paired day, the last day every account's spend is in: every range
   // read counts spend, leads and bookings only through it
   // (mediaStatsClient.ts), and the note under the range picker names it.
@@ -1615,10 +1626,11 @@ function Cockpit({ view }: { view: View }) {
 
   if (snap === undefined) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Spinner />
-        Loading today's numbers…
-      </div>
+      <LoadingSkeleton
+        variant="page"
+        label="Loading today's numbers"
+        className="py-4"
+      />
     );
   }
 
@@ -3669,24 +3681,36 @@ function Cockpit({ view }: { view: View }) {
               <tbody>
                 {filterReading && (
                   <tr>
-                    <td
-                      colSpan={8}
-                      className="py-6 text-center text-sm text-muted-foreground"
-                    >
-                      Reading {globalRange.label.toLowerCase()} for every
-                      campaign…
+                    <td colSpan={8} className="px-2 py-6">
+                      <LoadingSkeleton
+                        variant="list"
+                        label={`Reading ${globalRange.label.toLowerCase()} for every campaign`}
+                        rows={1}
+                        className="mx-auto max-w-md"
+                      />
                     </td>
                   </tr>
                 )}
-                {(snap.campaigns as Campaign[])
-                  .filter(c => {
+                {[
+                  ...(snap.campaigns as Campaign[]).filter(c => {
                     // Parked campaigns have their own screen; nothing else
                     // shows there. [Aziz, 2026-09-14]
                     if (adsTab === "off") return isParked(c);
                     if (isParked(c)) return false;
                     if (filterReading) return false;
                     return passes(filter, c);
-                  })
+                  }),
+                  // Today's new campaigns join the default list in their
+                  // client's group.
+                  ...(adsTab === "running" &&
+                  !filterReading &&
+                  filter === ADS_FILTERS[0].label
+                    ? startedTodayCampaigns(
+                        startedRead.data,
+                        snap.campaigns as Campaign[],
+                      )
+                    : []),
+                ]
                   // Grouped by client.
                   .sort(
                     (a, b) =>
@@ -3707,6 +3731,59 @@ function Cockpit({ view }: { view: View }) {
                       snap.clientUpdates as ClientUpdate[],
                       links,
                     );
+                    const header = newClient && (
+                      <tr>
+                        <td colSpan={8} className="campaign-client-header">
+                          <ClientHeader
+                            name={clientOf(c)}
+                            logoSrc={clientLogos[logoKey(c)]}
+                            links={links}
+                            updates={updates}
+                            rulesBelow={
+                              Boolean(open) &&
+                              mode === "ads" &&
+                              clientOf(
+                                (snap.campaigns as Campaign[]).find(
+                                  x => x.campaignName === open,
+                                ),
+                              ) === clientOf(c)
+                            }
+                            onOpen={
+                              c.internal
+                                ? undefined
+                                : () => {
+                                    setAccountView(
+                                      c.clientName ?? c.accountName,
+                                    );
+                                  }
+                            }
+                            onLeadPage={
+                              !c.internal && pageFormFor(pageList, clientOf(c))
+                                ? () =>
+                                    setAccountView(
+                                      c.clientName ?? c.accountName,
+                                      [],
+                                      "lead-page",
+                                    )
+                                : undefined
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                    if (c.startedToday)
+                      return (
+                        <Fragment key={c._id}>
+                          {header}
+                          <tr className="campaign-summary border-b align-top">
+                            <StartedTodayCells
+                              row={c.startedToday}
+                              feedAt={c.feedAt}
+                              day={c.day}
+                            />
+                          </tr>
+                        </Fragment>
+                      );
                     const decided = decidedBySubject.get(c.campaignName);
                     const flag = flagFor(c);
                     const nums = boardNumbers(
@@ -3749,47 +3826,7 @@ function Cockpit({ view }: { view: View }) {
                     };
                     return (
                       <Fragment key={c._id}>
-                        {newClient && (
-                          <tr>
-                            <td colSpan={8} className="campaign-client-header">
-                              <ClientHeader
-                                name={clientOf(c)}
-                                logoSrc={clientLogos[logoKey(c)]}
-                                links={links}
-                                updates={updates}
-                                rulesBelow={
-                                  Boolean(open) &&
-                                  mode === "ads" &&
-                                  clientOf(
-                                    (snap.campaigns as Campaign[]).find(
-                                      x => x.campaignName === open,
-                                    ),
-                                  ) === clientOf(c)
-                                }
-                                onOpen={
-                                  c.internal
-                                    ? undefined
-                                    : () => {
-                                        setAccountView(
-                                          c.clientName ?? c.accountName,
-                                        );
-                                      }
-                                }
-                                onLeadPage={
-                                  !c.internal &&
-                                  pageFormFor(pageList, clientOf(c))
-                                    ? () =>
-                                        setAccountView(
-                                          c.clientName ?? c.accountName,
-                                          [],
-                                          "lead-page",
-                                        )
-                                    : undefined
-                                }
-                              />
-                            </td>
-                          </tr>
-                        )}
+                        {header}
                         <tr
                           key={c._id}
                           className={`campaign-summary cursor-pointer border-b align-top transition-colors hover:bg-muted/30 ${isOpen ? "bg-muted/40" : ""} ${adsTab === "off" && !isOpen ? "opacity-80" : ""}`}
@@ -4001,7 +4038,9 @@ function Cockpit({ view }: { view: View }) {
             </table>
           </div>
 
-          {adsTab === "running" && <StartedToday />}
+          {adsTab === "running" && (
+            <StartedTodayError error={startedRead.error} />
+          )}
           {adsTab === "running" && (
             <ClientsNotListed
               range={globalRange}

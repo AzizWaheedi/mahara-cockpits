@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronDown, Loader2 } from "lucide-react";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import type { JobState } from "../lib/types";
 
@@ -238,18 +238,6 @@ export function Problem({ children }: { children: ReactNode }) {
   return (
     <p role="alert" className="callout-bad rounded-xl border px-4 py-3 text-sm">
       {children}
-    </p>
-  );
-}
-
-export function Spinner({ what = "Loading" }: { what?: string }) {
-  return (
-    <p
-      className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"
-      role="status"
-    >
-      <Loader2 aria-hidden className="size-4 animate-spin" />
-      {what}…
     </p>
   );
 }

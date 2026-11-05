@@ -1,5 +1,6 @@
 import { ArrowUpRight, Presentation } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -105,9 +106,12 @@ export function QuickPitchDialog({
           <div className="dks-catalog-canvas">
             <Suspense
               fallback={
-                <p className="p-6" role="status">
-                  Opening the pitch deck…
-                </p>
+                <div className="p-6">
+                  <LoadingSkeleton
+                    variant="media"
+                    label="Opening the pitch deck"
+                  />
+                </div>
               }
             >
               <Preview

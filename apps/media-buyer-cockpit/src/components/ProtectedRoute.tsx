@@ -55,6 +55,9 @@ function AppSkeleton() {
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
+        <span role="status" aria-busy="true" className="sr-only">
+          Loading your cockpit
+        </span>
         <main className="flex-1 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-28 sm:px-6 sm:pt-[max(1.5rem,env(safe-area-inset-top))] lg:px-8 lg:pt-8 lg:pb-12">
           <div className="mx-auto w-full max-w-6xl space-y-6">
             <div className="space-y-2">

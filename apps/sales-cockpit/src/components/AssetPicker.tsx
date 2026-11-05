@@ -18,6 +18,7 @@ import {
 import { ago } from "../lib/format";
 import { toast } from "../lib/toast";
 import { button, EmptyState, Failed, field, Segmented, select } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * The sales assets in the cockpit: B2B's library (Muhammed's, copied every
@@ -111,7 +112,7 @@ export function ProofToSend({
       />
     );
   if (assets.loading && !assets.data)
-    return <p className="muted text-sm">Reading the library…</p>;
+    return <LoadingSkeleton variant="media" label="Reading the library" />;
   if (!assets.data?.length)
     return (
       <p className="muted text-sm">
@@ -329,7 +330,7 @@ export function AssetLibrary({ manager = false }: { manager?: boolean }) {
       {assets.error ? (
         <Failed what="The library" error={assets.error} retry={assets.reload} />
       ) : assets.loading && !assets.data ? (
-        <p className="muted text-sm">Reading the library…</p>
+        <LoadingSkeleton variant="media" label="Reading the library" />
       ) : !list.length ? (
         <EmptyState
           icon={FileVideo}

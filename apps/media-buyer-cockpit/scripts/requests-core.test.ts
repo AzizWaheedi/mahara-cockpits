@@ -2294,6 +2294,7 @@ describe("the shared files (6.2)", () => {
       "react-router",
       "lucide-react",
       "@supabase/supabase-js",
+      "@/components/LoadingSkeleton",
       "@/lib/taskSeat",
       "@/lib/requestsCore",
       "@/lib/requestsClient",

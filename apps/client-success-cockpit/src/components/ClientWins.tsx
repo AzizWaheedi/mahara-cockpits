@@ -23,6 +23,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Chip, Pill, SectionCard, StatTile } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -297,18 +298,7 @@ export function ClientWins({
       </div>
     );
   else if (!read)
-    body = (
-      <p
-        className="flex items-center gap-2 text-sm text-muted-foreground"
-        role="status"
-      >
-        <LoaderCircle
-          className="size-4 animate-spin motion-reduce:animate-none"
-          aria-hidden
-        />
-        Reading the wins
-      </p>
-    );
+    body = <LoadingSkeleton variant="list" label="Reading the wins" />;
   else if (!read.wins.length)
     body = (
       <p className="text-sm text-muted-foreground">
@@ -695,9 +685,11 @@ export function TieDialog({
           The CEO confirms the tie. Only a checked payment can be confirmed.
         </DialogDescription>
         {list === null && !problem ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            Reading the payments on this card
-          </p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the payments on this card"
+            rows={3}
+          />
         ) : list && !list.length ? (
           <p className="text-sm text-muted-foreground">
             No payment on this card can be tied yet. When the client pays, it
@@ -905,9 +897,7 @@ export function MoneyWins({
               {error}
             </p>
           ) : !data ? (
-            <p className="text-sm text-muted-foreground" role="status">
-              Reading the wins
-            </p>
+            <LoadingSkeleton variant="list" label="Reading the wins" />
           ) : !data.wins.length ? (
             <p className="text-sm text-muted-foreground">
               No wins in these days. Log one from a client's page.

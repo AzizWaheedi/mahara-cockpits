@@ -18,6 +18,7 @@ import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Deal, PayRule, Rep, SalesRole, Scorecard } from "../lib/types";
 import { button, EmptyState, Failed, SectionCard, StatusChip } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * The person's pay rule in words and, for a closer, what the window's deals
@@ -210,7 +211,15 @@ function SetterEstimateView({
       </div>
     );
   if (!intros.data || !deals.data)
-    return <p className="muted mt-3 text-sm">Reading the intros and deals…</p>;
+    return (
+      <div className="mt-3">
+        <LoadingSkeleton
+          variant="list"
+          label="Reading the intros and deals"
+          rows={3}
+        />
+      </div>
+    );
 
   const cur = rule.currency || "USD";
   const qualified = intros.data.filter(i => i.status === "showed").length;
@@ -416,7 +425,11 @@ function Estimate({
       </div>
     );
   if (!deals.data)
-    return <p className="muted mt-3 text-sm">Loading the deals…</p>;
+    return (
+      <div className="mt-3">
+        <LoadingSkeleton variant="list" label="Loading the deals" rows={3} />
+      </div>
+    );
 
   const cur = rule.currency || "USD";
   const e = payEstimate(rule, mine);

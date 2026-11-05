@@ -29,6 +29,7 @@ import {
   stillPropsFor,
   useLocalStills,
 } from "@/components/CreativePreview";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
 import { SyncHealth } from "@/components/SyncHealth";
 import { TemplateCard } from "@/components/TemplateCard";
@@ -200,7 +201,7 @@ export function ClientProfilesView() {
       </p>
     );
   if (snap === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <LoadingSkeleton variant="page" label="Loading client profiles" />;
   }
   return <ClientProfiles rows={snap.clients} />;
 }
@@ -251,8 +252,8 @@ function Creative({ view }: { view: View }) {
     );
   if (snap === undefined) {
     return (
-      <div className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading…
+      <div className="mx-auto w-full max-w-6xl">
+        <LoadingSkeleton variant="page" label="Loading your cockpit" />
       </div>
     );
   }
@@ -702,9 +703,11 @@ export function WhatToMakeMoreOf() {
     );
   if (snap === undefined)
     return (
-      <p role="status" className="text-sm text-muted-foreground">
-        Loading creative performance…
-      </p>
+      <LoadingSkeleton
+        variant="cards"
+        rows={2}
+        label="Loading creative performance"
+      />
     );
   return (
     <Section

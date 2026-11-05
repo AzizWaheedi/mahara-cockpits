@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { Dot, SectionCard } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { kuwaitDayWords } from "@/lib/clientFormsCore";
 import {
   feedbackWords,
@@ -114,9 +115,7 @@ export function ClientVoiceCard({ state }: { state: VoiceState | null }) {
     <section id="client-voice" className="scroll-mt-20" data-client-voice>
       <SectionCard title="Client voice">
         {state.status === "loading" ? (
-          <p className="text-sm text-muted-foreground">
-            Reading their answers…
-          </p>
+          <LoadingSkeleton variant="detail" label="Reading their answers" />
         ) : null}
         {state.status === "failed" ? (
           <p className="flex gap-2 text-sm" role="note">

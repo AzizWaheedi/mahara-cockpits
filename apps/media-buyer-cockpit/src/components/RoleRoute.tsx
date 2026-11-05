@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
-import { Spinner } from "./ui/spinner";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /**
  * One cockpit per role, one link per cockpit. A media buyer who opens the client
@@ -14,10 +14,11 @@ export function RoleRoute({ role }: { role: string }) {
 
   if (!ready) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Spinner />
-        Checking your access…
-      </div>
+      <LoadingSkeleton
+        variant="page"
+        label="Checking your access"
+        className="mx-auto max-w-6xl py-6"
+      />
     );
   }
   if (access?.isAdmin || access?.isCeo || access?.roles.includes(role)) {

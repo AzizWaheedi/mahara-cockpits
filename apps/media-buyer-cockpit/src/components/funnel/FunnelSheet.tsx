@@ -4,7 +4,6 @@ import {
   ClipboardList,
   Globe,
   Instagram,
-  Loader2,
   MessageCircle,
   PanelsTopLeft,
   Phone,
@@ -17,6 +16,7 @@ import { type FunnelStep, FunnelStrip } from "@/components/ceo/FunnelStrip";
 import { count, money, relative, shortDate } from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -181,12 +181,14 @@ export function FunnelLine({
     <div className="ceo-root mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 text-sm sm:px-4">
       <Route className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       <span className="shrink-0 font-medium">Leads to</span>
-      <span className="min-w-0 flex-1 text-xs text-muted-foreground" dir="auto">
+      <div className="min-w-0 flex-1 text-xs text-muted-foreground" dir="auto">
         {funnel.loading && !funnel.data ? (
-          <span className="inline-flex items-center gap-1.5">
-            <Loader2 className="size-3.5 animate-spin" />
-            Reading the ads from Meta…
-          </span>
+          <LoadingSkeleton
+            variant="form"
+            label="Reading the ads from Meta"
+            rows={1}
+            className="max-w-sm"
+          />
         ) : funnel.error && !funnel.data ? (
           <span>Could not read where the ads lead. {funnel.error}</span>
         ) : d.length === 0 ? (
@@ -194,7 +196,7 @@ export function FunnelLine({
         ) : (
           d.map(x => summary(x, lead)).join("   /   ")
         )}
-      </span>
+      </div>
       {funnel.error && !funnel.data ? (
         <Button
           size="sm"
@@ -300,9 +302,11 @@ export function FunnelSheet({
             </Notice>
           )}
           {!read && funnel.loading && (
-            <p className="text-sm text-muted-foreground">
-              Reading the ads from Meta…
-            </p>
+            <LoadingSkeleton
+              variant="detail"
+              label="Reading the ads from Meta"
+              rows={3}
+            />
           )}
           {read?.destinations.length === 0 && (
             <p className="text-sm text-muted-foreground">
@@ -547,13 +551,19 @@ function Destination({
                 </p>
               )}
             </>
+          ) : statsError ? (
+            <p className="text-sm text-muted-foreground">
+              {`The numbers did not load: ${statsError}`}
+            </p>
+          ) : !stats ? (
+            <LoadingSkeleton
+              variant="cards"
+              label="Loading the numbers"
+              rows={4}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">
-              {statsError
-                ? `The numbers did not load: ${statsError}`
-                : stats
-                  ? `None of these ads spent or booked a call in ${span(range)}.`
-                  : "Loading the numbers…"}
+              {`None of these ads spent or booked a call in ${span(range)}.`}
             </p>
           )}
         </div>
@@ -600,23 +610,24 @@ function Destination({
 
         {page && lead && <LeadPageJourney page={page} lead={lead} />}
 
-        {pageWaits && lead && (
+        {pageWaits && lead?.error && (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {lead.error ? (
-              <>
-                The client's lead page could not be read: {lead.error}{" "}
-                <button
-                  type="button"
-                  className="font-medium text-foreground underline"
-                  onClick={lead.reload}
-                >
-                  Try again
-                </button>
-              </>
-            ) : (
-              "Reading the client's lead page…"
-            )}
+            The client's lead page could not be read: {lead.error}{" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline"
+              onClick={lead.reload}
+            >
+              Try again
+            </button>
           </p>
+        )}
+        {pageWaits && lead && !lead.error && (
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the client's lead page"
+            rows={3}
+          />
         )}
 
         {d.kind === "website" && !page && !pageWaits && (

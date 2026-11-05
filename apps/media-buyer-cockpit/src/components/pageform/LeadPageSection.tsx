@@ -1,5 +1,6 @@
 import { ArrowUpRight } from "lucide-react";
 import { useState } from "react";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import type { PageFormPage, PageFormsRead } from "@/lib/pageFormClient";
 import { cn } from "@/lib/utils";
@@ -48,9 +49,12 @@ export function LeadPageSection({
           </Button>
         </div>
       ) : read.loading && !pages.length ? (
-        <p className="mt-2 text-sm text-muted-foreground">
-          Reading the lead page…
-        </p>
+        <LoadingSkeleton
+          variant="detail"
+          label="Reading the lead page"
+          rows={3}
+          className="mt-4"
+        />
       ) : (
         <div className="mt-4 divide-y">
           {pages.map(page => (

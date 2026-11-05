@@ -58,6 +58,7 @@ import {
 } from "../lib/rooms";
 import { StaleNote } from "./AvailabilityStrip";
 import { button, buttonPrimary } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 import { LiveBoundary, RoomLine, Say, Spoken, toneColor } from "./RoomLine";
 
 /**
@@ -1061,10 +1062,23 @@ function LiveRoomPanel({
   if (!feed.data) {
     // Never reached with a room from the page (it seeds the read), but a
     // panel with nothing to draw still says so.
+    if (feed.error)
+      return (
+        <p
+          className={`callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm ${className}`}
+          role="alert"
+        >
+          {feed.error}
+        </p>
+      );
     return (
-      <p className={`muted text-sm ${className}`} role="status">
-        {feed.error ?? "Reading the video room..."}
-      </p>
+      <div className={className}>
+        <LoadingSkeleton
+          variant="detail"
+          label="Reading the video room"
+          rows={2}
+        />
+      </div>
     );
   }
 

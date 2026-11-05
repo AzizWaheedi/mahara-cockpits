@@ -2,6 +2,7 @@ import { Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import logo from "../assets/mahara-logo-dark.png";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { drivePreview } from "../lib/reviewMedia";
 import { supabase } from "../lib/supabase";
 import "../review.css";
@@ -445,7 +446,13 @@ export default function ReviewPage() {
   if (bundle === null)
     return (
       <main className="screen center" aria-busy="true">
-        <img src={logo} alt="Mahara Media" className="loadingMark" />
+        <div style={{ width: "min(28rem, 86vw)" }}>
+          <LoadingSkeleton
+            variant="detail"
+            label="Loading the review"
+            rows={3}
+          />
+        </div>
       </main>
     );
 

@@ -7,11 +7,11 @@ import {
   Page,
   PageHeader,
   Problem,
-  Spinner,
   StateBadge,
   StatTile,
   StatusChip,
 } from "../components/bits";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { ReportIssue } from "../components/ReportIssue";
 import { YourTasks } from "../components/tasks/YourTasks";
 import { Button } from "../components/ui/button";
@@ -297,7 +297,9 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
           The jobs could not be read: {error}. Press Refresh to try again.
         </Problem>
       ) : null}
-      {loading && !jobs ? <Spinner what="Reading the board" /> : null}
+      {loading && !jobs ? (
+        <LoadingSkeleton variant="board" label="Reading the board" />
+      ) : null}
       {!loading && !error && !groups.length ? (
         <Empty>
           {onlyMine

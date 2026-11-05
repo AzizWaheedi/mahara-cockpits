@@ -2,6 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { button, EmptyState, Failed, page, pageWide } from "../components/kit";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import type { Key } from "../components/ScriptParts";
 import { ScriptRunner } from "../components/ScriptRunner";
 import { ZoomLinkButton } from "../components/ZoomLink";
@@ -43,7 +44,7 @@ export default function CallPage({ me }: { me: Me }) {
     return (
       <Wrap>
         {lead.loading ? (
-          <p className="muted text-sm">Opening the call…</p>
+          <LoadingSkeleton variant="detail" label="Opening the call" />
         ) : (
           <EmptyState
             title="This lead is not in the cockpit"

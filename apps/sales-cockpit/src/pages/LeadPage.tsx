@@ -44,6 +44,7 @@ import { Answers } from "../components/LeadAnswers";
 import { LeadProgress } from "../components/LeadProgress";
 import { LeadRecordings } from "../components/LeadRecordings";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
 import { AskReference } from "../components/References";
@@ -170,7 +171,7 @@ export default function LeadPage({ me }: { me: Me }) {
   if (lead.loading && !lead.data)
     return (
       <Page>
-        <p className="muted text-sm">Loading the lead…</p>
+        <LoadingSkeleton variant="detail" label="Loading the lead" />
       </Page>
     );
   if (!lead.data)
@@ -621,6 +622,8 @@ export default function LeadPage({ me }: { me: Me }) {
           <SectionCard title="New client form">
             <ClientFormStatus
               sent={clientForms.data}
+              error={clientForms.error}
+              loading={clientForms.loading}
               deals={a?.deals ?? []}
               signedAt={
                 (leadContracts.data ?? []).find(c => c.status === "completed")
@@ -628,6 +631,7 @@ export default function LeadPage({ me }: { me: Me }) {
               }
               canFill={canContract(me)}
               onFill={() => setFormOpen(true)}
+              onRetry={clientForms.reload}
             />
           </SectionCard>
         </div>
@@ -645,6 +649,7 @@ export default function LeadPage({ me }: { me: Me }) {
           }}
           hidden={hiddenFields(l, people.closer, people.setter)}
           already={alreadySent(clientForms.data, a?.deals ?? [])}
+          alreadyUnread={clientForms.error}
           onSent={() => {
             clientForms.reload();
             activity.reload();

@@ -22,6 +22,7 @@ import {
   PillRow,
   StatTile,
 } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
 import {
@@ -2039,7 +2040,9 @@ export function ClientProfile({
       </p>
     );
   if (p === undefined)
-    return <div className="text-sm text-muted-foreground">Loading {name}…</div>;
+    return (
+      <LoadingSkeleton variant="detail" label={`Loading ${name}`} rows={6} />
+    );
   if (p === null)
     return (
       <div className="space-y-3">
@@ -2761,14 +2764,8 @@ export function ClientPerformancePage({
     );
   if (data === undefined)
     return (
-      <div
-        className={
-          embedded
-            ? "text-sm text-muted-foreground"
-            : "mx-auto w-full max-w-6xl text-sm text-muted-foreground"
-        }
-      >
-        Loading client results…
+      <div className={embedded ? "" : "mx-auto w-full max-w-6xl"}>
+        <LoadingSkeleton variant="page" label="Loading client results" />
       </div>
     );
 

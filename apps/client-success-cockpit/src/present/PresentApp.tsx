@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { fill } from "./content";
 import { offerSlides } from "./decks";
 import { WEBSITE_DECK } from "./offer/content/website";
@@ -329,7 +330,12 @@ export function PresentApp({
   );
 
   if (model.error && !d) return <Screen>{model.error}</Screen>;
-  if (!d) return <Screen>Reading the deck…</Screen>;
+  if (!d)
+    return (
+      <Screen>
+        <LoadingSkeleton variant="page" label="Reading the deck" rows={5} />
+      </Screen>
+    );
   if (offer?.refused)
     return (
       <OfferRefused

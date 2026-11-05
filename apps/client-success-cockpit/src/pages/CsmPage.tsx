@@ -84,6 +84,7 @@ import {
   StatTile,
   type Tone,
 } from "@/components/kit";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { MarketResearchCard } from "@/components/MarketResearch";
 import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { PortalTasksButton } from "@/components/PortalTasks";
@@ -479,12 +480,9 @@ function RequestsRaisedToday({ mine }: { mine: MyRequests }) {
           </button>
         </div>
       ) : !mine.rows ? (
-        <p
-          className="px-4 py-4 text-sm text-muted-foreground sm:px-6"
-          aria-busy="true"
-        >
-          Reading your requests…
-        </p>
+        <div className="px-4 py-4 sm:px-6">
+          <LoadingSkeleton variant="list" label="Reading your requests" />
+        </div>
       ) : rows.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
           No requests raised today. Open a client and press Ask a team.
@@ -2013,8 +2011,13 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const wrap = embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6";
   if (snap === undefined) {
     return (
-      <div className={cn(wrap, "text-sm text-muted-foreground")}>
-        {section === "client" ? "Loading the client…" : "Loading your clients…"}
+      <div className={wrap}>
+        <LoadingSkeleton
+          variant="page"
+          label={
+            section === "client" ? "Loading the client" : "Loading your clients"
+          }
+        />
       </div>
     );
   }

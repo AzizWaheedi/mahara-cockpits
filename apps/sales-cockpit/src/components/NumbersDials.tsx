@@ -4,6 +4,7 @@ import { type CallGaps, minutesWords, type SpeedToLead } from "../lib/calls";
 import { count, duration, share } from "../lib/format";
 import type { DialStats } from "../lib/pay";
 import { EmptyState, Failed, SectionCard, StatTile } from "./kit";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 
 /** The most calls one read returns (useDials); more than this and the counts stop short. */
 export const DIALS_CAP = 5000;
@@ -68,9 +69,15 @@ export function NumbersDials({
         {error ? (
           <Failed what="The Maqsam calls" error={error} retry={reload} />
         ) : !stats ? (
-          <p className="muted text-sm">
-            {loading ? "Loading…" : "No calls read yet."}
-          </p>
+          loading ? (
+            <LoadingSkeleton
+              variant="tiles"
+              label="Loading the dials"
+              rows={4}
+            />
+          ) : (
+            <p className="muted text-sm">No calls read yet.</p>
+          )
         ) : (
           <>
             {rows >= DIALS_CAP ? (

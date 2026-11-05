@@ -2,6 +2,7 @@ import { ChevronRight, Presentation, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -125,9 +126,9 @@ export function ClientDatabasePage() {
 
   if (data === undefined) {
     return (
-      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading…
-      </p>
+      <div className="mx-auto w-full max-w-6xl">
+        <LoadingSkeleton variant="table" label="Loading clients" rows={6} />
+      </div>
     );
   }
 
@@ -284,9 +285,13 @@ export function ScriptDatabasePage() {
 
   if (data === undefined) {
     return (
-      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading…
-      </p>
+      <div className="mx-auto w-full max-w-6xl">
+        <LoadingSkeleton
+          variant="table"
+          label="Loading the scripting database"
+          rows={6}
+        />
+      </div>
     );
   }
 

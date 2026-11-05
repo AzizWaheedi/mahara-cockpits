@@ -1,4 +1,4 @@
-import { Loader2, Sprout } from "lucide-react";
+import { Sprout } from "lucide-react";
 import { useCallback } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, money } from "@/components/ceo/format";
@@ -10,6 +10,7 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSection } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { api, useAction } from "@/lib/cockpitApi";
 import type { ContentWindow, Note, OrganicPayload } from "@/types/ceo/payloads";
 
@@ -234,10 +235,11 @@ export function ContentBusiness({
                 {shown.error}
               </p>
             ) : (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-                {`Reading ${label}`}
-              </p>
+              <LoadingSkeleton
+                variant="cards"
+                label={`Reading ${label}`}
+                rows={4}
+              />
             )
           ) : (
             <div className="grid gap-6">

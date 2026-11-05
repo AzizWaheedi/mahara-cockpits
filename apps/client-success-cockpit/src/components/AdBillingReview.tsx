@@ -1,6 +1,7 @@
 import { AlertTriangle, ArrowRight, Check, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 
@@ -420,7 +421,10 @@ export function AdBillingReviewPage() {
         </p>
       )}
       {!panel && !error && (
-        <p role="status">Loading current billing reviews…</p>
+        <LoadingSkeleton
+          variant="cards"
+          label="Loading current billing reviews"
+        />
       )}
       {panel && sorted.length === 0 && (
         <p className="rounded-2xl border p-6">No billing items need review.</p>

@@ -2,6 +2,7 @@ import { Check, Copy, ExternalLink, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   checkReviewImportStatus,
@@ -378,7 +379,12 @@ export function SendForReview() {
         Sent
       </h3>
       {rows === null ? (
-        <p className="mt-1.5 text-[12px] text-muted-foreground">Loading</p>
+        <LoadingSkeleton
+          variant="list"
+          label="Loading the sent links"
+          rows={3}
+          className="mt-1.5"
+        />
       ) : rows.length === 0 ? (
         <p className="mt-1.5 text-[12px] text-muted-foreground">
           Nothing sent yet. Every link you make stays here with whether the

@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Loader2, Plus, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { money } from "@/components/ceo/format";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -413,10 +414,7 @@ export function ManagePanel({
       </div>
 
       {loading ? (
-        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          Reading it from Meta
-        </p>
+        <LoadingSkeleton variant="form" label="Reading it from Meta" rows={3} />
       ) : null}
 
       {!loading && target.mode === "rename" ? (

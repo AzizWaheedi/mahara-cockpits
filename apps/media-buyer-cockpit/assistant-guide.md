@@ -39,6 +39,8 @@ How to:
 What it shows:
 The board lists every campaign grouped by client, with spend, leads, cost per lead, bookings, cost per booking, budget and the call. Above the board are five number tiles, the lead sync warning, the tracking backlog and the middle of the day sweep. The range picker sets the window that the numbers and most filters use. Opening a client shows that client's own page in place of the board.
 
+A campaign that started spending today or yesterday, and that the morning sync has not listed yet, still shows on the "Running" board under its client, on the "Everything" filter. A grey line under its name says "Started today", or "Started" with the first day, such as Started 4 Nov. Its row shows spend, leads and cost per lead since it started, from Meta's hourly read. Bookings, cost per booking and budget read n/a, and the call reads "Too early to call". Its row does not open a panel. It gets its 7-day numbers and a call once the sync lists it.
+
 Buttons and actions:
 - "How ads are judged": opens a small table that explains how cost per lead and cost per booking produce the call.
 - "Running", "Nothing running" and "Off the board": switch which campaigns the board lists.
@@ -147,6 +149,12 @@ How to:
 - /admin: the admin page, for admins only. You reach it from "Admin" in the menu.
 - /data: the leads and appointments view, for admins only. You reach it from "Data" in the menu or from the admin page.
 - /ceo: the CEO cockpit, for the CEO seat only. You reach it from "CEO" in the menu.
+
+## While a page loads
+
+- When a page or section first loads, placeholder blocks show its layout. The blocks are not data and hold no numbers.
+- On a refresh in the background, data you already saw stays on screen. This applies to pages whose data hook keeps the last data.
+- Save, upload and send actions show progress while they run. Wait for the result before you act on it.
 
 ## Everywhere in the cockpit
 

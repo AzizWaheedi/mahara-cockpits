@@ -1,6 +1,7 @@
 import { ArrowUpRight, ChevronRight, Filter } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { fetchFunnels } from "@/lib/clients";
@@ -213,8 +214,12 @@ export function FunnelsPage() {
   const [bankShown, setBankShown] = useState(PAGE);
   if (!data)
     return (
-      <div className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
-        Loading…
+      <div className="mx-auto w-full max-w-6xl">
+        <LoadingSkeleton
+          variant="table"
+          label="Loading funnels and forms"
+          rows={6}
+        />
       </div>
     );
 

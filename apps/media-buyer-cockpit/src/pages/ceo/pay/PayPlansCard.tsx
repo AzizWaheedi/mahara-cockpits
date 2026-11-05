@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/ceo/EmptyState";
 import { plural } from "@/components/ceo/format";
 import { KICKER } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import {
@@ -160,7 +161,11 @@ export function PayPlansCard({
             compact
           />
         ) : !plans ? (
-          <p className="text-sm text-muted-foreground">Reading the pay plans</p>
+          <LoadingSkeleton
+            variant="list"
+            label="Reading the pay plans"
+            rows={4}
+          />
         ) : rows.length === 0 && own.length === 0 ? (
           <EmptyState
             icon={ListPlus}

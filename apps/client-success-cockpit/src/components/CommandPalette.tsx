@@ -2,6 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   CommandDialog,
   CommandEmpty,
@@ -505,13 +506,21 @@ function CommandPaletteContent({ actor }: { actor: string }) {
         }}
       />
       <CommandList className="max-h-[min(60dvh,420px)]">
-        <CommandEmpty>
-          {error
-            ? "Your clients could not be read. Close search and try again."
-            : open && snap === undefined
-              ? "Reading your clients…"
+        {open && !error && snap === undefined ? (
+          <div className="px-1 py-2">
+            <LoadingSkeleton
+              variant="list"
+              rows={4}
+              label="Reading your clients"
+            />
+          </div>
+        ) : (
+          <CommandEmpty>
+            {error
+              ? "Your clients could not be read. Close search and try again."
               : "Nothing matches. Try part of a name, in English or Arabic."}
-        </CommandEmpty>
+          </CommandEmpty>
+        )}
 
         {pickFor ? (
           <CommandGroup heading={pickFor.ask}>

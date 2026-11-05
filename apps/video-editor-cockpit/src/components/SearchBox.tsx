@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import { useJobs, useSearchAssets } from "../lib/data";
 import { portalUrl } from "../lib/portal";
 import { matchScore, onOpenSearch } from "../lib/search";
+import { LoadingSkeleton } from "./LoadingSkeleton";
 import { Dialog } from "./ui/dialog";
 
 /**
@@ -266,11 +267,19 @@ function Results({ onClose }: { onClose: () => void }) {
           </p>
         ) : null}
         {hits.length === 0 && !jobs.error && !assets.error ? (
-          <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-            {jobs.loading || assets.loading
-              ? "Reading the jobs and clips…"
-              : "Nothing matches. Try part of a name, in English or Arabic."}
-          </div>
+          jobs.loading || assets.loading ? (
+            <div className="p-2">
+              <LoadingSkeleton
+                variant="list"
+                label="Reading the jobs and clips"
+                rows={3}
+              />
+            </div>
+          ) : (
+            <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+              Nothing matches. Try part of a name, in English or Arabic.
+            </div>
+          )
         ) : (
           hits.map((h, i) => (
             <div

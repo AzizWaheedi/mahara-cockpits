@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   Sidebar,
   SidebarContent,
@@ -46,6 +47,9 @@ function AppSkeleton() {
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
+        <span className="sr-only" role="status" aria-busy="true">
+          Loading the cockpit
+        </span>
         <header className="flex h-14 items-center gap-2 border-b px-4">
           <Skeleton className="size-7 rounded-md" />
           <div className="flex-1" />
@@ -67,14 +71,13 @@ function AppSkeleton() {
 export const isNotesPopup = (pathname: string) =>
   /^\/blueprint\/[A-Za-z0-9_-]{1,40}\/notes\/?$/.test(pathname);
 
-/** The popup's one line while the sign-in and the seat are checked. */
+/** The popup's content skeleton while the sign-in and the seat are checked. */
 export function NotesOpening() {
   return (
-    <div
-      role="status"
-      className="grid min-h-dvh place-content-center bg-background text-sm text-muted-foreground"
-    >
-      Opening the notes…
+    <div className="min-h-dvh bg-background p-4 sm:p-6">
+      <div className="mx-auto w-full max-w-3xl">
+        <LoadingSkeleton variant="detail" label="Opening the notes…" rows={6} />
+      </div>
     </div>
   );
 }
