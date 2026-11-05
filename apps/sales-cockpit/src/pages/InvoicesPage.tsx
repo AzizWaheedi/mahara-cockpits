@@ -60,7 +60,9 @@ import {
   paymentWord,
   redoTargets,
   requestInvoice,
+  SAME_WITH,
   switchTargets,
+  USE_INSTEAD,
 } from "../lib/invoices";
 import {
   fillInvoice,
@@ -1193,7 +1195,7 @@ function InvoiceItem({
                 onClick={() => switchTo(m)}
                 className={`${m === switches[0] ? buttonPrimary : button} h-8 px-3 text-xs`}
               >
-                {busy === m ? "Switching…" : `Use ${aLink(m)} instead`}
+                {busy === m ? "Switching…" : USE_INSTEAD[m]}
               </button>
             ))}
         {redo.map(m => (
@@ -1204,7 +1206,7 @@ function InvoiceItem({
             title={`${from} link does not work for this client: make the same invoice with ${aLink(m)}`}
             className={`${button} h-8 px-3 text-xs`}
           >
-            Same invoice with {LINK_NAME[m]}
+            {SAME_WITH[m]}
           </button>
         ))}
         {i.status === "failed" ? (

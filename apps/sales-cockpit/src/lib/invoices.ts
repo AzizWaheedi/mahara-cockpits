@@ -43,6 +43,18 @@ export const aLink = (m: MadeLink) =>
   `${m === "ecom" ? "an" : "a"} ${LINK_NAME[m]} link`;
 export const isMadeLink = (v: unknown): v is MadeLink =>
   v === "ecom" || v === "whop" || v === "tap";
+
+/** The switch and copy buttons' exact words (the assistant guides quote them). */
+export const USE_INSTEAD: Record<MadeLink, string> = {
+  ecom: "Use an Ecom link instead",
+  whop: "Use a Whop link instead",
+  tap: "Use a Tap link instead",
+};
+export const SAME_WITH: Record<MadeLink, string> = {
+  ecom: "Same invoice with Ecom",
+  whop: "Same invoice with Whop",
+  tap: "Same invoice with Tap",
+};
 export type LinkMode = MadeLink | "paste";
 
 /** The rule the database checks on a client email (cockpit_invoices_client_email_check). */
