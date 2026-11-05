@@ -375,7 +375,13 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
   );
 }
 
-function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
+export function BudgetEditor({
+  campaign,
+  adSets,
+}: {
+  campaign: Row;
+  adSets: Row[];
+}) {
   const setBudgetAction = useAction(api.edit.setAdSetBudget);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -408,6 +414,11 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
           : campaign.budgetLevel === "adset"
             ? "This campaign uses ad set budgets (ABO). Each ad set is changed on its own."
             : ""}
+      </p>
+      <p className="text-[12px] text-muted-foreground">
+        This changes one campaign or ad set. The cockpit does not check the
+        client's total across accounts and platforms. Check the combined daily
+        budget before saving.
       </p>
       {rows.map(s => (
         <div

@@ -80,7 +80,7 @@ How to:
 - Open a campaign and decide: press the campaign name or "What to do", read the reason and the numbers, then press the first decision button.
 - Turn a campaign off: press its on and off switch, or use the same switch inside the panel.
 - Ask for new creative: open the campaign, press "New creative", pick the reason, then press "Send to creative director".
-- Change a budget: open the campaign, press "Change a budget", type the new amount, then press "Set".
+- Change a budget: open the campaign, press "Change a budget", type the new amount, then press "Set". This changes one campaign or ad set; check the client's combined daily budget across accounts and platforms first, because the cockpit does not check that total.
 - Open one client's full page: press the client's name above the campaign rows, or pick the client from Today.
 - Move to another client's page from there: use "All accounts" first.
 
