@@ -232,6 +232,23 @@ export function window(nowMs: number, h: number) {
 export const sumHours = (hours: { at: number; leads: number }[], w: { start: number; end: number }) =>
   hours.filter(x => x.at >= w.start && x.at < w.end).reduce((s, x) => s + x.leads, 0);
 
+/** A thrown value as a line a person can read. Never empty or whitespace-only. */
+export function failureText(e: unknown): string {
+  if (e instanceof Error) {
+    const name = e.name || "Error";
+    const cause = (e as Error & { cause?: unknown }).cause;
+    const base = e.message ? `${name}: ${e.message}` : `${name} with no message`;
+    return cause === undefined ? base : `${base} (cause: ${failureText(cause)})`;
+  }
+  if (typeof e === "string" && e.trim()) return e;
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(e);
+  } catch {}
+  if (json !== undefined && json !== "{}" && json !== '""' && json !== "null") return json;
+  return `${e === null ? "null" : typeof e} thrown with no message`;
+}
+
 // ------------------------------------------------------------------ Slack
 
 /** The roster role that owns lead-connection alerts (Aziz, 2026-10-26: the systems manager, not the media buyer). */
@@ -561,12 +578,14 @@ if (import.meta.main) {
     if (cmd === "run") await exceptionAlerts(process.argv.includes("--apply"));
     process.exit(r.ok ? 0 : 2);
   } catch (e) {
-    console.error(`[${new Date().toISOString()}] lead-sync-watch failed: ${String((e as Error)?.stack ?? e).slice(0, 600)}`);
+    const text = failureText(e);
+    const stack = (e as Error)?.stack;
+    console.error(`[${new Date().toISOString()}] lead-sync-watch failed: ${(typeof stack === "string" && stack ? `${text}\n${stack}` : text).slice(0, 600)}`);
     // Record the failure where the guardian looks, if the database is reachable.
     try {
       const io = makeIo(env);
       const now = new Date().toISOString();
-      await io.db.upsert("cockpit_sync_state", [{ key: HEALTH_KEY, last_run_at: now, ok: false, note: `Run failed: ${String((e as Error)?.message ?? e).slice(0, 400)}`, updated_at: now }], "key");
+      await io.db.upsert("cockpit_sync_state", [{ key: HEALTH_KEY, last_run_at: now, ok: false, note: `Run failed: ${failureText(e)}`.slice(0, 400), updated_at: now }], "key");
     } catch {}
     if (cmd === "run") await exceptionAlerts(process.argv.includes("--apply"));
     process.exit(1);
