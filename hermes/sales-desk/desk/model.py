@@ -439,6 +439,13 @@ def as_json(text: str, reasoning: str = "", *, expect: Optional[Callable[[dict[s
 # answer "[Error: <what Claude Code said>]".
 PROXY_ERROR = re.compile(r"^\[Error: (.*)\]$", re.S)
 
+# The plan's ceiling, said in the several ways Claude Code words it: "Claude AI
+# usage limit reached", "You've hit your limit", and since 28 October 2026
+# "You've hit your weekly limit". All of them are a wait, not a failed try: a
+# failed try is counted, retried, and then sets the call aside for a day.
+AT_LIMIT = re.compile(r"\b(usage|weekly|daily|hourly|5-hour|five-hour) limit\b"
+                      r"|\bhit your (?:\w+[- ])?limit\b|\blimit reached\b|\brate limit\b")
+
 
 def vps_reply(reply: Reply, asked: str) -> Reply:
     """The VPS proxy's answer, with its failures raised rather than kept as a
@@ -450,7 +457,7 @@ def vps_reply(reply: Reply, asked: str) -> Reply:
         low = said.lower()
         if "oauth" in low or "authenticate" in low or "401" in low or "subscription access" in low:
             raise ModelUnreachable(VPS_SIGN_IN, cause=VPS_SIGNED_OUT)
-        if any(w in low for w in ("usage limit", "hit your limit", "limit reached", "rate limit")):
+        if AT_LIMIT.search(low):
             raise ModelUnreachable(f"The Claude plan on the VPS is at its usage limit ({http.scrub(said)[:160]}); "
                                    "drafting waits until it resets.",
                                    cause="the Claude plan on the VPS is at its usage limit")
@@ -469,6 +476,10 @@ def _classify(e: http.HttpError, provider: str, model: str, setting: str = "SALE
         low = body.lower()
         if e.status in (401, 403) or "oauth" in low or "authenticate" in low or "subscription access" in low:
             return ModelUnreachable(VPS_SIGN_IN, cause=VPS_SIGNED_OUT)
+        if AT_LIMIT.search(low):
+            return ModelUnreachable(f"The Claude plan on the VPS is at its usage limit ({http.scrub(body)[:160]}); "
+                                    "drafting waits until it resets.",
+                                    cause="the Claude plan on the VPS is at its usage limit")
         if e.status == 0 and not e.timed_out:
             return ModelUnreachable("The Claude proxy on the VPS (127.0.0.1:3456) is not answering. Start it "
                                     "again; drafting waits until then.",

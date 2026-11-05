@@ -73,6 +73,27 @@ class VpsProvider(unittest.TestCase):
             with self.assertRaises(model.ModelError):
                 p.complete("s", "u")
 
+    def test_a_weekly_limit_in_the_answer_is_a_wait_not_a_failed_try(self):
+        # What the proxy streamed on 2026-10-28: the plan's weekly limit, worded
+        # "You've hit your weekly limit", which the older patterns did not know.
+        # A failed try is counted, retried and then set aside for a day, so a
+        # quota outage must read as a wait, never as a bad answer.
+        p = model.OpenAIShaped("vps", model.VPS_URL, "vps", "opus", json_mode=False)
+        weekly = said("[Error: You've hit your weekly limit · resets Nov 3, 1pm (UTC)]")
+        with mock.patch.object(http, "open_stream", return_value=Streamed(weekly, "[DONE]")):
+            with self.assertRaises(NotNow) as caught:
+                p.complete("s", "u")
+        self.assertIn("usage limit", str(caught.exception))
+        self.assertIsInstance(caught.exception, model.ModelUnreachable)
+
+    def test_a_weekly_limit_in_a_refused_request_waits_too(self):
+        # The same sentence can arrive as an HTTP error when the request is not streamed.
+        body = b'{"error":{"message":"You\'ve hit your weekly limit. Resets Nov 3, 1pm (UTC)."}}'
+        e = http.HttpError(429, "limit", body, "http://127.0.0.1:3456/v1/chat/completions")
+        err = model._classify(e, "vps", "opus")
+        self.assertIsInstance(err, NotNow)
+        self.assertIn("usage limit", str(err))
+
     def test_an_answer_counts_against_the_ceiling(self):
         p = model.OpenAIShaped("vps", model.VPS_URL, "vps", "opus", json_mode=False)
         with mock.patch.object(http, "open_stream", return_value=Streamed(said('{"ok": 1}'), "[DONE]")):
