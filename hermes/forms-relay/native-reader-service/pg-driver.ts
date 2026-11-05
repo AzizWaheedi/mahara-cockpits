@@ -23,6 +23,12 @@ const IDENTITY_SQL = `select session_user::text as login, current_user::text as 
  (select count(*)::int from pg_catalog.pg_auth_members m where m.member=r.oid) as membership_count,
  exists(select 1 from pg_catalog.pg_auth_members m join pg_catalog.pg_roles x on x.oid=m.roleid
    where m.member=r.oid and x.rolname='cockpit_native_research_reader' and not m.admin_option) as reader_member,
+ coalesce((select not x.rolcanlogin and not x.rolinherit and not x.rolsuper and not x.rolcreaterole
+   and not x.rolcreatedb and not x.rolreplication and not x.rolbypassrls
+   and not exists(select 1 from pg_catalog.pg_auth_members m where m.member=x.oid)
+   from pg_catalog.pg_roles x where x.rolname='cockpit_native_research_reader'),false) as reader_role_safe,
+ exists(select 1 from pg_catalog.pg_namespace n where n.nspname not in ('pg_catalog','information_schema')
+   and (has_schema_privilege(session_user,n.oid,'CREATE') or has_schema_privilege('cockpit_native_research_reader',n.oid,'CREATE'))) as direct_schema_create,
  exists(select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
  where n.nspname not in ('pg_catalog','information_schema')
  and case when c.relkind in ('r','p','v','m','f') then
@@ -40,6 +46,15 @@ const IDENTITY_SQL = `select session_user::text as login, current_user::text as 
  (('public','cockpit_form_responses'),('public','cockpit_form_invites'),('public','cockpit_form_effects'),
  ('public','cockpit_clickup_writeback_queue'),('public','cockpit_form_versions'),('public','cockpit_settings'),
  ('native_research_private','capabilities'),('native_research_private','settings'),('native_research_private','gateway_quotas'))) as protected_table_count,
+ (select count(*)=2 and coalesce(bool_and(p.prosecdef and pg_catalog.pg_get_userbyid(p.proowner)='postgres'
+   and p.prorettype='pg_catalog.jsonb'::regtype
+   and pg_catalog.oidvectortypes(p.proargtypes)='text, text, uuid, integer, text, text, text, integer'
+   and has_function_privilege('cockpit_native_research_reader',p.oid,'EXECUTE')
+   and encode(pg_catalog.sha256(convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') = case p.proname
+     when 'read_source' then '8f7f5eb197e21e5b84c718de0904e4cc3b053fd4d2844961e1487633aef5a4d3'
+     when 'reserve_source' then '7af5e8b47c11d50ae564adb0c3c456814b30cd1ab2c3fe92250cdc297ec2eaf2' end),false)
+   from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+   where n.nspname='native_research_private' and p.proname in ('read_source','reserve_source')) as helpers_pinned,
  exists(select 1 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
  where n.nspname not in ('pg_catalog','information_schema') and p.prosecdef and p.prorettype <> 'pg_catalog.trigger'::regtype
  and ((has_function_privilege(session_user,p.oid,'EXECUTE') and has_schema_privilege(session_user,n.oid,'USAGE'))
@@ -95,7 +110,8 @@ export function nodePostgresOwnedPool(pool: PgPool, expectedLogin: string, tlsHo
         const i=info.rows[0];
         if (i.login !== expectedLogin || i.active !== expectedLogin || i.rolcanlogin !== true || i.rolinherit !== false
           || i.rolsuper !== false || i.rolcreaterole !== false || i.rolcreatedb !== false || i.rolreplication !== false || i.rolbypassrls !== false
-          || i.membership_count !== 1 || i.reader_member !== true || i.protected_table_count !== 9
+          || i.membership_count !== 1 || i.reader_member !== true || i.reader_role_safe !== true
+          || i.direct_schema_create !== false || i.protected_table_count !== 9 || i.helpers_pinned !== true
           || i.direct_table_access !== false || i.direct_sequence_access !== false || i.callable_definer !== false
           || !['none','ddl'].includes(String(i.log_statement)) || i.log_min_duration !== '-1' || i.log_error_parameters !== '0') throw new Error('Reader unavailable');
         await run('SET ROLE cockpit_native_research_reader',[],signal);

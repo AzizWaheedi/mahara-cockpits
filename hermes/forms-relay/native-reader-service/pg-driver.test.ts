@@ -1,7 +1,7 @@
 import {describe,expect,test} from 'bun:test';
 import {nodePostgresOwnedPool} from './pg-driver.ts';
 
-const baseline={login:'synthetic_reader_login',active:'synthetic_reader_login',rolcanlogin:true,rolinherit:false,rolsuper:false,rolcreaterole:false,rolcreatedb:false,rolreplication:false,rolbypassrls:false,membership_count:1,reader_member:true,direct_table_access:false,direct_sequence_access:false,protected_table_count:9,callable_definer:false,log_statement:'ddl',log_min_duration:'-1',log_error_parameters:'0'};
+const baseline={login:'synthetic_reader_login',active:'synthetic_reader_login',rolcanlogin:true,rolinherit:false,rolsuper:false,rolcreaterole:false,rolcreatedb:false,rolreplication:false,rolbypassrls:false,membership_count:1,reader_member:true,reader_role_safe:true,direct_schema_create:false,helpers_pinned:true,direct_table_access:false,direct_sequence_access:false,protected_table_count:9,callable_definer:false,log_statement:'ddl',log_min_duration:'-1',log_error_parameters:'0'};
 function setup(options:{identity?:Record<string,unknown>; tls?:Record<string,unknown>; status?:string; stall?:boolean}={}) {
  const queries:Array<{text:string;values?:unknown[];query_timeout?:number}>=[]; const releases:unknown[]=[];
  const client={connection:{stream:{encrypted:true,authorized:true,servername:'db.example.invalid',...options.tls}},
@@ -19,7 +19,7 @@ describe('node-postgres adapter, synthetic pool',()=>{
   await lease.release({discard:false}); expect(queries.at(-1)?.text).toBe('RESET ROLE'); expect(releases).toEqual([undefined]);
  });
  for(const identity of [{rolsuper:true},{rolinherit:true},{membership_count:2},{reader_member:false},{direct_table_access:true},
-   {direct_sequence_access:true},{protected_table_count:8},{callable_definer:true},{log_statement:'all'},{log_min_duration:'0'},{log_error_parameters:'-1'},{login:'other'}]) {
+   {reader_role_safe:false},{direct_schema_create:true},{helpers_pinned:false},{direct_sequence_access:true},{protected_table_count:8},{callable_definer:true},{log_statement:'all'},{log_min_duration:'0'},{log_error_parameters:'-1'},{login:'other'}]) {
   test(`denies unsafe connection identity ${Object.keys(identity)[0]}`,async()=>{
    const {owned,releases}=setup({identity}); await expect(owned.acquire(new AbortController().signal)).rejects.toThrow('Reader unavailable');
    expect(releases).toEqual([true]);
