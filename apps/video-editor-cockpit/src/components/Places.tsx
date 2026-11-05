@@ -4,6 +4,7 @@ import { Link, useLocation, useSearchParams } from "react-router";
 import JobsPage from "../pages/JobsPage";
 import PipelinePage from "../pages/PipelinePage";
 import { chip } from "./bits";
+import { JobsBoardSkeleton, JobsSkeleton } from "./skeletons/JobsSkeleton";
 import { buttonClass } from "./ui/button";
 
 /**
@@ -56,6 +57,15 @@ export function JobsHome({ eodDue }: { eodDue: boolean }) {
   ) : (
     <JobsPage actions={actions} />
   );
+}
+
+/**
+ * The first picture of Jobs, before either view has drawn: the list's own
+ * skeleton or the board's. App.tsx shows it inside the shell, and the view
+ * the address asks for is the one it draws.
+ */
+export function JobsHomeSkeleton({ board }: { board: boolean }) {
+  return board ? <JobsBoardSkeleton /> : <JobsSkeleton />;
 }
 
 const LIBRARY = [

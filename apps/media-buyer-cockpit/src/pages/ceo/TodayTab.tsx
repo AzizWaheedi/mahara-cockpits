@@ -164,21 +164,25 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
   return (
     <TodayWindow.Provider value={ctx}>
       <div className="@container grid gap-4 lg:gap-6">
-        <TimeframeBar
-          tf={tf}
-          bounds={bounds}
-          compare={compare}
-          ariaLabel="Timeframe for every dated number on Today"
-          first={first}
-          last={last}
-          note="Cash, deals, refunds, cost per lead, both funnels, delivery by client and EODs follow these days. Yesterday's and today's tiles are single days; speed to lead is the last 7 days."
-        />
-        <CashHero
-          section={sections.money}
-          growth={sections.growth}
-          today={today}
-          goTab={goTab}
-        />
+        <div data-section="today-timeframe" className="min-w-0">
+          <TimeframeBar
+            tf={tf}
+            bounds={bounds}
+            compare={compare}
+            ariaLabel="Timeframe for every dated number on Today"
+            first={first}
+            last={last}
+            note="Cash, deals, refunds, cost per lead, both funnels, delivery by client and EODs follow these days. Yesterday's and today's tiles are single days; speed to lead is the last 7 days."
+          />
+        </div>
+        <div data-section="today-cash" className="min-w-0">
+          <CashHero
+            section={sections.money}
+            growth={sections.growth}
+            today={today}
+            goTab={goTab}
+          />
+        </div>
 
         <KpiRow
           delivery={sections.delivery}
@@ -193,7 +197,10 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
             down on a phone. Five rows at most, so it stays quiet. */}
         <YourTasks />
 
-        <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
+        <div
+          data-section="today-funnels"
+          className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2"
+        >
           <DeliveryFunnelCard
             delivery={sections.delivery}
             calls={sections.calls}
@@ -206,8 +213,14 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
           />
         </div>
 
-        <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
-          <div className="grid min-w-0 gap-4 lg:gap-6">
+        <div
+          data-section="today-columns"
+          className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2"
+        >
+          <div
+            data-section="today-clients"
+            className="grid min-w-0 gap-4 lg:gap-6"
+          >
             <ClientsCard section={sections.clients} goTab={goTab} />
             <DeliveryByClientCard
               section={sections.delivery}
@@ -215,7 +228,10 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
               goTab={goTab}
             />
           </div>
-          <div className="grid min-w-0 gap-4 lg:gap-6">
+          <div
+            data-section="today-team"
+            className="grid min-w-0 gap-4 lg:gap-6"
+          >
             <LiveFeedCard section={sections.team} now={now} goTab={goTab} />
             <TeamTodayCard section={sections.team} now={now} today={today} />
           </div>
@@ -631,13 +647,15 @@ function KpiRow({
   const actions = <TabLink tab="delivery" label="Delivery" goTab={goTab} />;
   if (!delivery && !calls)
     return (
-      <SectionCard
-        kicker={kicker}
-        title={title}
-        section={null}
-        actions={actions}
-        order={1}
-      />
+      <div data-section="today-kpis" className="min-w-0">
+        <SectionCard
+          kicker={kicker}
+          title={title}
+          section={null}
+          actions={actions}
+          order={1}
+        />
+      </div>
     );
 
   const d = delivery?.payload ?? null;
@@ -671,141 +689,145 @@ function KpiRow({
   const sinceDays = s?.since && day ? daysBetween(s.since, day) : null;
 
   return (
-    <SectionCard
-      kicker={kicker}
-      title={title}
-      alsoReads={[delivery, calls]}
-      notes={[...warnings(d?.notes), ...warnings(c?.notes)]}
-      actions={actions}
-      order={1}
-    >
-      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-3 @5xl:grid-cols-6">
-        <StatTile
-          variant="plain"
-          label="Client ad spend yesterday"
-          value={d ? f.money(d.yesterday.spend) : null}
-          naHint={pendingD}
-          delta={
-            d ? (
-              <Delta
-                value={f.change(d.yesterday.spend, d.last7.spend / 7)}
-                goodWhen="neither"
-                vs="vs 7-day average"
-              />
-            ) : undefined
-          }
-          sub={d ? `${f.money(d.last7.spend)} in 7 days` : undefined}
-        />
-        <StatTile
-          variant="plain"
-          label="Client Meta form leads yesterday"
-          value={d ? f.count(d.yesterday.leads) : null}
-          naHint={pendingD}
-          delta={
-            d ? (
-              <Delta
-                value={f.change(d.yesterday.leads, d.last7.leads / 7)}
-                vs="vs 7-day average"
-              />
-            ) : undefined
-          }
-          sub={d ? `${f.count(d.last7.leads)} in 7 days` : undefined}
-        />
-        <StatTile
-          variant="plain"
-          label={
-            own7
-              ? "Client cost per lead, 7 days"
-              : `Client cost per lead, ${w?.short}`
-          }
-          value={d ? f.money(cplWin) : null}
-          naHint={pendingD ?? cpl?.naHint}
-          hint={cpl?.hint}
-          sub={cpl?.sub ?? undefined}
-          status={
-            d ? gateChip(cplWin, d.gates.cpl, "Cost per lead") : undefined
-          }
-          delta={
-            d ? (
-              <Delta
-                value={f.change(cplWin, cplPrev)}
-                goodWhen="down"
-                vs={
-                  own7 || !prevW
-                    ? "vs previous 7 days"
-                    : `vs ${rangeText(prevW.from, prevW.to)}`
-                }
-              />
-            ) : undefined
-          }
-        />
-        <StatTile
-          variant="plain"
-          label="Client bookings made yesterday"
-          hint={`Confirmed bookings made yesterday, as the Client Performance board counts them (main and online calendars, by the day the booking was made).${d ? doneWithYouBookingsLine(doneWithYouOf(d.yesterday)) : ""} The line under it is the last 7 days' cost per confirmed booking, the same figure as the Delivery tab's.${d ? doneWithYouLine(doneWithYouOf(d.last7)) : ""}`}
-          value={d ? f.count(costY?.confirmed) : null}
-          naHint={pendingD ?? costY?.why ?? undefined}
-          delta={
-            d && cost7?.confirmed !== null && cost7?.confirmed !== undefined ? (
-              <Delta
-                value={f.change(costY?.confirmed, cost7.confirmed / 7)}
-                vs="vs 7-day average"
-              />
-            ) : undefined
-          }
-          sub={
-            d && cost7 ? (
-              <span className="flex items-start gap-1">
-                <GateIcon
-                  value={cost7.value}
-                  gate={d.gates.cpb}
-                  className="mt-1 self-start"
+    <div data-section="today-kpis" className="min-w-0">
+      <SectionCard
+        kicker={kicker}
+        title={title}
+        alsoReads={[delivery, calls]}
+        notes={[...warnings(d?.notes), ...warnings(c?.notes)]}
+        actions={actions}
+        order={1}
+      >
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-3 @5xl:grid-cols-6">
+          <StatTile
+            variant="plain"
+            label="Client ad spend yesterday"
+            value={d ? f.money(d.yesterday.spend) : null}
+            naHint={pendingD}
+            delta={
+              d ? (
+                <Delta
+                  value={f.change(d.yesterday.spend, d.last7.spend / 7)}
+                  goodWhen="neither"
+                  vs="vs 7-day average"
                 />
-                <span>
-                  {f.isNum(cost7.value)
-                    ? `${f.money(cost7.value)} per confirmed booking over 7 days (${f.count(cost7.confirmed)}), gate ${f.money(d.gates.cpb)}`
-                    : `${CPB_CONFIRMED_LABEL}, 7 days: n/a. ${cost7.why ?? ""}`}
+              ) : undefined
+            }
+            sub={d ? `${f.money(d.last7.spend)} in 7 days` : undefined}
+          />
+          <StatTile
+            variant="plain"
+            label="Client Meta form leads yesterday"
+            value={d ? f.count(d.yesterday.leads) : null}
+            naHint={pendingD}
+            delta={
+              d ? (
+                <Delta
+                  value={f.change(d.yesterday.leads, d.last7.leads / 7)}
+                  vs="vs 7-day average"
+                />
+              ) : undefined
+            }
+            sub={d ? `${f.count(d.last7.leads)} in 7 days` : undefined}
+          />
+          <StatTile
+            variant="plain"
+            label={
+              own7
+                ? "Client cost per lead, 7 days"
+                : `Client cost per lead, ${w?.short}`
+            }
+            value={d ? f.money(cplWin) : null}
+            naHint={pendingD ?? cpl?.naHint}
+            hint={cpl?.hint}
+            sub={cpl?.sub ?? undefined}
+            status={
+              d ? gateChip(cplWin, d.gates.cpl, "Cost per lead") : undefined
+            }
+            delta={
+              d ? (
+                <Delta
+                  value={f.change(cplWin, cplPrev)}
+                  goodWhen="down"
+                  vs={
+                    own7 || !prevW
+                      ? "vs previous 7 days"
+                      : `vs ${rangeText(prevW.from, prevW.to)}`
+                  }
+                />
+              ) : undefined
+            }
+          />
+          <StatTile
+            variant="plain"
+            label="Client bookings made yesterday"
+            hint={`Confirmed bookings made yesterday, as the Client Performance board counts them (main and online calendars, by the day the booking was made).${d ? doneWithYouBookingsLine(doneWithYouOf(d.yesterday)) : ""} The line under it is the last 7 days' cost per confirmed booking, the same figure as the Delivery tab's.${d ? doneWithYouLine(doneWithYouOf(d.last7)) : ""}`}
+            value={d ? f.count(costY?.confirmed) : null}
+            naHint={pendingD ?? costY?.why ?? undefined}
+            delta={
+              d &&
+              cost7?.confirmed !== null &&
+              cost7?.confirmed !== undefined ? (
+                <Delta
+                  value={f.change(costY?.confirmed, cost7.confirmed / 7)}
+                  vs="vs 7-day average"
+                />
+              ) : undefined
+            }
+            sub={
+              d && cost7 ? (
+                <span className="flex items-start gap-1">
+                  <GateIcon
+                    value={cost7.value}
+                    gate={d.gates.cpb}
+                    className="mt-1 self-start"
+                  />
+                  <span>
+                    {f.isNum(cost7.value)
+                      ? `${f.money(cost7.value)} per confirmed booking over 7 days (${f.count(cost7.confirmed)}), gate ${f.money(d.gates.cpb)}`
+                      : `${CPB_CONFIRMED_LABEL}, 7 days: n/a. ${cost7.why ?? ""}`}
+                  </span>
                 </span>
-              </span>
-            ) : undefined
-          }
-        />
-        <StatTile
-          variant="plain"
-          label="Dials today"
-          value={c ? f.count(c.today.dials) : null}
-          naHint={pendingC}
-          sub={
-            !c
-              ? undefined
-              : c.today.dials > 0
-                ? `${f.count(c.today.connected)} connected${f.isNum(c.today.connectRate) ? ` (${f.pct(c.today.connectRate)})` : ""}`
-                : `None yet, ${f.count(c.yesterday.dials)} yesterday`
-          }
-        />
-        <StatTile
-          variant="plain"
-          label="Speed to lead, 7 days"
-          hint={
-            s && s.sample > 0
-              ? `Median working time from a new lead to its first actual call, over ${f.plural(s.sample, "lead")}${s.since && sinceDays !== null && sinceDays < 7 ? ` since ${f.date(s.since)}` : ""}.`
-              : "Median working time from a new lead to its first actual call."
-          }
-          value={s ? f.minutes(s.workingMedianMinutes7d) : null}
-          naHint={
-            pendingC ??
-            (s?.sample === 0
-              ? "No calls linked to new leads in the last 7 days"
-              : undefined)
-          }
-          sub={
-            s && f.isNum(s.withinTwoMinutesRate7d)
-              ? `${f.pct(s.withinTwoMinutesRate7d)} of new leads within 2 working min`
-              : undefined
-          }
-        />
-      </div>
-    </SectionCard>
+              ) : undefined
+            }
+          />
+          <StatTile
+            variant="plain"
+            label="Dials today"
+            value={c ? f.count(c.today.dials) : null}
+            naHint={pendingC}
+            sub={
+              !c
+                ? undefined
+                : c.today.dials > 0
+                  ? `${f.count(c.today.connected)} connected${f.isNum(c.today.connectRate) ? ` (${f.pct(c.today.connectRate)})` : ""}`
+                  : `None yet, ${f.count(c.yesterday.dials)} yesterday`
+            }
+          />
+          <StatTile
+            variant="plain"
+            label="Speed to lead, 7 days"
+            hint={
+              s && s.sample > 0
+                ? `Median working time from a new lead to its first actual call, over ${f.plural(s.sample, "lead")}${s.since && sinceDays !== null && sinceDays < 7 ? ` since ${f.date(s.since)}` : ""}.`
+                : "Median working time from a new lead to its first actual call."
+            }
+            value={s ? f.minutes(s.workingMedianMinutes7d) : null}
+            naHint={
+              pendingC ??
+              (s?.sample === 0
+                ? "No calls linked to new leads in the last 7 days"
+                : undefined)
+            }
+            sub={
+              s && f.isNum(s.withinTwoMinutesRate7d)
+                ? `${f.pct(s.withinTwoMinutesRate7d)} of new leads within 2 working min`
+                : undefined
+            }
+          />
+        </div>
+      </SectionCard>
+    </div>
   );
 }
 

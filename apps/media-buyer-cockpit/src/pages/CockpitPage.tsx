@@ -44,6 +44,8 @@ import {
   startedTodayCampaigns,
 } from "@/components/StartedToday";
 import { StatusToggle } from "@/components/StatusToggle";
+import { AdsSkeleton } from "@/components/skeletons/AdsSkeleton";
+import { TodaySkeleton } from "@/components/skeletons/TodaySkeleton";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
 import { PortfolioTrends } from "@/components/Trends";
@@ -1517,10 +1519,10 @@ function Cockpit({ view }: { view: View }) {
     // Work done in Ads Manager, from Meta's log (eodChanges.ts). A cockpit
     // decision's own write is not listed twice; an unread log is said.
     const clientOf = new Map(
-      cs.map(c => [
-        String(c.campaignName),
-        String(c.clientName ?? c.campaignName),
-      ]),
+      cs.map(c => {
+        const client = c.clientName ?? c.campaignName;
+        return [String(c.campaignName), String(client)];
+      }),
     );
     const changeLines = [
       ...ds.map(
@@ -1625,12 +1627,20 @@ function Cockpit({ view }: { view: View }) {
   }
 
   if (snap === undefined) {
+    if (view === "eod") {
+      return (
+        <LoadingSkeleton
+          variant="page"
+          label="Loading today's numbers"
+          className="py-4"
+        />
+      );
+    }
     return (
-      <LoadingSkeleton
-        variant="page"
-        label="Loading today's numbers"
-        className="py-4"
-      />
+      <div role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading today's numbers</span>
+        {view === "ads" ? <AdsSkeleton /> : <TodaySkeleton />}
+      </div>
     );
   }
 
@@ -2001,7 +2011,7 @@ function Cockpit({ view }: { view: View }) {
   );
 
   const tiles = (
-    <div className="@container">
+    <div data-section="stat-tiles" className="@container">
       <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-5">
         {(
           [
@@ -2137,7 +2147,7 @@ function Cockpit({ view }: { view: View }) {
   );
 
   const sprint = (
-    <section className={CARD}>
+    <section data-section="morning-sprint" className={CARD}>
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-[15px] font-semibold">Morning sprint</h2>
         <span className="font-mono text-xs tabular-nums text-muted-foreground">
@@ -2824,7 +2834,7 @@ function Cockpit({ view }: { view: View }) {
   );
 
   const sweep = midChecks.length > 0 && (
-    <section className={CARD}>
+    <section data-section="sweep" className={CARD}>
       <h2 className="text-[15px] font-semibold">
         Middle of the day: the sweep
       </h2>
@@ -3520,7 +3530,11 @@ function Cockpit({ view }: { view: View }) {
       ?.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
   };
   const board = (
-    <section id="ads-board" className={`${CARD} scroll-mt-6`}>
+    <section
+      id="ads-board"
+      data-section="campaign-board"
+      className={`${CARD} scroll-mt-6`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div
           className="flex flex-wrap items-center gap-1.5"
@@ -4069,7 +4083,16 @@ function Cockpit({ view }: { view: View }) {
     <div
       className={`mx-auto w-full space-y-6 ${view === "eod" ? "max-w-3xl" : view === "ads" ? "max-w-[1440px]" : "max-w-6xl"}`}
     >
-      <header className="flex flex-wrap items-end justify-between gap-3">
+      <header
+        data-section={
+          view === "sod"
+            ? "today-header"
+            : view === "ads"
+              ? "ads-header"
+              : "eod-header"
+        }
+        className="flex flex-wrap items-end justify-between gap-3"
+      >
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">
             {TITLES[view]}

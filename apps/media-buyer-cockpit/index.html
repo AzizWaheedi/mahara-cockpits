@@ -2,6 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Set the theme before the first paint, so the page never flashes the
+      // other one. Same key and same class as the other cockpits.
+      (function () {
+        try {
+          var s = localStorage.getItem("mahara-cockpit-theme") ?? localStorage.getItem("theme");
+          // Dark unless someone chose light: the brand's web default.
+          var dark = s !== "light";
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {
+          /* a private window; the app sets it again once it loads */
+        }
+      })();
+    </script>
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" type="image/png" href="/favicon.png" sizes="512x512" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />

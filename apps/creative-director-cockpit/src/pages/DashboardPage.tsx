@@ -29,9 +29,12 @@ import {
   stillPropsFor,
   useLocalStills,
 } from "@/components/CreativePreview";
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
 import { SyncHealth } from "@/components/SyncHealth";
+import {
+  CreativePerformanceSectionSkeleton,
+  DashboardSkeleton,
+} from "@/components/skeletons/DashboardSkeleton";
 import { TemplateCard } from "@/components/TemplateCard";
 import { YourTasks } from "@/components/tasks/YourTasks";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -201,7 +204,12 @@ export function ClientProfilesView() {
       </p>
     );
   if (snap === undefined) {
-    return <LoadingSkeleton variant="page" label="Loading client profiles" />;
+    return (
+      <div role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading client profiles</span>
+        <DashboardSkeleton />
+      </div>
+    );
   }
   return <ClientProfiles rows={snap.clients} />;
 }
@@ -252,8 +260,9 @@ function Creative({ view }: { view: View }) {
     );
   if (snap === undefined) {
     return (
-      <div className="mx-auto w-full max-w-6xl">
-        <LoadingSkeleton variant="page" label="Loading your cockpit" />
+      <div role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading your cockpit</span>
+        <DashboardSkeleton />
       </div>
     );
   }
@@ -275,39 +284,45 @@ function Creative({ view }: { view: View }) {
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
-      <PageHeader
-        title={TITLES[view].title}
-        sub={sub}
-        actions={
-          view === "sod" ? (
-            // Sending a cut out, the calendar and the EOD have their own
-            // pages; Today links to them rather than carrying second copies.
-            <>
-              <Button asChild size="sm" variant="outline">
-                <Link to="/review">
-                  <Send />
-                  Send for review
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link to="/meetings">
-                  <CalendarDays />
-                  Meetings
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link to="/eod">
-                  <MoonStar />
-                  End of day
-                </Link>
-              </Button>
-            </>
-          ) : undefined
-        }
-      />
+      <div data-section="page-header">
+        <PageHeader
+          title={TITLES[view].title}
+          sub={sub}
+          actions={
+            view === "sod" ? (
+              // Sending a cut out, the calendar and the EOD have their own
+              // pages; Today links to them rather than carrying second copies.
+              <>
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/review">
+                    <Send />
+                    Send for review
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/meetings">
+                    <CalendarDays />
+                    Meetings
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/eod">
+                    <MoonStar />
+                    End of day
+                  </Link>
+                </Button>
+              </>
+            ) : undefined
+          }
+        />
+      </div>
 
       {view === "sod" ? (
-        <nav aria-label="On this page" className="-mt-2 flex flex-wrap gap-1.5">
+        <nav
+          aria-label="On this page"
+          data-section="on-this-page"
+          className="-mt-2 flex flex-wrap gap-1.5"
+        >
           {PARTS.map(p => (
             <a
               key={p.id}
@@ -325,7 +340,11 @@ function Creative({ view }: { view: View }) {
       {view === "sod" && (
         <>
           {/* The morning: what is late, what clients said, the checks. */}
-          <div id="morning" className="scroll-mt-20 space-y-6">
+          <div
+            id="morning"
+            data-section="morning"
+            className="scroll-mt-20 space-y-6"
+          >
             {/* What is late right now: the most expensive thing on the screen. */}
             {(c.overdueVideos > 0 || snap.overduePosts.length > 0) && (
               <Section
@@ -416,7 +435,11 @@ function Creative({ view }: { view: View }) {
 
           {/* The middle of the day is scripting, so the sweep and the calendar
               lead it and everything you write from sits below. [aziz, 2026-09-08] */}
-          <div id="scripting" className="scroll-mt-20 space-y-6">
+          <div
+            id="scripting"
+            data-section="scripting"
+            className="scroll-mt-20 space-y-6"
+          >
             <Checklist
               phase="mid"
               checks={snap.checks}
@@ -583,7 +606,11 @@ function Creative({ view }: { view: View }) {
           </div>
 
           {/* The videos: the pipeline, then who owes what. */}
-          <div id="videos" className="scroll-mt-20 space-y-6">
+          <div
+            id="videos"
+            data-section="videos"
+            className="scroll-mt-20 space-y-6"
+          >
             <VideoPipeline snap={snap} />
             <Section icon={Film} title="Editors" sub="Who owes what" flush>
               {snap.editors.length === 0 ? (
@@ -639,7 +666,11 @@ function Creative({ view }: { view: View }) {
           </div>
 
           {/* Who is owed a message, with the SOP templates on the row. */}
-          <div id="touchpoints" className="scroll-mt-20 space-y-6">
+          <div
+            id="touchpoints"
+            data-section="touchpoints"
+            className="scroll-mt-20 space-y-6"
+          >
             <Section
               icon={MessageSquare}
               title="The rule"
@@ -703,11 +734,12 @@ export function WhatToMakeMoreOf() {
     );
   if (snap === undefined)
     return (
-      <LoadingSkeleton
-        variant="cards"
-        rows={2}
-        label="Loading creative performance"
-      />
+      <div>
+        <span className="sr-only" role="status">
+          Loading creative performance
+        </span>
+        <CreativePerformanceSectionSkeleton />
+      </div>
     );
   return (
     <Section

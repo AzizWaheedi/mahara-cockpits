@@ -21,8 +21,14 @@ import {
 } from "../components/kit";
 import { MarkControls, type MarkHold } from "../components/MarkControls";
 import { type ScopeView, useScope } from "../components/Scope";
+import {
+  AfterCallSectionSkeleton,
+  TodaySkeleton,
+} from "../components/skeletons/TodaySkeleton";
 import { YourTasks } from "../components/tasks/YourTasks";
+import { Skeleton } from "../components/ui/skeleton";
 import { WaitingReplies } from "../components/WaitingReplies";
+import { outcomeMissing } from "../lib/afterCall";
 import {
   useAfterCall,
   useCalendar,
@@ -114,9 +120,26 @@ export default function TodayPage({ me }: { me: Me }) {
     month: "long",
   });
 
+  // The day's own reads land together: until they do, the same picture the
+  // app opened with is kept, so the first draw moves nothing.
+  const drawn =
+    (todays.data !== null || todays.error !== null) &&
+    (coming.data !== null || coming.error !== null) &&
+    (owed.data !== null || owed.error !== null);
+  if (!drawn)
+    return (
+      <div role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading today</span>
+        <TodaySkeleton />
+      </div>
+    );
+
   return (
     <main className={page}>
-      <header className="flex flex-wrap items-end justify-between gap-3">
+      <header
+        data-section="header"
+        className="flex flex-wrap items-end justify-between gap-3"
+      >
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">{dateLine}</h1>
           <MirrorLine
@@ -137,7 +160,11 @@ export default function TodayPage({ me }: { me: Me }) {
         </div>
       ) : null}
 
-      <section aria-label="Your day" className="panel p-4 sm:p-6">
+      <section
+        aria-label="Your day"
+        data-section="your-day"
+        className="panel p-4 sm:p-6"
+      >
         {todays.error ? (
           <Failed
             what="Today's calls"
@@ -160,92 +187,110 @@ export default function TodayPage({ me }: { me: Me }) {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
         <div className="min-w-0 space-y-4 lg:col-span-7 lg:space-y-6">
-          <OwedCard
-            me={me}
-            rows={owed.data}
-            error={owed.error}
-            reload={reloadCalls}
-            team={scope === "team"}
-            now={now}
-            open={open}
-            setOpen={setOpen}
-          />
-          <AfterCallCard
-            me={me}
-            rows={after.data}
-            reload={reloadCalls}
-            team={scope === "team"}
-          />
-          <WeekCard me={me} view={view} />
+          <div data-section="owed" className="min-w-0">
+            <OwedCard
+              me={me}
+              rows={owed.data}
+              error={owed.error}
+              reload={reloadCalls}
+              team={scope === "team"}
+              now={now}
+              open={open}
+              setOpen={setOpen}
+            />
+          </div>
+          {after.data === null ? (
+            <AfterCallSectionSkeleton />
+          ) : (after.data ?? []).some(outcomeMissing) ? (
+            <div data-section="after-call" className="min-w-0">
+              <AfterCallCard
+                me={me}
+                rows={after.data}
+                reload={reloadCalls}
+                team={scope === "team"}
+              />
+            </div>
+          ) : null}
+          <div data-section="week" className="min-w-0">
+            <WeekCard me={me} view={view} />
+          </div>
         </div>
         <div className="min-w-0 space-y-4 lg:col-span-5 lg:space-y-6">
           {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
               most, each opening in place. */}
-          <YourTasks />
-          <SectionCard
-            title="Coming up"
-            side={<span className="muted text-xs">Next 36 hours</span>}
-            flush
-          >
-            {coming.error ? (
-              <div className="p-4">
-                <Failed
-                  what="The calendar"
-                  error={coming.error}
-                  retry={coming.reload}
-                />
-              </div>
-            ) : !coming.data ? (
-              <Reading what="the calendar" className="px-4 py-3 text-sm" />
-            ) : upcoming.length ? (
-              <ul className="divide-y hairline">
-                {upcoming.map(r => (
-                  <UpcomingRow
-                    key={r.appointment_id}
-                    me={me}
-                    r={r}
-                    lead={byId.get(r.contact_id ?? "")}
-                    team={scope === "team"}
-                    now={now}
-                    open={
-                      open?.id === r.appointment_id &&
-                      open.from === "coming" &&
-                      open.what !== "again"
-                        ? open.what
-                        : null
-                    }
-                    onOpen={what =>
-                      setOpen(
-                        what
-                          ? {
-                              id: r.appointment_id,
-                              what,
-                              from: "coming",
-                              row: r,
-                            }
-                          : null,
-                      )
-                    }
-                    reload={reloadCalls}
+          <div data-section="your-tasks" className="min-w-0">
+            <YourTasks />
+          </div>
+          <div data-section="coming-up" className="min-w-0">
+            <SectionCard
+              title="Coming up"
+              side={<span className="muted text-xs">Next 36 hours</span>}
+              flush
+            >
+              {coming.error ? (
+                <div className="p-4">
+                  <Failed
+                    what="The calendar"
+                    error={coming.error}
+                    retry={coming.reload}
                   />
-                ))}
-              </ul>
-            ) : (
-              <EmptyState
-                compact
-                icon={CalendarCheck2}
-                title="Nothing booked in the next 36 hours"
-                text="New bookings appear here within a few minutes of being made in HighLevel."
-              />
-            )}
-          </SectionCard>
-          <WaitingReplies now={now} />
-          <NewLeadsCard
-            leads={newLeads.data}
-            error={newLeads.error}
-            reload={newLeads.reload}
-            now={now}
-          />
+                </div>
+              ) : !coming.data ? (
+                <Reading what="the calendar" className="px-4 py-3 text-sm" />
+              ) : upcoming.length ? (
+                <ul className="divide-y hairline">
+                  {upcoming.map(r => (
+                    <UpcomingRow
+                      key={r.appointment_id}
+                      me={me}
+                      r={r}
+                      lead={byId.get(r.contact_id ?? "")}
+                      team={scope === "team"}
+                      now={now}
+                      open={
+                        open?.id === r.appointment_id &&
+                        open.from === "coming" &&
+                        open.what !== "again"
+                          ? open.what
+                          : null
+                      }
+                      onOpen={what =>
+                        setOpen(
+                          what
+                            ? {
+                                id: r.appointment_id,
+                                what,
+                                from: "coming",
+                                row: r,
+                              }
+                            : null,
+                        )
+                      }
+                      reload={reloadCalls}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState
+                  compact
+                  icon={CalendarCheck2}
+                  title="Nothing booked in the next 36 hours"
+                  text="New bookings appear here within a few minutes of being made in HighLevel."
+                />
+              )}
+            </SectionCard>
+          </div>
+          <div data-section="waiting-replies" className="min-w-0">
+            <WaitingReplies now={now} />
+          </div>
+          <div data-section="new-leads" className="min-w-0">
+            <NewLeadsCard
+              leads={newLeads.data}
+              error={newLeads.error}
+              reload={newLeads.reload}
+              now={now}
+            />
+          </div>
         </div>
       </div>
     </main>
@@ -276,10 +321,12 @@ function MirrorLine({
     );
   if (reading)
     return (
-      <Reading
-        what="when calls and leads were last copied"
-        className="mt-1 text-sm"
-      />
+      <div>
+        <span className="sr-only" role="status">
+          Reading when calls and leads were last copied
+        </span>
+        <Skeleton className="mt-1 h-4 w-72 max-w-full" />
+      </div>
     );
   if (!run?.finished_at)
     return (
@@ -673,14 +720,8 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
         />
       </SectionCard>
     );
-  // Until the scorecard is in, the tiles would read n/a, as if there were
-  // nothing to count.
-  if (!week.data)
-    return (
-      <SectionCard title="This week">
-        <Reading what="this week's numbers" />
-      </SectionCard>
-    );
+  // Until the scorecard is in, each tile holds its own shape instead of
+  // reading n/a as if there were nothing to count.
   return (
     <SectionCard
       title="This week"
@@ -701,25 +742,49 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
           <StatTile
             variant="plain"
             label="Scheduled"
-            value={count(sum("calls_scheduled"))}
+            value={
+              week.data ? (
+                count(sum("calls_scheduled"))
+              ) : (
+                <Skeleton className="h-8 w-16" />
+              )
+            }
             status={pace(sum("calls_scheduled"), goals?.booked)}
           />
           <StatTile
             variant="plain"
             label="Shown"
-            value={count(sum("calls_shown"))}
+            value={
+              week.data ? (
+                count(sum("calls_shown"))
+              ) : (
+                <Skeleton className="h-8 w-16" />
+              )
+            }
             status={pace(sum("calls_shown"), goals?.shown)}
           />
           <StatTile
             variant="plain"
             label="Closes"
-            value={count(sum("closes"))}
+            value={
+              week.data ? (
+                count(sum("closes"))
+              ) : (
+                <Skeleton className="h-8 w-16" />
+              )
+            }
             status={pace(sum("closes"), goals?.closes)}
           />
           <StatTile
             variant="plain"
             label="Deposits typed"
-            value={money(sum("cash_collected"))}
+            value={
+              week.data ? (
+                money(sum("cash_collected"))
+              ) : (
+                <Skeleton className="h-8 w-16" />
+              )
+            }
             status={pace(sum("cash_collected"), goals?.cash)}
           />
         </div>

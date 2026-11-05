@@ -7,6 +7,7 @@ import { relative } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
 import { useNow } from "@/components/ceo/useCeo";
+import { ExceptionAlertsSkeleton } from "@/components/skeletons/TodaySkeleton";
 import { supabase } from "@/lib/supabase";
 
 /**
@@ -93,7 +94,16 @@ const since = (iso: string | null, now: number) =>
 export function ExceptionAlerts() {
   const data = useExceptions();
   const now = useNow();
-  if (data === null || data === "none") return null;
+  if (data === null)
+    return (
+      <div>
+        <span className="sr-only" role="status">
+          Reading exception alerts
+        </span>
+        <ExceptionAlertsSkeleton />
+      </div>
+    );
+  if (data === "none") return null;
 
   const open = data.rows
     .filter(r => r.state === "open")
@@ -122,73 +132,75 @@ export function ExceptionAlerts() {
     .join(" ");
 
   return (
-    <SectionCard
-      title="Exception alerts"
-      description="Clients whose numbers broke, checked every hour. A client shows here after two checks in a row and leaves after two clean ones."
-      actions={
-        s && !s.ok ? (
-          <StatusChip
-            tone="warning"
-            label="Last check had a problem"
-            hint={
-              s.lastOkAt
-                ? `Last clean check ${relative(Date.parse(s.lastOkAt), now)}. The list may be out of date.`
-                : "No clean check yet. The list may be out of date."
+    <div data-section="exception-alerts">
+      <SectionCard
+        title="Exception alerts"
+        description="Clients whose numbers broke, checked every hour. A client shows here after two checks in a row and leaves after two clean ones."
+        actions={
+          s && !s.ok ? (
+            <StatusChip
+              tone="warning"
+              label="Last check had a problem"
+              hint={
+                s.lastOkAt
+                  ? `Last clean check ${relative(Date.parse(s.lastOkAt), now)}. The list may be out of date.`
+                  : "No clean check yet. The list may be out of date."
+              }
+            />
+          ) : null
+        }
+      >
+        {open.length === 0 ? (
+          <EmptyState
+            compact
+            icon={s?.checkedAt ? CircleCheck : CircleDashed}
+            title={
+              s?.checkedAt
+                ? "No client has a broken number"
+                : "The first check has not run yet"
             }
+            text={footer}
           />
-        ) : null
-      }
-    >
-      {open.length === 0 ? (
-        <EmptyState
-          compact
-          icon={s?.checkedAt ? CircleCheck : CircleDashed}
-          title={
-            s?.checkedAt
-              ? "No client has a broken number"
-              : "The first check has not run yet"
-          }
-          text={footer}
-        />
-      ) : (
-        <>
-          <ul className="-mx-4 divide-y border-y sm:-mx-6">
-            {open.map(r => (
-              <li key={`${r.rule}|${r.client_key}`}>
-                <Link
-                  to={`/ads?account=${encodeURIComponent(r.client_name)}`}
-                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none sm:px-6"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="text-sm font-medium text-foreground">
-                        {r.client_name}
-                      </span>
-                      <StatusChip
-                        tone={RULE[r.rule].tone}
-                        label={RULE[r.rule].label}
-                      />
-                      <span className="whitespace-nowrap font-mono text-[11px] text-muted-foreground">
-                        {since(r.opened_at, now)}
-                      </span>
+        ) : (
+          <>
+            <ul className="-mx-4 divide-y border-y sm:-mx-6">
+              {open.map(r => (
+                <li key={`${r.rule}|${r.client_key}`}>
+                  <Link
+                    to={`/ads?account=${encodeURIComponent(r.client_name)}`}
+                    className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none sm:px-6"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-sm font-medium text-foreground">
+                          {r.client_name}
+                        </span>
+                        <StatusChip
+                          tone={RULE[r.rule].tone}
+                          label={RULE[r.rule].label}
+                        />
+                        <span className="whitespace-nowrap font-mono text-[11px] text-muted-foreground">
+                          {since(r.opened_at, now)}
+                        </span>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground">
+                        {r.reason}
+                      </p>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground">
-                      {r.reason}
-                    </p>
-                  </div>
-                  <ChevronRight
-                    className="size-4 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-3 text-xs leading-5 text-muted-foreground">
-            {footer}
-          </p>
-        </>
-      )}
-    </SectionCard>
+                    <ChevronRight
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">
+              {footer}
+            </p>
+          </>
+        )}
+      </SectionCard>
+    </div>
   );
 }

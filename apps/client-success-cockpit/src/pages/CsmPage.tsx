@@ -93,6 +93,11 @@ import { CallList } from "@/components/results/CallList";
 import { SalesNotOnCard } from "@/components/SalesNotOnCard";
 import { SopVideo } from "@/components/SopVideo";
 import { SyncStrip } from "@/components/SyncStrip";
+import { ClientsSkeleton } from "@/components/skeletons/ClientsSkeleton";
+import {
+  RequestsSectionSkeleton,
+  TodaySkeleton,
+} from "@/components/skeletons/TodaySkeleton";
 import { RequestForm } from "@/components/tasks/RequestForm";
 import { YourTasks } from "@/components/tasks/YourTasks";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -451,85 +456,92 @@ const REQUEST_TONE = {
  */
 function RequestsRaisedToday({ mine }: { mine: MyRequests }) {
   const rows = raisedToday(mine.rows);
+  // The read is pending: draw the card the rows will land in, so nothing
+  // below the card moves when they arrive.
+  if (!mine.rows && !mine.error) {
+    return (
+      <div data-section="requests">
+        <RequestsSectionSkeleton />
+      </div>
+    );
+  }
   return (
-    <SectionCard
-      title="Requests you raised today"
-      count={mine.rows && !mine.error ? rows.length : undefined}
-      sub="Each one becomes a ClickUp task on the other team's board, with its SOP steps and an owner."
-      action={
-        <a
-          href={`${portalUrl()}/requests?view=mine`}
-          className="inline-flex items-center gap-1 text-xs font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline"
-        >
-          My requests
-          <ChevronRight aria-hidden className="size-3.5" />
-        </a>
-      }
-      flush
-    >
-      {mine.error ? (
-        <div className="px-4 py-4 text-sm sm:px-6" role="alert">
-          {mine.error}{" "}
-          <button
-            type="button"
-            className="font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline disabled:text-muted-foreground"
-            disabled={mine.reading}
-            onClick={mine.reload}
+    <div data-section="requests">
+      <SectionCard
+        title="Requests you raised today"
+        count={mine.rows && !mine.error ? rows.length : undefined}
+        sub="Each one becomes a ClickUp task on the other team's board, with its SOP steps and an owner."
+        action={
+          <a
+            href={`${portalUrl()}/requests?view=mine`}
+            className="inline-flex items-center gap-1 text-xs font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline"
           >
-            {mine.reading ? "Trying…" : "Try again"}
-          </button>
-        </div>
-      ) : !mine.rows ? (
-        <div className="px-4 py-4 sm:px-6">
-          <LoadingSkeleton variant="list" label="Reading your requests" />
-        </div>
-      ) : rows.length === 0 ? (
-        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-          No requests raised today. Open a client and press Ask a team.
-        </p>
-      ) : (
-        rows.map(r => {
-          const chip = stateChip(r);
-          // Not (all) in ClickUp, or in ClickUp with a step the cockpit
-          // could not finish: say where it is and what to check, in one line.
-          const trouble =
-            !r.done &&
-            (r.state === "failed" ||
-              r.state === "partial" ||
-              r.state === "dry_run" ||
-              requestHeld(r) ||
-              unfinishedNote(r) !== null);
-          const links = r.parts.filter(part => part.url);
-          return (
-            <div
-              key={r.id}
-              className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
+            My requests
+            <ChevronRight aria-hidden className="size-3.5" />
+          </a>
+        }
+        flush
+      >
+        {mine.error ? (
+          <div className="px-4 py-4 text-sm sm:px-6" role="alert">
+            {mine.error}{" "}
+            <button
+              type="button"
+              className="font-medium text-[color:var(--primary-ink,var(--primary))] underline-offset-4 hover:underline disabled:text-muted-foreground"
+              disabled={mine.reading}
+              onClick={mine.reload}
             >
-              <Chip tone={REQUEST_TONE[chip.tone]}>{chip.label}</Chip>
-              <span className="min-w-0 flex-1">
-                <span className="font-medium">{r.typeLabel}</span>
-                {r.clientName ? (
-                  <span className="text-muted-foreground">
-                    {" · "}
-                    <bdi dir="auto">{r.clientName}</bdi>
-                  </span>
+              {mine.reading ? "Trying…" : "Try again"}
+            </button>
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+            No requests raised today. Open a client and press Ask a team.
+          </p>
+        ) : (
+          rows.map(r => {
+            const chip = stateChip(r);
+            // Not (all) in ClickUp, or in ClickUp with a step the cockpit
+            // could not finish: say where it is and what to check, in one line.
+            const trouble =
+              !r.done &&
+              (r.state === "failed" ||
+                r.state === "partial" ||
+                r.state === "dry_run" ||
+                requestHeld(r) ||
+                unfinishedNote(r) !== null);
+            const links = r.parts.filter(part => part.url);
+            return (
+              <div
+                key={r.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
+              >
+                <Chip tone={REQUEST_TONE[chip.tone]}>{chip.label}</Chip>
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{r.typeLabel}</span>
+                  {r.clientName ? (
+                    <span className="text-muted-foreground">
+                      {" · "}
+                      <bdi dir="auto">{r.clientName}</bdi>
+                    </span>
+                  ) : null}
+                </span>
+                {links.map(part => (
+                  <ExtLink key={part.part} href={String(part.url)}>
+                    {links.length > 1 ? part.teamLabel : "Open in ClickUp"}
+                  </ExtLink>
+                ))}
+                {trouble ? (
+                  <p className="basis-full text-xs text-muted-foreground">
+                    {stateHint(r)}
+                  </p>
                 ) : null}
-              </span>
-              {links.map(part => (
-                <ExtLink key={part.part} href={String(part.url)}>
-                  {links.length > 1 ? part.teamLabel : "Open in ClickUp"}
-                </ExtLink>
-              ))}
-              {trouble ? (
-                <p className="basis-full text-xs text-muted-foreground">
-                  {stateHint(r)}
-                </p>
-              ) : null}
-            </div>
-          );
-        })
-      )}
-    </SectionCard>
+              </div>
+            );
+          })
+        )}
+      </SectionCard>
+    </div>
   );
 }
 
@@ -2010,6 +2022,14 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
   const wrap = embedded ? "space-y-6" : "mx-auto w-full max-w-6xl space-y-6";
   if (snap === undefined) {
+    if (section === "today" || section === "clients") {
+      return (
+        <div role="status" aria-busy="true" aria-live="polite">
+          <span className="sr-only">Loading your clients</span>
+          {section === "clients" ? <ClientsSkeleton /> : <TodaySkeleton />}
+        </div>
+      );
+    }
     return (
       <div className={wrap}>
         <LoadingSkeleton
@@ -3553,42 +3573,44 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         />
       ) : null}
       {section === "client" ? null : (
-        <PageHeader
-          as={embedded ? "h2" : "h1"}
-          title={TITLE[section]}
-          sub={
-            section === "clients"
-              ? "Every client you look after. Open one for everything about them."
-              : todayLine
-          }
-          actions={
-            <>
-              {section === "today" ? (
-                <Button size="sm" variant="outline" asChild>
-                  <Link to="/eod">
-                    <MoonStar aria-hidden />
-                    End of day
-                  </Link>
-                </Button>
-              ) : null}
-              {section === "clients" && !embedded ? (
-                <Button size="sm" variant="outline" asChild>
-                  <Link to="/practice">
-                    <Presentation aria-hidden />
-                    Practice a call
-                  </Link>
-                </Button>
-              ) : null}
-              {embedded ? null : <ReportIssue page={section} />}
-            </>
-          }
-        />
+        <div data-section="page-header">
+          <PageHeader
+            as={embedded ? "h2" : "h1"}
+            title={TITLE[section]}
+            sub={
+              section === "clients"
+                ? "Every client you look after. Open one for everything about them."
+                : todayLine
+            }
+            actions={
+              <>
+                {section === "today" ? (
+                  <Button size="sm" variant="outline" asChild>
+                    <Link to="/eod">
+                      <MoonStar aria-hidden />
+                      End of day
+                    </Link>
+                  </Button>
+                ) : null}
+                {section === "clients" && !embedded ? (
+                  <Button size="sm" variant="outline" asChild>
+                    <Link to="/practice">
+                      <Presentation aria-hidden />
+                      Practice a call
+                    </Link>
+                  </Button>
+                ) : null}
+                {embedded ? null : <ReportIssue page={section} />}
+              </>
+            }
+          />
+        </div>
       )}
 
       {section === "today" && <SyncStrip only="feed" />}
 
       {section === "today" && (
-        <p className="text-[15px] leading-6">
+        <p className="text-[15px] leading-6" data-section="today-summary">
           {t.dueToday === 0
             ? "Nothing is waiting on you. Use the time on the hot list."
             : `${t.dueToday} ${t.dueToday === 1 ? "client needs" : "clients need"} a message or a call today. Start with the first one below.`}
@@ -3599,7 +3621,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       )}
 
       {section === "today" && (
-        <div className="space-y-3">
+        <div className="space-y-3" data-section="today-stats">
           <div className="grid grid-cols-3 gap-3 sm:gap-4">
             <StatTile
               label="Need you today"
@@ -3788,7 +3810,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       {section === "today" && <CallList />}
 
       {section === "today" && (
-        <section id="who-needs-you" className="space-y-8">
+        <section
+          id="who-needs-you"
+          className="space-y-8"
+          data-section="who-needs-you"
+        >
           <ShortList
             title="Onboarding, get them live"
             items={onboardingList.filter(needsAction)}
@@ -3806,217 +3832,225 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
       {section === "today" && (
         <div className="space-y-6">
-          <SectionCard
-            title="Commitments from calls"
-            count={commitmentRows.length}
-            sub="Pulled from the 1-1 call notes form. Each one becomes a real task, or you close it."
-            flush
-          >
-            {commitmentRows.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                Nothing outstanding from the last round of calls.
-              </p>
-            ) : (
-              // One row per CALL, not per line. A call is one conversation: here is what
-              // was said, and here are the tasks that come out of it.
-              commitmentsBlock(commitmentRows, true)
-            )}
-          </SectionCard>
+          <div data-section="commitments">
+            <SectionCard
+              title="Commitments from calls"
+              count={commitmentRows.length}
+              sub="Pulled from the 1-1 call notes form. Each one becomes a real task, or you close it."
+              flush
+            >
+              {commitmentRows.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                  Nothing outstanding from the last round of calls.
+                </p>
+              ) : (
+                // One row per CALL, not per line. A call is one conversation: here is what
+                // was said, and here are the tasks that come out of it.
+                commitmentsBlock(commitmentRows, true)
+              )}
+            </SectionCard>
+          </div>
 
           {/* The old tickets while they are the way to ask (or any were
               raised today); the request form's requests once it is. */}
           {ticketRows.length > 0 || !requestsAnywhere ? (
-            <SectionCard
-              title="Tickets raised today"
-              count={ticketRows.length}
-              sub="Verified against ClickUp: a ticket counts as landed once it exists on the other team's board."
-              flush
-            >
-              {ticketRows.length === 0 ? (
-                <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                  No tickets raised today.
-                </p>
-              ) : (
-                ticketRows.map(
-                  (d: {
-                    _id: string;
-                    subject: string;
-                    action: string;
-                    reroutedTo?: string;
-                    clickupTaskUrl?: string;
-                    logError?: string;
-                  }) => (
-                    <ChecklistItem
-                      key={d._id}
-                      title={`${d.subject}, ${d.action}`}
-                      meta={
-                        <>
-                          <span className="text-xs text-muted-foreground">
-                            to {teamName(d.reroutedTo)}
-                          </span>
-                          <Chip
-                            tone={
-                              d.clickupTaskUrl
-                                ? "good"
+            <div data-section="tickets">
+              <SectionCard
+                title="Tickets raised today"
+                count={ticketRows.length}
+                sub="Verified against ClickUp: a ticket counts as landed once it exists on the other team's board."
+                flush
+              >
+                {ticketRows.length === 0 ? (
+                  <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                    No tickets raised today.
+                  </p>
+                ) : (
+                  ticketRows.map(
+                    (d: {
+                      _id: string;
+                      subject: string;
+                      action: string;
+                      reroutedTo?: string;
+                      clickupTaskUrl?: string;
+                      logError?: string;
+                    }) => (
+                      <ChecklistItem
+                        key={d._id}
+                        title={`${d.subject}, ${d.action}`}
+                        meta={
+                          <>
+                            <span className="text-xs text-muted-foreground">
+                              to {teamName(d.reroutedTo)}
+                            </span>
+                            <Chip
+                              tone={
+                                d.clickupTaskUrl
+                                  ? "good"
+                                  : d.logError
+                                    ? "bad"
+                                    : "neutral"
+                              }
+                            >
+                              {d.clickupTaskUrl
+                                ? "Landed"
                                 : d.logError
-                                  ? "bad"
-                                  : "neutral"
-                            }
-                          >
-                            {d.clickupTaskUrl
-                              ? "Landed"
-                              : d.logError
-                                ? "Failed"
-                                : "Waiting"}
-                          </Chip>
-                        </>
-                      }
-                      why={
-                        d.clickupTaskUrl
-                          ? `Created on the ${teamName(d.reroutedTo)} board.`
-                          : d.logError
-                            ? `ClickUp rejected it: ${d.logError}. Raise it again.`
-                            : `Not on the ${teamName(d.reroutedTo)} board yet. If it is urgent, tell the team directly.`
-                      }
-                      action={
-                        d.clickupTaskUrl ? (
-                          <ExtLink href={d.clickupTaskUrl}>
-                            Open it in ClickUp
-                          </ExtLink>
-                        ) : undefined
-                      }
-                    />
-                  ),
-                )
-              )}
-            </SectionCard>
+                                  ? "Failed"
+                                  : "Waiting"}
+                            </Chip>
+                          </>
+                        }
+                        why={
+                          d.clickupTaskUrl
+                            ? `Created on the ${teamName(d.reroutedTo)} board.`
+                            : d.logError
+                              ? `ClickUp rejected it: ${d.logError}. Raise it again.`
+                              : `Not on the ${teamName(d.reroutedTo)} board yet. If it is urgent, tell the team directly.`
+                        }
+                        action={
+                          d.clickupTaskUrl ? (
+                            <ExtLink href={d.clickupTaskUrl}>
+                              Open it in ClickUp
+                            </ExtLink>
+                          ) : undefined
+                        }
+                      />
+                    ),
+                  )
+                )}
+              </SectionCard>
+            </div>
           ) : null}
           {requestsAnywhere || raisedToday(myRequests.rows).length > 0 ? (
             <RequestsRaisedToday mine={myRequests} />
           ) : null}
 
-          <SectionCard
-            title="Loose ends"
-            count={t.loose}
-            sub="What the board says nobody closed. Anything about money stays; the rest can be written off in one go, and who cleared it is recorded."
-            action={
-              looseList.length ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() =>
-                    clearLooseEnds({}).then(r =>
-                      toast.success(
-                        `Cleared ${r.cleared}, kept ${r.kept} money ones`,
-                      ),
-                    )
-                  }
-                >
-                  Clear these (money stays)
-                </Button>
-              ) : undefined
-            }
-            flush
-          >
-            {looseList.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                Nothing loose. This is what a clean board looks like.
-              </p>
-            ) : (
-              <Capped
-                items={looseList.flatMap((c: Client) =>
-                  c.loose.map((l: string, i: number) => (
-                    <ChecklistItem
-                      key={`${c.taskId}-loose-${i}`}
-                      title={`${c.name}, ${plainText(l)}`}
-                      why={`${displayLabel(c.stage)}. ${plainText(c.todo)}. Clear it before 18:00 or it shows in your EOD.`}
-                      action={
-                        <div className="flex flex-wrap gap-x-4 gap-y-2">
-                          <Link
-                            to={`/clients/${c.taskId}`}
-                            className="text-primary underline-offset-4 hover:underline"
-                          >
-                            Open the client
-                          </Link>
-                          {/1-1 call notes form not submitted/i.test(l) ? (
-                            <NotesNudge
-                              taskId={String(c.taskId)}
-                              lastCall={c.lastCallAt ?? c.lastCall ?? null}
+          <div data-section="loose-ends">
+            <SectionCard
+              title="Loose ends"
+              count={t.loose}
+              sub="What the board says nobody closed. Anything about money stays; the rest can be written off in one go, and who cleared it is recorded."
+              action={
+                looseList.length ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      clearLooseEnds({}).then(r =>
+                        toast.success(
+                          `Cleared ${r.cleared}, kept ${r.kept} money ones`,
+                        ),
+                      )
+                    }
+                  >
+                    Clear these (money stays)
+                  </Button>
+                ) : undefined
+              }
+              flush
+            >
+              {looseList.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                  Nothing loose. This is what a clean board looks like.
+                </p>
+              ) : (
+                <Capped
+                  items={looseList.flatMap((c: Client) =>
+                    c.loose.map((l: string, i: number) => (
+                      <ChecklistItem
+                        key={`${c.taskId}-loose-${i}`}
+                        title={`${c.name}, ${plainText(l)}`}
+                        why={`${displayLabel(c.stage)}. ${plainText(c.todo)}. Clear it before 18:00 or it shows in your EOD.`}
+                        action={
+                          <div className="flex flex-wrap gap-x-4 gap-y-2">
+                            <Link
+                              to={`/clients/${c.taskId}`}
                               className="text-primary underline-offset-4 hover:underline"
                             >
-                              Write 1-1 notes
-                            </NotesNudge>
-                          ) : null}
-                          {c.taskUrl ? (
-                            <ExtLink href={c.taskUrl}>ClickUp card</ExtLink>
-                          ) : null}
-                        </div>
-                      }
-                    />
-                  )),
-                )}
-              />
-            )}
-          </SectionCard>
+                              Open the client
+                            </Link>
+                            {/1-1 call notes form not submitted/i.test(l) ? (
+                              <NotesNudge
+                                taskId={String(c.taskId)}
+                                lastCall={c.lastCallAt ?? c.lastCall ?? null}
+                                className="text-primary underline-offset-4 hover:underline"
+                              >
+                                Write 1-1 notes
+                              </NotesNudge>
+                            ) : null}
+                            {c.taskUrl ? (
+                              <ExtLink href={c.taskUrl}>ClickUp card</ExtLink>
+                            ) : null}
+                          </div>
+                        }
+                      />
+                    )),
+                  )}
+                />
+              )}
+            </SectionCard>
+          </div>
 
-          <SectionCard
-            title="Client Success board"
-            count={snap.tasks.length}
-            sub="Due, overdue or undated, in ClickUp."
-            flush
-          >
-            {snap.tasks.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                Nothing due on the board.
-              </p>
-            ) : (
-              <Capped
-                limit={20}
-                items={snap.tasks.map(
-                  (task: {
-                    taskId: string;
-                    name: string;
-                    taskUrl?: string;
-                    status: string;
-                    dueDate?: string;
-                    overdueDays?: number;
-                  }) => (
-                    <div
-                      key={task.taskId}
-                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-medium" dir="auto">
-                          {task.name}
+          <div data-section="client-success-board">
+            <SectionCard
+              title="Client Success board"
+              count={snap.tasks.length}
+              sub="Due, overdue or undated, in ClickUp."
+              flush
+            >
+              {snap.tasks.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+                  Nothing due on the board.
+                </p>
+              ) : (
+                <Capped
+                  limit={20}
+                  items={snap.tasks.map(
+                    (task: {
+                      taskId: string;
+                      name: string;
+                      taskUrl?: string;
+                      status: string;
+                      dueDate?: string;
+                      overdueDays?: number;
+                    }) => (
+                      <div
+                        key={task.taskId}
+                        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-medium" dir="auto">
+                            {task.name}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {displayLabel(task.status)}
+                            {task.dueDate
+                              ? ` · due ${shortDay(task.dueDate)}`
+                              : " · no due date"}
+                            {task.overdueDays && task.overdueDays > 0 ? (
+                              <span className="txt-bad">
+                                {` · ${task.overdueDays}d overdue`}
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {displayLabel(task.status)}
-                          {task.dueDate
-                            ? ` · due ${shortDay(task.dueDate)}`
-                            : " · no due date"}
-                          {task.overdueDays && task.overdueDays > 0 ? (
-                            <span className="txt-bad">
-                              {` · ${task.overdueDays}d overdue`}
-                            </span>
-                          ) : null}
-                        </div>
+                        {task.taskUrl && (
+                          <ExtLink href={task.taskUrl} className="text-xs">
+                            Open
+                          </ExtLink>
+                        )}
                       </div>
-                      {task.taskUrl && (
-                        <ExtLink href={task.taskUrl} className="text-xs">
-                          Open
-                        </ExtLink>
-                      )}
-                    </div>
-                  ),
-                )}
-              />
-            )}
-          </SectionCard>
+                    ),
+                  )}
+                />
+              )}
+            </SectionCard>
+          </div>
         </div>
       )}
 
       {section === "today" && (
-        <section className="rounded-2xl border bg-card">
+        <section className="rounded-2xl border bg-card" data-section="day-plan">
           <h2 className="px-4 pt-4 pb-3 text-[15px] font-semibold sm:px-6 sm:pt-6">
             Day plan
           </h2>
@@ -4143,19 +4177,24 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       )}
 
       {section === "today" && (
-        <Fold
-          title="Calendar and data fixes"
-          hint="Google Calendar for the week, and clients missing a sheet, a CRM account or a call"
-        >
-          <div className="space-y-8">
-            <MeetingsPage embedded part="calendar" />
-            <BacklogPage embedded />
-          </div>
-        </Fold>
+        <div data-section="calendar-fold">
+          <Fold
+            title="Calendar and data fixes"
+            hint="Google Calendar for the week, and clients missing a sheet, a CRM account or a call"
+          >
+            <div className="space-y-8">
+              <MeetingsPage embedded part="calendar" />
+              <BacklogPage embedded />
+            </div>
+          </Fold>
+        </div>
       )}
 
       {section === "today" && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-4 sm:px-6">
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-4 sm:px-6"
+          data-section="today-footer"
+        >
           <p className="text-sm text-muted-foreground">
             At 17:30, close the loose ends, then file your end of day. It writes
             itself from what you did today.
@@ -4168,7 +4207,10 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
 
       {section === "clients" && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div
+            className="flex flex-wrap items-center justify-between gap-3"
+            data-section="client-filters"
+          >
             <PillRow>
               {VIEWS.map(v => (
                 <Pill
@@ -4216,7 +4258,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 : "No clients in this view."}
             </p>
           ) : (
-            <div className="space-y-3">{findList(viewList).map(row)}</div>
+            <div className="space-y-3" data-section="client-list">
+              {findList(viewList).map(row)}
+            </div>
           )}
         </div>
       )}
