@@ -186,13 +186,14 @@ Invoices makes the deposit and payment invoices the same way the client success 
 
 Buttons and actions:
 - "Invoice type": "Pay online", "Paid" or "Card on file".
-- The payment link choices: "Ecom link", "Whop link" or "Paste a link".
+- The payment link choices: "Ecom link", "Whop link", "Tap link" or "Paste a link".
 - "Amount (USD)" and "Description": the amount and what it is for.
 - "Due date": the day the payment is due.
 - "More on the invoice": opens the location, the tax number, the period and the note.
 - "Make the invoice": checks the form, then asks "Make this invoice?".
 - "PDF", "PDF link" and "Payment link": open or copy what the client needs.
-- "Use a Whop link instead" and "Same invoice with Whop": make the same invoice with a Whop link.
+- "Use a Whop link instead" (or the Ecom or Tap version): on a failed invoice that never got a link, makes it again with that link. For Tap, type the client's email first, then press "Use the Tap link".
+- "Same invoice with" Ecom, Whop or Tap: on an Ecom or Tap invoice that is not paid yet, makes the same invoice with a link not yet tried for it.
 - "Try again" and "Cancel": retry or cancel an invoice that failed.
 - "Read again": reads the list again.
 
