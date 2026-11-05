@@ -44,7 +44,10 @@ import {
   startedTodayCampaigns,
 } from "@/components/StartedToday";
 import { StatusToggle } from "@/components/StatusToggle";
-import { AdsSkeleton } from "@/components/skeletons/AdsSkeleton";
+import {
+  AdsSkeleton,
+  BillingStripSkeleton,
+} from "@/components/skeletons/AdsSkeleton";
 import { TodaySkeleton } from "@/components/skeletons/TodaySkeleton";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
@@ -69,7 +72,10 @@ import {
   type RowNumbers,
 } from "@/lib/adsFilters";
 import { feedbackTaskIdForClient } from "@/lib/appointmentFeedback";
-import { writeBillingStripShown } from "@/lib/billingStripShape";
+import {
+  readBillingStripShown,
+  writeBillingStripShown,
+} from "@/lib/billingStripShape";
 import { api, useAction } from "@/lib/board";
 import { adAccountsParam, parseAdAccounts } from "@/lib/clientRange";
 import {
@@ -4183,6 +4189,11 @@ function Cockpit({ view }: { view: View }) {
           className="empty:hidden"
         >
           <AdBillingWatch
+            loading={
+              readBillingStripShown() ? (
+                <BillingStripSkeleton section={false} />
+              ) : null
+            }
             campaigns={(snap.campaigns as Campaign[]).map(c => ({
               metaAccountId: c.metaAccountId,
               dataThrough: c.dataThrough,

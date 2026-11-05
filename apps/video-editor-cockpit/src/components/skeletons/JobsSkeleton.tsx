@@ -74,8 +74,11 @@ function Legend() {
   );
 }
 
-/** The day in four numbers: labels stay, values are blocks. */
-function TallySkeleton() {
+/**
+ * The day in four numbers: labels stay, values are blocks. The page skeleton
+ * and the live page both draw this, so the count cards keep one shape.
+ */
+export function JobsTallySkeleton() {
   return (
     <div data-section="jobs-tally">
       <div className="grid grid-cols-4 gap-2 sm:gap-4">
@@ -236,7 +239,7 @@ export function JobsSkeleton() {
       className="mx-auto w-full max-w-6xl"
     >
       <HeaderSkeleton />
-      <TallySkeleton />
+      <JobsTallySkeleton />
       <div data-section="your-tasks" className="mb-6">
         <YourTasksSkeleton />
       </div>
