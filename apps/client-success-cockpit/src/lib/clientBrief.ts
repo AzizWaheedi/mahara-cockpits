@@ -1907,7 +1907,7 @@ export function buildBrief(input: BriefInput): Brief {
     for (const t of takeaways) {
       const label = labelOf(t);
       if (PLAN_LABEL.test(t)) {
-        // "The plan: Mahara will retarget, Ardon will send content."
+        // "The plan: Mahara will retarget, the client will send content."
         const body = t.replace(/^[^:：]+[:：]\s*/, "");
         for (const clause of body.split(/[،,;؛]\s*(?:و(?=\S))?|\.\s+/)) {
           const cl = clause.trim().replace(/[.]$/, "");
