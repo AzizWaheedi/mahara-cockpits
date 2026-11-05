@@ -2371,3 +2371,282 @@ describe("the forms editor: the structured onboarding is read only, on the serve
     });
   });
 });
+
+describe("20261105102219: align onboarding areas with the advertising board", () => {
+  const E = "20261105102219_onboarding_v3_area_alignment.sql";
+  const reviewedHash = "ca5a873dd26eeb55299c5f6da4a1bba0";
+  // One mapped value for each of the 71 live Advertising Cities options, read 2026-11-04.
+  const boardValues: Record<string, string[]> = {
+    areasSA: [
+      "all_sa",
+      "riyadh",
+      "jeddah",
+      "makkah",
+      "madinah",
+      "dammam",
+      "khobar",
+      "dhahran",
+      "taif",
+      "abha",
+      "buraydah",
+      "hail",
+      "tabuk",
+      "jubail",
+      "qatif",
+      "yanbu",
+      "najran",
+      "khamis_mushait",
+      "unaizah",
+      "al_kharj",
+      "hofuf",
+      "sakaka",
+      "arar",
+      "al_bahah",
+    ],
+    areasKW: [
+      "all_kw",
+      "kuwait_city",
+      "hawalli",
+      "salmiya",
+      "ahmadi",
+      "farwaniya",
+      "jahra",
+      "sabah_al_salem",
+    ],
+    areasAE: [
+      "all_ae",
+      "dubai",
+      "abu_dhabi",
+      "sharjah",
+      "ajman",
+      "al_ain",
+      "rak",
+      "fujairah",
+      "uaq",
+      "khor_fakkan",
+      "kalba",
+      "dibba",
+    ],
+    areasQA: [
+      "all_qa",
+      "doha",
+      "rayyan",
+      "wakrah",
+      "khor",
+      "lusail",
+      "umm_salal",
+      "dukhan",
+    ],
+    areasBH: [
+      "all_bh",
+      "manama",
+      "muharraq",
+      "ar_rifa",
+      "hamad_town",
+      "isa_town",
+      "sitra",
+      "budaiya",
+      "jidd_hafs",
+    ],
+    areasOM: [
+      "all_om",
+      "muscat",
+      "salalah",
+      "sohar",
+      "nizwa",
+      "sur",
+      "barka",
+      "rustaq",
+      "al_sib",
+      "buraimi",
+    ],
+  };
+  const addedValues: Record<string, string[]> = {
+    areasSA: [
+      "abha",
+      "buraydah",
+      "khamis_mushait",
+      "unaizah",
+      "al_kharj",
+      "hofuf",
+      "sakaka",
+      "arar",
+      "al_bahah",
+    ],
+    areasKW: ["kuwait_city", "salmiya", "sabah_al_salem"],
+    areasAE: ["khor_fakkan", "kalba", "dibba"],
+    areasQA: ["dukhan"],
+    areasBH: [
+      "manama",
+      "ar_rifa",
+      "hamad_town",
+      "isa_town",
+      "sitra",
+      "budaiya",
+      "jidd_hafs",
+    ],
+    areasOM: [
+      "salalah",
+      "sohar",
+      "nizwa",
+      "sur",
+      "barka",
+      "rustaq",
+      "al_sib",
+      "buraimi",
+    ],
+  };
+
+  test("retains regional options, covers all board cities and prints every new choice", async () => {
+    await rolledBack(async () => {
+      const before = await v3Schema();
+      await db.exec(inTest(E));
+      expect(await versionMd5(3)).toBe(reviewedHash);
+      const after = await v3Schema();
+      const map = await one<Row>(
+        "SELECT public.cockpit_form_stage4_print_map(3) AS r",
+      );
+      const areas = map.refs.find((x: Row) =>
+        String(x.ref).startsWith("fa017616"),
+      ).print;
+      const answers: Row = { areaCountries: [] };
+      for (const [key, values] of Object.entries(boardValues)) {
+        const country = key.slice(-2).toLowerCase();
+        const field = after.fields.find((f: Row) => f.key === key);
+        const old = before.fields.find((f: Row) => f.key === key);
+        expect(field.options.length).toBeLessThanOrEqual(30);
+        expect(field.showIf).toEqual(old.showIf);
+        expect(field.required).toBe(old.required);
+        expect(field.hint.en).toContain("whole country");
+        expect(field.hint.ar).toContain("الدولة كلها");
+        for (const prior of old.options)
+          expect(field.options).toContainEqual(prior);
+        for (const value of values) {
+          const option = field.options.find((o: Row) => o.value === value);
+          expect(option).toBeDefined();
+          expect(
+            typeof option.label.en === "string" && option.label.en.length > 0,
+          ).toBe(true);
+          expect(
+            typeof option.label.ar === "string" && option.label.ar.length > 0,
+          ).toBe(true);
+          expect(areas.labels[country][value]).toBe(option.label.en);
+        }
+        answers.areaCountries.push(country);
+        answers[key] = addedValues[key];
+      }
+      const validAnswers = { ...GOLDENS.cases[0].answers, ...answers };
+      delete validAnswers.areasOther; // Hidden when only the six listed countries are selected.
+      const checked = await answersCheck(after, validAnswers);
+      expect([checked.ok, checked.errors]).toEqual([true, {}]);
+      const printed = await one<Row[]>(
+        "SELECT public.cockpit_form_stage4_print('onboarding',3,$1::jsonb) AS r",
+        [json(checked.answers)],
+      );
+      const value = printed.find((x: Row) =>
+        String(x.ref).startsWith("fa017616"),
+      )?.value;
+      expect(typeof value).toBe("string");
+      for (const [key, values] of Object.entries(addedValues)) {
+        const field = after.fields.find((f: Row) => f.key === key);
+        for (const v of values)
+          expect(value).toContain(
+            field.options.find((o: Row) => o.value === v).label.en,
+          );
+      }
+      await db.exec(inTest(E));
+      expect(await versionMd5(3)).toBe(reviewedHash);
+    });
+  });
+
+  test("refuses if version 3 has an invitation or answer", async () => {
+    const stop = {
+      code: "55000",
+      message:
+        "Version 3 has been used; preserve it and use a new form version.",
+    };
+    await rolledBack(async () => {
+      await switchTo("canary");
+      await issue(TEST_CARD, "canary", ["copy"]);
+      await switchTo("off");
+      expect(await refusal(() => step(() => db.exec(inTest(E))))).toEqual(stop);
+      expect(await versionMd5(3)).toBe(V3_MD5);
+    });
+    await rolledBack(async () => {
+      await respond(3, GOLDENS.cases[0].answers, TEST_CARD);
+      expect(await refusal(() => step(() => db.exec(inTest(E))))).toEqual(stop);
+      expect(await versionMd5(3)).toBe(V3_MD5);
+    });
+  });
+
+  test("preserves printer permissions and the client form version", async () => {
+    await rolledBack(async () => {
+      const acl = await one<string>(
+        "SELECT coalesce(proacl::text, '') AS r FROM pg_proc WHERE oid = to_regprocedure('public.cockpit_form_stage4_print_map(integer)')",
+      );
+      const issuing = await clientVersion();
+      await db.exec(inTest(E));
+      expect(
+        await one<string>(
+          "SELECT coalesce(proacl::text, '') AS r FROM pg_proc WHERE oid = to_regprocedure('public.cockpit_form_stage4_print_map(integer)')",
+        ),
+      ).toBe(acl);
+      expect(await clientVersion()).toBe(issuing);
+    });
+  });
+
+  test("refuses a missing printer without changing the schema", async () => {
+    await rolledBack(async () => {
+      await db.exec(
+        "ALTER FUNCTION public.cockpit_form_stage4_print_map(integer) RENAME TO old_print_map",
+      );
+      const result = await refusal(() => step(() => db.exec(inTest(E))));
+      expect(result.code).toBe("55000");
+      expect(await versionMd5(3)).toBe(V3_MD5);
+    });
+  });
+
+  test("the structured-form recovery accepts the aligned schema and preserves its answers", async () => {
+    await rolledBack(async () => {
+      await db.exec(inTest(E));
+      await respond(3, GOLDENS.cases[0].answers, TEST_CARD);
+      await switchTo("canary");
+      await switchTo("on");
+      const before = await one<number>(
+        "SELECT count(*)::int AS r FROM public.cockpit_form_responses WHERE form_key='onboarding' AND form_version=3",
+      );
+      const rollback = readFileSync(
+        `${ROOT}/scripts/dev/forms-deploy/rollback-onboarding-v3.sql`,
+        "utf8",
+      )
+        .replace(/^BEGIN;/m, "")
+        .replace(/COMMIT;\s*$/m, "");
+      await db.exec(rollback);
+      expect(await clientVersion()).toBe(2);
+      expect(await versionMd5(3)).toBe(reviewedHash);
+      expect(
+        await one<number>(
+          "SELECT count(*)::int AS r FROM public.cockpit_form_responses WHERE form_key='onboarding' AND form_version=3",
+        ),
+      ).toBe(before);
+    });
+  });
+
+  test("refuses a changed schema or an active switch before making changes", async () => {
+    await rolledBack(async () => {
+      await db.exec(
+        "UPDATE public.cockpit_form_versions SET schema=jsonb_set(schema,'{minutes}','31') WHERE form_key='onboarding' AND version=3",
+      );
+      const before = await versionMd5(3);
+      const result = await refusal(() => step(() => db.exec(inTest(E))));
+      expect(result.code).toBe("55000");
+      expect(await versionMd5(3)).toBe(before);
+    });
+    await rolledBack(async () => {
+      await switchTo("canary");
+      const result = await refusal(() => step(() => db.exec(inTest(E))));
+      expect(result.code).toBe("55000");
+      expect(await versionMd5(3)).toBe(V3_MD5);
+    });
+  });
+});

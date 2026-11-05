@@ -186,5 +186,6 @@ How to:
 - "Admin" and "Data": admin doors in the side rail. Only an admin sees them.
 - "Media buyer", "Creative director", "Editor desk" and "Sales": doors to the other cockpits. Each shows only to a seat that has that role or to an admin.
 - The chat button at the bottom right is "Anchor", the client success assistant. It opens a chat panel. "New chat" clears the thread. "Copy answer" copies a reply. "Helpful" and "Not helpful" rate it. The box at the bottom sends your question, and the answer appears in the panel. On a client's page it answers about that client.
+- Now and then a small bubble above the chat button suggests one question for the page you are on: click it to ask that question, or press the X to hide it. It shows at most once per page a day, and two dismissals in a row hide it for a week.
 - The search field at the top of the rail says "Search clients, links…". It opens the search box, and Ctrl K does the same from any page.
 - The account menu at the foot of the rail holds "Settings", "Dark mode" or "Light mode", "Mahara portal" and "Sign out".

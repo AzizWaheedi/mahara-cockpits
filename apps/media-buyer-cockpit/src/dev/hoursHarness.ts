@@ -284,9 +284,12 @@ function hermesThread() {
       9,
     ),
   ];
-  return mode === "pending"
-    ? [job(3, "Which ad should I pause?", null, 0.3), ...thread]
-    : thread;
+  const pending = job(3, "Which ad should I pause?", null, 0.3);
+  if (mode === "pending" || mode === "queued") {
+    pending.status = mode === "queued" ? "queued" : "claimed";
+    return [pending, ...thread];
+  }
+  return thread;
 }
 
 /** Patch the client's rpc and functions.invoke; returns the scenario in use. */
@@ -323,12 +326,18 @@ export function installHoursHarness(client: SupabaseClient): HarnessScenario {
       }
     }
     switch (name) {
-      // Hermes chat panel: ?hermes=empty | pending | thread (default thread).
+      // Hermes chat panel: ?hermes=empty | pending | queued | thread (default thread).
       case "cockpit_get_ask_ai_thread":
         return ok(hermesThread());
+      case "cockpit_get_ask_ai_job": {
+        const id = String(args.p_job_id ?? "");
+        return ok(hermesThread().find(j => j.id === id) ?? null);
+      }
       case "cockpit_rate_ask_ai_job":
       case "cockpit_clear_ask_ai_thread":
         return ok(true);
+      case "cockpit_log_ask_ai_nudge":
+        return ok(null);
       case "cockpit_submit_ask_ai_job":
         return ok("00000000-0000-4000-8000-0000000000ff");
       case "cockpit_get_ceo_sections":

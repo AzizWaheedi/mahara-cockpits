@@ -23,8 +23,8 @@ import { dayLabel, kuwaitDay, shiftDay } from "./reportPeriod";
  *
  * Amounts are in dollars whatever the ad account's currency (2026-10-21): the
  * media worker converts spend before it stores cockpit_media_daily_stats, and
- * the daily budget from Meta's minor units (Ardon's SAR 175 is $46.66). The
- * page labelled Ardon's $201.90 as "SAR 202". An account in a currency the
+ * the daily budget from Meta's minor units. A page once labelled a dollar
+ * amount as local currency. An account in a currency the
  * worker cannot convert is stored in its own, and keeps its code here.
  */
 

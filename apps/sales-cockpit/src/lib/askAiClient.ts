@@ -215,6 +215,30 @@ export async function rateAskAiJob(
   }
 }
 
+/** Counts a suggestion bubble event for the cockpit numbers; never blocks the chat. */
+export async function logAskAiNudge(
+  client: SupabaseClient | null,
+  args: {
+    app: CockpitApp;
+    event: "shown" | "tapped" | "dismissed";
+    page?: string | null;
+    question?: string | null;
+  },
+): Promise<void> {
+  if (!client) return;
+  try {
+    const { error } = await client.rpc("cockpit_log_ask_ai_nudge", {
+      p_app: args.app,
+      p_event: args.event,
+      p_page: args.page ?? null,
+      p_question: args.question ?? null,
+    });
+    if (error) return;
+  } catch {
+    // A failed count is not worth a broken chat.
+  }
+}
+
 export function jobsToChatMessages(jobs: AskAiJobItem[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
   // Server returns newest first, so reverse to chronological
