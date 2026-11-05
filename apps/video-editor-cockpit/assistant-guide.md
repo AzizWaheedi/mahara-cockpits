@@ -188,6 +188,8 @@ How to:
 
 The round button at the bottom right opens the chat assistant, Frame. Type a question and send it. Frame answers how-to questions from this guide. It reads the desk's guide, the page you are on and the data on that page, such as a job, its footage, its notes and its review links. It can read a file you attach. It cannot move a card, upload a cut, approve a review, send a link or change a record.
 
+Now and then a small bubble above the chat button suggests one question for the page you are on: click it to ask that question, or press the X to hide it. It shows at most once per page a day, and two dismissals in a row hide it for a week.
+
 Ask Frame where a page or a button is, what a page shows, or how a task is done. For a change, Frame points to the place in the desk and the editor does it.
 
 ## The foot of the rail

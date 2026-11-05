@@ -24,6 +24,7 @@ import {
   clearAskAiThread,
   getAskAiThread,
   jobsToChatMessages,
+  logAskAiNudge,
   rateAskAiJob,
   submitAskAiJob,
 } from "@/lib/askAiClient";
@@ -55,7 +56,14 @@ const ASSISTANT_ICONS = {
 
 const APP: CockpitApp = "media-buyer";
 const LAUNCHER_BOTTOM = "bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))]";
+// One button height plus a small gap above the launcher.
+const NUDGE_BOTTOM = "bottom-[calc(7.75rem+env(safe-area-inset-bottom,0px))]";
 const PANEL_BOTTOM = "bottom-[calc(8rem+env(safe-area-inset-bottom,0px))]";
+
+/** The local ?nudge=fast switch; it must not count in the log. */
+const fastNudge = () =>
+  import.meta.env.DEV &&
+  new URLSearchParams(window.location.search).get("nudge") === "fast";
 
 const ago = (ms: number) => {
   const m = Math.round((Date.now() - ms) / 60000);
@@ -530,9 +538,7 @@ export function HermesChat() {
       return;
     }
     if (live || !isAllowed) return;
-    const fast =
-      import.meta.env.DEV &&
-      new URLSearchParams(window.location.search).get("nudge") === "fast";
+    const fast = fastNudge();
     if (!fast && !shouldNudge(loadNudge(APP), pathname, Date.now())) return;
     const arm = (delay: number) => {
       nudgeTimer.current = window.setTimeout(() => {
@@ -553,6 +559,14 @@ export function HermesChat() {
         );
         if (!question) return;
         setNudge(question);
+        if (!fast) {
+          void logAskAiNudge(client, {
+            app: APP,
+            event: "shown",
+            page: pathname,
+            question,
+          });
+        }
         saveNudge(APP, markShown(loadNudge(APP), pathname, Date.now()));
       }, delay);
     };
@@ -614,7 +628,9 @@ export function HermesChat() {
       `}</style>
       {!open && nudge ? (
         // Sits one button height plus a small gap above the launcher, at every screen size.
-        <div className="hermes-nudge-in fixed right-4 bottom-[calc(7.75rem+env(safe-area-inset-bottom,0px))] z-40 max-w-[15rem] rounded-xl border bg-card/95 py-2 pr-7 pl-2.5 shadow-lg backdrop-blur lg:right-6 lg:bottom-[4.75rem]">
+        <div
+          className={`hermes-nudge-in fixed right-4 ${NUDGE_BOTTOM} z-40 max-w-[15rem] rounded-xl border bg-card/95 py-2 pr-7 pl-2.5 shadow-lg backdrop-blur lg:right-6 lg:bottom-[4.75rem]`}
+        >
           <button
             type="button"
             dir="auto"
@@ -622,6 +638,14 @@ export function HermesChat() {
             className="flex w-full items-center gap-2 text-left"
             onClick={() => {
               saveNudge(APP, markUsed(loadNudge(APP), Date.now()));
+              if (!fastNudge()) {
+                void logAskAiNudge(client, {
+                  app: APP,
+                  event: "tapped",
+                  page: pathname,
+                  question: nudge,
+                });
+              }
               setNudge(null);
               setOpen(true);
               void send({
@@ -646,6 +670,14 @@ export function HermesChat() {
             className="absolute top-1.5 right-1.5 rounded p-0.5 text-muted-foreground hover:text-foreground"
             onClick={() => {
               saveNudge(APP, markDismissed(loadNudge(APP), Date.now()));
+              if (!fastNudge()) {
+                void logAskAiNudge(client, {
+                  app: APP,
+                  event: "dismissed",
+                  page: pathname,
+                  question: nudge,
+                });
+              }
               setNudge(null);
             }}
           >

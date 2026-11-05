@@ -336,6 +336,8 @@ export function installHoursHarness(client: SupabaseClient): HarnessScenario {
       case "cockpit_rate_ask_ai_job":
       case "cockpit_clear_ask_ai_thread":
         return ok(true);
+      case "cockpit_log_ask_ai_nudge":
+        return ok(null);
       case "cockpit_submit_ask_ai_job":
         return ok("00000000-0000-4000-8000-0000000000ff");
       case "cockpit_get_ceo_sections":

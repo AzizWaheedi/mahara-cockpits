@@ -186,6 +186,7 @@ Every link you open in a day, grouped into cards: how the cockpit works, the Bra
 - "Admin": shown to admins. It opens the portal admin view.
 - The other cockpit doors: "Media buyer", "Client success", "Editor desk" and "Sales" appear only for people who hold that role or are admins. Each one opens that cockpit.
 - The chat button at the bottom right: opens Lens, the creative assistant. It answers questions about creative requests, ads and hooks, and it reads the page you are on. It is hidden on the Brand Blueprint call page.
+- Now and then a small bubble above the chat button suggests one question for the page you are on: click it to ask that question, or press the X to hide it. It shows at most once per page a day, and two dismissals in a row hide it for a week.
 - "New chat": clears the conversation with Lens and starts again.
 - "Copy answer", "Helpful" and "Not helpful": copy an answer or rate it.
 - "Search…": the field at the top of the menu, or the same search with Ctrl K. It finds a client, a page or a link.
