@@ -98,7 +98,7 @@ export class NotSent extends Error {}
 const MAX_PROVIDER_BODY = 256 * 1024;
 
 /** Bound provider bodies before decoding; never persist the contents. */
-async function providerBody(res: Response, signal: AbortSignal): Promise<string> {
+export async function providerBody(res: Response, signal: AbortSignal): Promise<string> {
   const declared = res.headers.get("content-length");
   if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > MAX_PROVIDER_BODY)) {
     void res.body?.cancel().catch(() => {});
