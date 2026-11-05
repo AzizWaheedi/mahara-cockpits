@@ -1209,7 +1209,7 @@ describe("the daily budget as an amount and a currency (4.21, 5.16)", () => {
       "≈ $265.96 a day. Estimate only; this is not yet used for launch or card budgets.",
     );
     expect(budget.budgetLine(100, "OMR")).toBe(
-      "≈ $260.08 a day. Estimate only; this is not yet used for launch or card budgets.",
+      "No fixed rate for OMR yet, so the media buyers see the amount as typed.",
     );
     expect(budget.budgetLine(100, "EUR")).toBe(
       "No fixed rate for EUR yet, so the media buyers see the amount as typed.",

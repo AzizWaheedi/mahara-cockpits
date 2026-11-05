@@ -7,7 +7,7 @@
  * hermes/cockpit-sync, cockpit-media-api); scripts/kickoff-sheet.test.tsx
  * reads both and fails when they drift. The kickoff check (B5) converts on
  * the server; this file only says the dollars on screen before the send.
- * The BHD and OMR estimates below are display-only. They do not change the
+ * The BHD estimate below is display-only. It does not change the
  * server's launch or card-budget conversion or allow Meta budget writes.
  */
 
@@ -32,15 +32,13 @@ export const USD_PER: Readonly<Record<string, number>> = {
 };
 
 /**
- * Indicative USD per unit. BHD is based on the Bahrain central bank's
- * 0.376 BHD per USD peg; OMR is the Oman central bank's 2.6008 USD per OMR.
+ * Indicative USD per unit, based on the Bahrain central bank's
+ * 0.376 BHD per USD peg.
  * https://www.cbb.gov.bh/wp-content/uploads/2025/03/Feb-2025.pdf
- * https://cbo.gov.om/Pages/FixedPeg.aspx
- * These estimates are deliberately separate from the action-producing rates.
+ * This estimate is deliberately separate from the action-producing rates.
  */
 export const INDICATIVE_ONLY_USD_PER: Readonly<Record<string, number>> = {
   BHD: 2.6596,
-  OMR: 2.6008,
 };
 
 /** The amount in dollars to the cent at the cockpit's rate, or null with no rate. */
