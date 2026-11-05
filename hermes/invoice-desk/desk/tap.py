@@ -41,15 +41,8 @@ def kept(found: dict[str, Any], amount_usd: Any, fresh: Decimal) -> Optional[tup
     """The Tap invoice an earlier try made, at that day's rate: its KWD amount
     and the rate it implies, when only the day's rate moved since (within 3%).
     None when it already matches today's amount, or is too far off to be a
-    rate move (check then refuses it)."""
-    try:
-        made = Decimal(str(found.get("amount"))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
-        usd_amount = Decimal(str(amount_usd))
-    except (ArithmeticError, ValueError, TypeError):
-        return None
-    if made == fresh or usd_amount <= 0 or abs(made - fresh) > fresh * Decimal("0.03"):
-        return None
-    return made, (made / usd_amount).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+    rate move (check then refuses it). The rule is ecom.rate_moved, shared."""
+    return ecom.rate_moved(found.get("amount"), amount_usd, fresh)
 
 
 class Tap:

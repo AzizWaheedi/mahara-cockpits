@@ -29,7 +29,7 @@ from .config import Config
 from .google import FOLDER, Google
 from .supa import Supa
 
-VERSION = "invoice-desk 2026-11-05-tap"
+VERSION = "invoice-desk 2026-11-05-ecom-guards"
 
 
 class Problem(Exception):
@@ -118,19 +118,26 @@ class Desk:
         inv["whop_plan_id"], inv["checkout_url"] = plan["id"], url
 
     def ecom_link(self, inv: dict[str, Any], number: str) -> None:
-        if inv.get("ecom_invoice_id") and inv.get("checkout_url"):
-            return
         if self.ecom_api is None:
             raise Problem("Ecom credentials are missing on the invoice worker. Tell Muhammed; do not issue this link elsewhere.")
+        if inv.get("ecom_invoice_id") and inv.get("checkout_url"):
+            return self.ecom_recorded(inv)
+        earlier = None
         try:
-            # A fresh rate is mandatory even after a failed attempt. If the rate moved
-            # and an earlier invoice exists, check refuses it instead of duplicating it.
+            # A fresh rate every time, even after a failed attempt. An Ecom invoice
+            # an earlier try made is kept when only the day's rate moved; check
+            # refuses anything else instead of making a second link.
             rate, rate_at = self.ecom_api.quote()
             amount = ecom.kwd(inv["amount_usd"], rate)
-            found = self.ecom_api.find(inv["id"], number) if inv.get("ecom_started_at") else None
-            if found is None:
+            earlier = self.ecom_api.find(inv["id"], number) if inv.get("ecom_started_at") else None
+            if earlier is None:
                 self.supa.progress(inv["id"], {"ecomStarted": True})
                 found = self.ecom_api.create(inv, number, amount)
+            else:
+                found = earlier
+                moved = ecom.kept(found, inv["amount_usd"], amount)
+                if moved is not None:
+                    amount, rate = moved
             url = self.ecom_api.check(found, amount)
             patch = {"ecomInvoiceId": found["id"], "checkoutUrl": url,
                      "amountKwd": f"{amount:.3f}", "kwdRate": f"{rate:.6f}", "kwdRateAt": rate_at}
@@ -140,6 +147,10 @@ class Desk:
         except ecom.EcomRefused as exc:
             if "quote" in str(exc):
                 raise Passing(str(exc)) from None
+            if earlier is not None:
+                # Ecom already holds a link for this invoice: switching would leave it open.
+                raise Problem(f"Ecom already holds a link for this invoice that the cockpit cannot use ({exc}) "
+                              "Tell Muhammed before trying again or switching.") from None
             raise Problem(f"{exc} Tell Muhammed; do not make a second payment link.") from None
         except http.HttpError as exc:
             if exc.status in (401, 403):
@@ -147,6 +158,24 @@ class Desk:
             if 400 <= exc.status < 500 and exc.status not in http.RETRY_STATUSES:
                 raise Problem(f"Ecom refused the link ({http.scrub(exc)[:160]}). Tell Muhammed.") from None
             raise
+
+    def ecom_recorded(self, inv: dict[str, Any]) -> None:
+        """A link recorded on an earlier try (the invoice failed at a later step,
+        such as the Drive folder): print it only while Ecom can still take the
+        payment. Ecom expires a link after its date and an admin can delete one."""
+        try:
+            why = ecom.closed(self.ecom_api.get(inv["ecom_invoice_id"]), inv["ecom_invoice_id"])
+        except ecom.EcomRefused as exc:
+            raise Problem(f"Ecom did not confirm this invoice's link ({exc}) Tell Muhammed.") from None
+        except http.HttpError as exc:
+            if exc.status in (401, 403):
+                raise Problem("The Ecom credentials cannot read payment links. Tell Muhammed.") from None
+            if 400 <= exc.status < 500 and exc.status not in http.RETRY_STATUSES:
+                raise Problem(f"Ecom did not confirm this invoice's link ({http.scrub(exc)[:160]}). Tell Muhammed.") from None
+            raise
+        if why:
+            raise Problem(f"This invoice's Ecom link is {why}, so the invoice cannot go out with it. "
+                          "Cancel this invoice and make a new one.")
 
     def tap_link(self, inv: dict[str, Any], number: str) -> None:
         switch = "On the invoices page press Use an Ecom link instead or Use a Whop link instead"
