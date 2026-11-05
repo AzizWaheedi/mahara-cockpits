@@ -41,6 +41,7 @@ from tests import fakes  # noqa: E402
 from tests.fakes import FakeFathom, FakePostgrest, FakeProvider, FakeRenderer, TEST_OFFER, specific_deal, transcript, \
     triage_answer  # noqa: E402
 from tests.test_desk import cfg_in, fakes_logger, load_cli, resolved  # noqa: E402
+from tests.test_doctor import Asked  # noqa: E402
 
 REQ = "cockpit_sales_requests"
 PROP = "cockpit_sales_proposals"
@@ -192,6 +193,39 @@ class Causes(unittest.TestCase):
         # A sentence made anywhere else still has one: its first clause.
         self.assertEqual(model.ModelUnreachable("Today's plan is spent, so nothing runs. Wait.").cause,
                          "today's plan is spent")
+
+
+class PlanLimitIsAnOutage(unittest.TestCase):
+    """The Claude plan's weekly limit is the plan saying it will not answer, not
+    one failed try: a follow-up run stops and waits for the reset instead of
+    asking once per lead. The VPS proxy says it both ways, a 500 whose body is
+    the JSON error wholesale and a 200 whose whole answer reads
+    "[Error: ...]", and Claude words it "You've hit your weekly limit"."""
+
+    SAID = "You've hit your weekly limit, resets Nov 2, 1pm (UTC)"
+    BODY = (b'{"error":{"message":"You\'ve hit your weekly limit, resets Nov 2, 1pm (UTC)",'
+            b'"type":"proxy_error"}}')
+
+    def limit(self):
+        return model._classify(http.HttpError(500, "proxy_error", self.BODY), "vps", "opus")
+
+    def test_a_500_plan_limit_is_an_outage_with_a_cause(self):
+        limit = self.limit()
+        self.assertIsInstance(limit, model.ModelUnreachable)
+        self.assertEqual(limit.cause, "the Claude plan on the VPS is at its usage limit")
+        self.assertIn("waits until it resets", str(limit))
+
+    def test_a_200_proxy_error_with_the_same_words_is_the_same_outage(self):
+        with self.assertRaises(model.ModelUnreachable) as e:
+            model.vps_reply(model.Reply(text=f"[Error: {self.SAID}]"), "hello")
+        self.assertEqual(e.exception.cause, "the Claude plan on the VPS is at its usage limit")
+
+    def test_the_follow_up_probe_stops_the_drafting(self):
+        cli = load_cli()
+        p = Asked("vps", "opus", ping=self.limit())
+        ok, said, outage, down = cli.job_probe(p, 30)
+        self.assertEqual((ok, outage), (False, True))
+        self.assertEqual(down, said)  # nothing to hand over to: nothing is drafted
 
 
 # ---------------------------------------------------------------------------

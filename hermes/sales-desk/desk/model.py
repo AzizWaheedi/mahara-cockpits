@@ -439,6 +439,23 @@ def as_json(text: str, reasoning: str = "", *, expect: Optional[Callable[[dict[s
 # answer "[Error: <what Claude Code said>]".
 PROXY_ERROR = re.compile(r"^\[Error: (.*)\]$", re.S)
 
+# The Claude plan saying it will not answer until its limit resets. Claude
+# words it "You've hit your weekly limit", so the words between "hit your" and
+# "limit" are part of the match; the proxy sends the same sentence either as a
+# streamed 200 or as the body of a 500, and both are the one outage.
+PLAN_LIMIT = re.compile(r"hit your (?:[a-z]+ )?limit|usage limit|limit reached|rate limit")
+
+
+def plan_limit(said: str) -> Optional[ModelUnreachable]:
+    """The plan's limit, as the one outage both paths raise; None for anything
+    else the proxy said. The proxy words the same sentence whether it arrives
+    as a streamed 200 or as the body of a 500, so both call this."""
+    if not PLAN_LIMIT.search(said.lower()):
+        return None
+    return ModelUnreachable(f"The Claude plan on the VPS is at its usage limit ({http.scrub(said)[:160]}); "
+                            "drafting waits until it resets.",
+                            cause="the Claude plan on the VPS is at its usage limit")
+
 
 def vps_reply(reply: Reply, asked: str) -> Reply:
     """The VPS proxy's answer, with its failures raised rather than kept as a
@@ -450,10 +467,9 @@ def vps_reply(reply: Reply, asked: str) -> Reply:
         low = said.lower()
         if "oauth" in low or "authenticate" in low or "401" in low or "subscription access" in low:
             raise ModelUnreachable(VPS_SIGN_IN, cause=VPS_SIGNED_OUT)
-        if any(w in low for w in ("usage limit", "hit your limit", "limit reached", "rate limit")):
-            raise ModelUnreachable(f"The Claude plan on the VPS is at its usage limit ({http.scrub(said)[:160]}); "
-                                   "drafting waits until it resets.",
-                                   cause="the Claude plan on the VPS is at its usage limit")
+        limit = plan_limit(said)
+        if limit:
+            raise limit
         raise ModelError(f"the Claude proxy on the VPS failed: {http.scrub(said)[:300]}")
     if not reply.usage:
         reply.usage = estimate(asked, reply.text + reply.reasoning)
@@ -469,6 +485,9 @@ def _classify(e: http.HttpError, provider: str, model: str, setting: str = "SALE
         low = body.lower()
         if e.status in (401, 403) or "oauth" in low or "authenticate" in low or "subscription access" in low:
             return ModelUnreachable(VPS_SIGN_IN, cause=VPS_SIGNED_OUT)
+        limit = plan_limit(body or str(e))
+        if limit:
+            return limit
         if e.status == 0 and not e.timed_out:
             return ModelUnreachable("The Claude proxy on the VPS (127.0.0.1:3456) is not answering. Start it "
                                     "again; drafting waits until then.",
