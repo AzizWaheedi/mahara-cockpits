@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { portalUrl } from "@/lib/portal";
 import { isNotesPopup, NotesOpening } from "./ProtectedRoute";
+import { ContentSkeleton } from "./RouteSkeleton";
 
 /** The portal decides who opens this cockpit; the server enforces the same rule. */
 export function RoleRoute({ role }: { role: string }) {
@@ -11,11 +12,7 @@ export function RoleRoute({ role }: { role: string }) {
   if (!ready) {
     // The Blueprint's notes popup keeps its one centred line throughout.
     if (isNotesPopup(pathname)) return <NotesOpening />;
-    return (
-      <div className="p-10 text-sm text-muted-foreground">
-        Checking your access…
-      </div>
-    );
+    return <ContentSkeleton label="Checking your access…" />;
   }
   if (access?.isAdmin || access?.isCeo || access?.roles.includes(role)) {
     return <Outlet key={session?.user.id ?? "signed-out"} />;

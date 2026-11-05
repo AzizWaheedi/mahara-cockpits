@@ -16,6 +16,7 @@ import {
   LATE_NO_CLIENT,
   linkTypeforms,
   metaAccounts,
+  metaSource,
   NATIVE_FORMS,
   readNativeForms,
   readStage4Forms,
@@ -1196,6 +1197,30 @@ describe("ghlSource", () => {
     expect(rooms.ev1).toEqual(["https://us06web.zoom.us/j/12345678901?pwd=TEST", ZOOM_ROOM]);
     expect(rooms.ev2).toEqual(["https://meet.google.com/abc-defg-hij?authuser=0", MEET_ROOM]);
     expect(rooms.ev3).toEqual([null, null]);
+  });
+});
+
+describe("metaSource: a never-seen ad account is read 7 days back", () => {
+  test("an account with nothing stored reads from 7 days back; a known account from the normal window", async () => {
+    const calls: { path: string; since?: string }[] = [];
+    const t = {
+      receipts: [],
+      meta: async (path: string, params: Record<string, string>) => (calls.push({ path, since: params.since }), { data: [] }),
+      metaNext: async () => ({ data: [] }),
+    } as unknown as Transport;
+    const fake = store(
+      seedOf({
+        clients: [
+          { name: "City Wood", meta_ad_account_id: "act_111", is_active: true },
+          { name: "Makers", meta_ad_account_id: "act_222", is_active: true },
+        ],
+        cockpit_csm_meta_activities: [{ account_id: "111" }],
+      }),
+    );
+    await metaSource(ctxOf(fake, t, { apply: false, now: NOW }), NOW - DAY);
+    const since = Object.fromEntries(calls.map(c => [c.path, c.since]));
+    expect(since["act_111/activities"]).toBe(String(Math.floor((NOW - DAY) / 1000)));
+    expect(since["act_222/activities"]).toBe(String(Math.floor((NOW - 7 * DAY) / 1000)));
   });
 });
 

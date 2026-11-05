@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { crmCounts, deliver, loadRoster, mentionsFor, run, sumHours, window } from "./worker";
+import { crmCounts, deliver, failureText, loadRoster, mentionsFor, run, sumHours, window } from "./worker";
 
 type Row = Record<string, any>;
 
@@ -91,6 +91,19 @@ describe("deliver", () => {
     const f = fakeIo({ cockpit_lead_sync_alerts: [] });
     expect((await deliver(f.io, { episodeId: "e5", kind: "alert", client, body: "x" }, false)).status).toBe("dry");
     expect(f.posts.length).toBe(0);
+  });
+});
+
+describe("failureText", () => {
+  test("never returns an empty line for a thrown value", () => {
+    expect(failureText(new Error("boom"))).toBe("Error: boom");
+    expect(failureText(new Error(""))).toBe("Error with no message");
+    expect(failureText(new Error("", { cause: new TypeError("fetch failed") }))).toBe("Error with no message (cause: TypeError: fetch failed)");
+    expect(failureText("")).toBeTruthy();
+    expect(failureText("").trim()).toBeTruthy();
+    expect(failureText({})).toBe("object thrown with no message");
+    expect(failureText(undefined)).toBe("undefined thrown with no message");
+    expect(failureText("plain")).toBe("plain");
   });
 });
 

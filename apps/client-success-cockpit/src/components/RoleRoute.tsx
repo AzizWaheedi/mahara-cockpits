@@ -1,6 +1,7 @@
 import { Outlet } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { portalUrl } from "@/lib/portal";
+import { ContentSkeleton } from "./RouteSkeleton";
 
 /**
  * One cockpit per role, one link per cockpit. A media buyer who opens the client
@@ -17,11 +18,7 @@ export function RoleRoute({
   const { access, ready, session } = useCockpitAuth();
 
   if (!ready) {
-    return (
-      <div className="p-10 text-sm text-muted-foreground">
-        Checking your access…
-      </div>
-    );
+    return <ContentSkeleton label="Checking your access…" />;
   }
   if (
     access?.isAdmin ||

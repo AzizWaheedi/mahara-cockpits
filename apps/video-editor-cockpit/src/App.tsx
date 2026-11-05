@@ -9,10 +9,11 @@ import {
   useParams,
 } from "react-router";
 import { HermesChat } from "./components/HermesChat";
-import { LoadingSkeleton } from "./components/LoadingSkeleton";
-import { JobsHome, Library } from "./components/Places";
+import { JobsHome, JobsHomeSkeleton, Library } from "./components/Places";
 import { SearchBox } from "./components/SearchBox";
+import { ShellSkeleton } from "./components/ShellSkeleton";
 import Sidebar from "./components/Sidebar";
+import { PageHeaderSkeleton } from "./components/skeletons/JobsSkeleton";
 import { AlertsBell } from "./components/tasks/AlertsBell";
 import { TaskFocusHost } from "./components/tasks/TaskFocus";
 import { Wordmark } from "./components/Wordmark";
@@ -335,9 +336,20 @@ function Shell() {
 const FOLD_KEY = "mahara-editor-sidebar";
 
 function AppSkeleton() {
+  const { pathname, search } = useLocation();
+  // Jobs is home. The two old doors redirect to it, so they get its picture
+  // rather than a header that changes shape a moment later.
+  const home =
+    pathname === "/" || pathname === "/dashboard" || pathname === "/pipeline";
+  const board =
+    pathname === "/pipeline" ||
+    new URLSearchParams(search).get("view") === "board";
   return (
-    <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
-      <LoadingSkeleton variant="page" label="Opening the editor desk" />
+    <div role="status" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Opening the editor desk</span>
+      <ShellSkeleton>
+        {home ? <JobsHomeSkeleton board={board} /> : <PageHeaderSkeleton />}
+      </ShellSkeleton>
     </div>
   );
 }

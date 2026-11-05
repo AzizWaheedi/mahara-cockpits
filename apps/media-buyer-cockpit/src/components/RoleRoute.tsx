@@ -1,7 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-
-import { LoadingSkeleton } from "./LoadingSkeleton";
+import { ContentSkeleton } from "./RouteSkeleton";
 
 /**
  * One cockpit per role, one link per cockpit. A media buyer who opens the client
@@ -13,13 +12,7 @@ export function RoleRoute({ role }: { role: string }) {
   const location = useLocation();
 
   if (!ready) {
-    return (
-      <LoadingSkeleton
-        variant="page"
-        label="Checking your access"
-        className="mx-auto max-w-6xl py-6"
-      />
-    );
+    return <ContentSkeleton label="Checking your access" />;
   }
   if (access?.isAdmin || access?.isCeo || access?.roles.includes(role)) {
     return <Outlet key={session?.user.id ?? "signed-out"} />;

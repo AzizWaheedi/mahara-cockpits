@@ -111,7 +111,7 @@ export function ClientDirectory({
   ];
   return (
     <main className="launch-page client-directory">
-      <header className="launch-page-header">
+      <header className="launch-page-header" data-section="page-header">
         <div>
           <p className="launch-eyebrow">Media buyer · Your client book</p>
           <h1>Clients</h1>
@@ -135,7 +135,7 @@ export function ClientDirectory({
           )}
         </label>
       </header>
-      <div className="launch-status-line">
+      <div className="launch-status-line" data-section="client-status">
         <span>
           {data.sources?.board?.at
             ? `Client board checked ${new Date(data.sources.board.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
@@ -146,7 +146,12 @@ export function ClientDirectory({
           Refresh
         </button>
       </div>
-      <div className="client-filters" role="group" aria-label="Filter clients">
+      <div
+        className="client-filters"
+        role="group"
+        aria-label="Filter clients"
+        data-section="client-filters"
+      >
         {CLIENT_VIEWS.map((v, i) => (
           <button
             key={v}
@@ -163,7 +168,11 @@ export function ClientDirectory({
           </button>
         ))}
       </div>
-      <section className="client-book" aria-label="Client directory">
+      <section
+        className="client-book"
+        aria-label="Client directory"
+        data-section="client-book"
+      >
         <div className="client-book-head">
           <span>Client</span>
           <span>Status</span>
@@ -245,7 +254,7 @@ export function ClientDirectory({
           </div>
         )}
       </section>
-      <div className="launch-footer-note">
+      <div className="launch-footer-note" data-section="footer-note">
         <span>
           Inactive clients stay visible. Campaigns are created paused, then
           switched on after review.

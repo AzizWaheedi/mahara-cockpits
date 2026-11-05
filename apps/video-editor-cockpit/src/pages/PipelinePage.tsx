@@ -1,7 +1,7 @@
 import { type ReactNode, useMemo } from "react";
 import { Link } from "react-router";
 import { Empty, Page, PageHeader, Problem } from "../components/bits";
-import { LoadingSkeleton } from "../components/LoadingSkeleton";
+import { JobsBoardSectionSkeleton } from "../components/skeletons/JobsSkeleton";
 import { useJobs } from "../lib/data";
 import { day, whenDue } from "../lib/format";
 import { holder, onEditor, stageLabel, stageRank } from "../lib/stages";
@@ -120,16 +120,18 @@ export default function PipelinePage({
 
   return (
     <Page>
-      <PageHeader
-        title="Jobs"
-        sub={syncedLine(jobs)}
-        actions={
-          <>
-            {actions}
-            <Legend />
-          </>
-        }
-      />
+      <div data-section="jobs-header">
+        <PageHeader
+          title="Jobs"
+          sub={syncedLine(jobs)}
+          actions={
+            <>
+              {actions}
+              <Legend />
+            </>
+          }
+        />
+      </div>
 
       {error ? (
         <Problem>
@@ -137,7 +139,12 @@ export default function PipelinePage({
         </Problem>
       ) : null}
       {loading && !jobs ? (
-        <LoadingSkeleton variant="board" label="Reading the board" />
+        <div>
+          <span className="sr-only" role="status">
+            Reading the board
+          </span>
+          <JobsBoardSectionSkeleton />
+        </div>
       ) : null}
       {!loading && !error && !columns.length ? (
         <Empty>
@@ -148,7 +155,10 @@ export default function PipelinePage({
 
       {/* The board scrolls sideways inside its own strip, edge to edge on
           a phone, never the page. */}
-      <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div
+        data-section="jobs-board"
+        className="-mx-4 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
+      >
         <div className="flex min-w-max gap-4">
           {columns.map(col => (
             <section key={col.key} className="w-64 shrink-0">

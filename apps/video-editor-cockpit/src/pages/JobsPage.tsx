@@ -11,8 +11,8 @@ import {
   StatTile,
   StatusChip,
 } from "../components/bits";
-import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { ReportIssue } from "../components/ReportIssue";
+import { JobsGroupsSkeleton } from "../components/skeletons/JobsSkeleton";
 import { YourTasks } from "../components/tasks/YourTasks";
 import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
@@ -227,23 +227,25 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
 
   return (
     <Page>
-      <PageHeader
-        title="Jobs"
-        sub={syncedLine(jobs)}
-        actions={
-          <>
-            {actions}
-            <Button variant="outline" size="sm" onClick={reload}>
-              <RefreshCw aria-hidden />
-              Refresh
-            </Button>
-            <ReportIssue />
-          </>
-        }
-      />
+      <div data-section="jobs-header">
+        <PageHeader
+          title="Jobs"
+          sub={syncedLine(jobs)}
+          actions={
+            <>
+              {actions}
+              <Button variant="outline" size="sm" onClick={reload}>
+                <RefreshCw aria-hidden />
+                Refresh
+              </Button>
+              <ReportIssue />
+            </>
+          }
+        />
+      </div>
 
       {tally ? (
-        <>
+        <div data-section="jobs-tally">
           {/* One row on a phone too: four short numbers read at a glance. */}
           <div className="grid grid-cols-4 gap-2 sm:gap-4">
             <StatTile label="Ready" value={tally.ready} />
@@ -262,17 +264,20 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
               ? ` ${tally.review} more ${tally.review === 1 ? "is" : "are"} in review.`
               : ""}
           </p>
-        </>
+        </div>
       ) : null}
 
       {/* Your tasks (PLAN.md D19): your other open ClickUp tasks, five at
           most. The Video Pipeline stays here on Jobs, so it is left out
           (the seat adapter asks with cockpit "editor"). */}
-      <div className="mb-6">
+      <div data-section="your-tasks" className="mb-6">
         <YourTasks />
       </div>
 
-      <div className="-mx-4 mb-6 flex flex-nowrap items-center gap-2 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
+      <div
+        data-section="jobs-filters"
+        className="-mx-4 mb-6 flex flex-nowrap items-center gap-2 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:flex-wrap sm:px-0"
+      >
         <button
           type="button"
           onClick={() => setOnlyMine(m => !m)}
@@ -298,7 +303,12 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
         </Problem>
       ) : null}
       {loading && !jobs ? (
-        <LoadingSkeleton variant="board" label="Reading the board" />
+        <div>
+          <span className="sr-only" role="status">
+            Reading the board
+          </span>
+          <JobsGroupsSkeleton />
+        </div>
       ) : null}
       {!loading && !error && !groups.length ? (
         <Empty>
@@ -308,7 +318,7 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
         </Empty>
       ) : null}
 
-      <div className="space-y-6">
+      <div data-section="jobs-groups" className="space-y-6">
         {groups.map(g => (
           <section key={g.key}>
             <div className="mb-2 flex items-baseline gap-2 px-1">

@@ -11,6 +11,7 @@ import { TrustPills } from "@/components/ceo/TrustPills";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { trustSummary, useCeo, useNow } from "@/components/ceo/useCeo";
 import { LoadingSkeleton } from "@/components/LoadingSkeleton";
+import { CeoTodayTabSkeleton } from "@/components/skeletons/CeoSkeleton";
 import { AdsTab } from "./ceo/AdsTab";
 import { BackendTab } from "./ceo/BackendTab";
 import { BillingTab } from "./ceo/BillingTab";
@@ -110,7 +111,7 @@ export function CeoPage() {
       {/* One header for every tab: the day, the tab, one status pill and
           Refresh. The business in one sentence belongs to Today only; on the
           other tabs it repeated the same line above every page. */}
-      <header className="pb-6">
+      <header className="pb-6" data-section="header">
         {/* The title keeps its width (every tab name fits in 140 to 170px);
             when room runs out it is the status pill that gives way and
             truncates. */}
@@ -157,10 +158,16 @@ export function CeoPage() {
         role="tabpanel"
         id={panelId(tab)}
         aria-labelledby={tabId(tab)}
+        data-section="today"
         className="min-w-0 pb-10"
       >
         {ready ? (
           <View sections={sections} now={now} day={day} goTab={setTab} />
+        ) : tab === "today" ? (
+          <div role="status" aria-busy="true" aria-live="polite">
+            <span className="sr-only">Loading the cockpit</span>
+            <CeoTodayTabSkeleton />
+          </div>
         ) : (
           <LoadingSkeleton
             variant="page"
