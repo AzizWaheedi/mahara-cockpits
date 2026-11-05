@@ -24,22 +24,29 @@ const IDENTITY_SQL = `select session_user::text as login, current_user::text as 
  exists(select 1 from pg_catalog.pg_auth_members m join pg_catalog.pg_roles x on x.oid=m.roleid
    where m.member=r.oid and x.rolname='cockpit_native_research_reader' and not m.admin_option) as reader_member,
  exists(select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
- where n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
- and has_schema_privilege(session_user,n.oid,'USAGE')
- and case when c.relkind in ('r','p','v','m','f') then has_table_privilege(session_user,c.oid,'SELECT,INSERT,UPDATE,DELETE') else false end) as direct_table_access,
+ where n.nspname not in ('pg_catalog','information_schema')
+ and case when c.relkind in ('r','p','v','m','f') then
+   (has_schema_privilege(session_user,n.oid,'USAGE') and has_table_privilege(session_user,c.oid,'SELECT,INSERT,UPDATE,DELETE'))
+   or (has_schema_privilege('cockpit_native_research_reader',n.oid,'USAGE') and has_table_privilege('cockpit_native_research_reader',c.oid,'SELECT,INSERT,UPDATE,DELETE'))
+   else false end) as direct_table_access,
  exists(select 1 from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
- where n.nspname not like 'pg_%' and n.nspname <> 'information_schema'
- and has_schema_privilege(session_user,n.oid,'USAGE')
- and case when c.relkind='S' then has_sequence_privilege(session_user,c.oid,'USAGE,UPDATE') else false end) as direct_sequence_access,
+ where n.nspname not in ('pg_catalog','information_schema')
+ and case when c.relkind='S' then
+   (has_schema_privilege(session_user,n.oid,'USAGE') and has_sequence_privilege(session_user,c.oid,'USAGE,UPDATE'))
+   or (has_schema_privilege('cockpit_native_research_reader',n.oid,'USAGE') and has_sequence_privilege('cockpit_native_research_reader',c.oid,'USAGE,UPDATE'))
+   else false end) as direct_sequence_access,
  (select count(*)::int from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
  where c.relkind in ('r','p') and (n.nspname,c.relname) in
  (('public','cockpit_form_responses'),('public','cockpit_form_invites'),('public','cockpit_form_effects'),
  ('public','cockpit_clickup_writeback_queue'),('public','cockpit_form_versions'),('public','cockpit_settings'),
  ('native_research_private','capabilities'),('native_research_private','settings'),('native_research_private','gateway_quotas'))) as protected_table_count,
  exists(select 1 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
- where n.nspname not in ('pg_catalog','information_schema') and p.prosecdef
- and p.prorettype <> 'pg_catalog.trigger'::regtype and has_function_privilege(session_user,p.oid,'EXECUTE')
- and has_schema_privilege(session_user,n.oid,'USAGE')) as callable_definer,
+ where n.nspname not in ('pg_catalog','information_schema') and p.prosecdef and p.prorettype <> 'pg_catalog.trigger'::regtype
+ and ((has_function_privilege(session_user,p.oid,'EXECUTE') and has_schema_privilege(session_user,n.oid,'USAGE'))
+   or (has_function_privilege('cockpit_native_research_reader',p.oid,'EXECUTE') and has_schema_privilege('cockpit_native_research_reader',n.oid,'USAGE')
+     and not (n.nspname='native_research_private' and p.proname in ('read_source','reserve_source')
+       and pg_catalog.oidvectortypes(p.proargtypes)='text, text, uuid, integer, text, text, text, integer'
+       and p.prorettype='pg_catalog.jsonb'::regtype)))) as callable_definer,
  current_setting('log_statement') as log_statement,
  current_setting('log_min_duration_statement') as log_min_duration,
  current_setting('log_parameter_max_length_on_error') as log_error_parameters
