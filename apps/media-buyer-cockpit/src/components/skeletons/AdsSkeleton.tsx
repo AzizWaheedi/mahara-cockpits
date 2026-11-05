@@ -1,3 +1,4 @@
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { readBillingStripShown } from "@/lib/billingStripShape";
 import "@/components/ceo/ceo.css";
@@ -234,7 +235,7 @@ function CampaignBoardSkeleton() {
 }
 
 /** The Ads page with its data held back, so the board keeps its shape. */
-export function AdsSkeleton() {
+function AdsSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -266,3 +267,5 @@ export function AdsSkeleton() {
     </div>
   );
 }
+
+export const AdsSkeleton = rememberedSkeleton("ads", AdsSkeletonStatic);

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Kicker } from "@/components/ceo/Kicker";
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -526,7 +527,7 @@ export function CeoTodayTabSkeleton() {
  * the date, the title, the trust pill, Refresh and the one-sentence line held
  * back. The live page draws the same header, so nothing moves on arrival.
  */
-export function CeoSkeleton() {
+function CeoSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -559,3 +560,5 @@ export function CeoSkeleton() {
     </div>
   );
 }
+
+export const CeoSkeleton = rememberedSkeleton("ceo", CeoSkeletonStatic);

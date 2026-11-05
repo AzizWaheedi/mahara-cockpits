@@ -254,3 +254,21 @@ describe("the app wires the same picture", () => {
     }
   });
 });
+
+describe("the remembered layout wiring", () => {
+  test("the list draws its own picture with no remembered record", () => {
+    const html = render(JobsSkeleton);
+    expect(html).toContain('data-page-skeleton="jobs"');
+    expect(html).not.toContain("data-remembered");
+  });
+
+  test("the board draws its own picture with no remembered record", () => {
+    const html = render(JobsBoardSkeleton);
+    expect(html).toContain('data-page-skeleton="jobs-board"');
+    expect(html).not.toContain("data-remembered");
+  });
+
+  test("the signed-in layout records each page", () => {
+    expect(source("../src/App.tsx")).toContain("<LayoutRecorder");
+  });
+});

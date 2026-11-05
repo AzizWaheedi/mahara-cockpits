@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   contentHeight,
+  currentPageKey,
   LAYOUT_QUIET_MS,
   type LayoutItem,
   placeLayout,
@@ -90,9 +91,7 @@ export function rememberedSkeleton<P extends object>(
 ): ComponentType<P> {
   function Remembered(props: P) {
     const [layout] = useState<RememberedLayout | null>(() =>
-      typeof window === "undefined"
-        ? null
-        : readLayout(window.location.pathname),
+      typeof window === "undefined" ? null : readLayout(currentPageKey()),
     );
     const [fallback, setFallback] = useState(!layout);
     const [offset, setOffset] = useState<Offset | null>(null);
@@ -164,7 +163,7 @@ export function LayoutRecorder({ pathname }: { pathname: string }) {
     if (typeof window === "undefined") return;
     if (!pathname) return;
 
-    const path = window.location.pathname;
+    const path = currentPageKey();
     const started = Date.now();
     let cancelled = false;
     let saves = 0;
@@ -182,7 +181,7 @@ export function LayoutRecorder({ pathname }: { pathname: string }) {
     function tick() {
       if (cancelled) return;
       if (
-        window.location.pathname !== path ||
+        currentPageKey() !== path ||
         saves >= 3 ||
         Date.now() - started > 30000
       ) {

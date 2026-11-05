@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { LayoutRecorder } from "@/components/RememberedSkeleton";
 import { openSearch } from "@/lib/search";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
@@ -81,6 +82,7 @@ function LayoutContent() {
   }, [open, isMobile, reduced]);
   return (
     <>
+      <LayoutRecorder pathname={pathname} />
       <AppSidebar />
       <SidebarInset ref={inset}>
         {/* Below 1024px a slim bar holds the menu and the search, clear of the

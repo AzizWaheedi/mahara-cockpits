@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { rememberedSkeleton } from "../src/components/RememberedSkeleton";
 import {
   contentHeight,
+  currentPageKey,
   LAYOUT_INDEX,
   LAYOUT_MAX_AGE_MS,
   LAYOUT_MAX_PAGES,
@@ -59,6 +60,12 @@ function sampleLayout(at: number = Date.now()): RememberedLayout {
     items: [[0, 0, 0, 100, 100, 8, "rgb(1, 2, 3)", "transparent", "0 0 0 0"]],
   };
 }
+
+describe("currentPageKey", () => {
+  test("is a string", () => {
+    expect(typeof currentPageKey()).toBe("string");
+  });
+});
 
 describe("sessionUserId", () => {
   test("finds the user id in a supabase auth key", () => {

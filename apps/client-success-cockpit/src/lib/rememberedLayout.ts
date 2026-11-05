@@ -76,6 +76,12 @@ export function layoutKey(userId: string, path: string): string {
   return `${LAYOUT_PREFIX}${userId}:${path}`;
 }
 
+/** The address a page is remembered under: its path and its query. */
+export function currentPageKey(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.pathname + window.location.search;
+}
+
 export function readLayout(
   path: string,
   now: number = Date.now(),

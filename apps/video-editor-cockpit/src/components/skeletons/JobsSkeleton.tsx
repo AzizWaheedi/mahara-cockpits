@@ -4,6 +4,8 @@
  * for, so the page does not move when the jobs arrive. Decorative only.
  */
 
+import { rememberedSkeleton } from "../RememberedSkeleton";
+
 /** The route paths these skeletons stand for. */
 export const JOBS_SKELETON_PATHS = ["/"];
 
@@ -231,7 +233,7 @@ function BoardColumnSkeleton() {
 }
 
 /** The Jobs list, the desk's home, with its data held back. */
-export function JobsSkeleton() {
+function JobsSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -255,6 +257,8 @@ export function JobsSkeleton() {
   );
 }
 
+export const JobsSkeleton = rememberedSkeleton("jobs", JobsSkeletonStatic);
+
 /** The board strip while the read is pending: fixed columns at loaded width. */
 export function JobsBoardSectionSkeleton() {
   return (
@@ -273,7 +277,7 @@ export function JobsBoardSectionSkeleton() {
 }
 
 /** The board view of Jobs (?view=board), with its data held back. */
-export function JobsBoardSkeleton() {
+function JobsBoardSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -285,6 +289,11 @@ export function JobsBoardSkeleton() {
     </div>
   );
 }
+
+export const JobsBoardSkeleton = rememberedSkeleton(
+  "jobs-board",
+  JobsBoardSkeletonStatic,
+);
 
 /**
  * A page that is not Jobs, before its own skeleton exists: the header block

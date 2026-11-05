@@ -1,9 +1,10 @@
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const ROWS = [0, 1, 2, 3, 4];
 const FILTER_WIDTHS = ["w-24", "w-32", "w-20", "w-28", "w-24"];
 
-export function ClientsSkeleton() {
+function ClientsSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -77,6 +78,11 @@ export function ClientsSkeleton() {
     </div>
   );
 }
+
+export const ClientsSkeleton = rememberedSkeleton(
+  "clients",
+  ClientsSkeletonStatic,
+);
 
 export function MetaHealthSkeleton() {
   return (
