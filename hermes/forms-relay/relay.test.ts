@@ -235,6 +235,114 @@ describe("a run", () => {
 });
 
 describe("the ledger", () => {
+  test("only the exact GitHub host is accepted, including against inherited property names", async () => {
+    const calls: string[] = [];
+    const f = ledgerFetch(async () => {}, "k", (async input => {
+      calls.push(String(input));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+    for (const host of ["constructor", "__proto__", "api.github.com.evil.example"]) {
+      await expect(f(`https://${host}/`)).rejects.toBeInstanceOf(NotSent);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("a Request object's effective method cannot bypass the POST allowlist", async () => {
+    const calls: string[] = [];
+    const f = ledgerFetch(async () => {}, "k", (async input => {
+      const req = input as Request;
+      calls.push(`${req.url}:${req.method}`);
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+    const otherPost = new Request("https://api.github.com/user/repos", { method: "POST" });
+    await expect(f(otherPost)).rejects.toBeInstanceOf(NotSent);
+    expect(calls).toEqual([]);
+    const dispatch = new Request("https://api.github.com/repos/a/b/dispatches", { method: "POST" });
+    expect((await f(dispatch)).status).toBe(204);
+    expect(calls[0].endsWith(":POST")).toBe(true);
+  });
+
+  test("provider redirects cannot bypass the audited GitHub endpoint", async () => {
+    const receipts: Row[] = [];
+    let redirect: RequestRedirect | undefined;
+    const f = ledgerFetch(async r => { receipts.push(r); }, "k", (async input => {
+      redirect = (input as Request).redirect;
+      throw new Error("redirect refused");
+    }) as typeof fetch);
+    await expect(f("https://api.github.com/repos/a/b/dispatches", {
+      method: "POST", redirect: "follow",
+    })).rejects.toThrow();
+    expect(redirect).toBe("error");
+    expect(receipts.map(r => r.phase)).toEqual(["intent", "unknown"]);
+  });
+
+  test("the target and options cannot change while the intent receipt is written", async () => {
+    const target = new URL("https://api.github.com/repos/a/b/dispatches");
+    const options: RequestInit = { method: "POST", headers: { "x-synthetic": "original" }, body: "first" };
+    let sent: Request | undefined;
+    const f = ledgerFetch(async r => {
+      if (r.phase === "intent") {
+        target.host = "example.invalid";
+        (options.headers as Record<string, string>)["x-synthetic"] = "changed";
+        options.body = "changed";
+      }
+    }, "k", (async input => {
+      sent = input as Request;
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+    expect((await f(target, options)).status).toBe(204);
+    expect(sent?.url).toBe("https://api.github.com/repos/a/b/dispatches");
+    expect(sent?.headers.get("x-synthetic")).toBe("original");
+    expect(await sent?.text()).toBe("first");
+  });
+
+  test("a confirmed 204 does not depend on reading an empty body", async () => {
+    const receipts: Row[] = [];
+    const response = new Response(null, { status: 204 });
+    response.text = async () => { throw new Error("should not read"); };
+    const f = ledgerFetch(async r => { receipts.push(r); }, "k", (async () => response) as typeof fetch);
+    expect((await f("https://api.github.com/repos/a/b/dispatches", { method: "POST" })).status).toBe(204);
+    expect(receipts.map(r => [r.phase, r.http_status])).toEqual([["intent", null], ["response", 204]]);
+  });
+
+  test("a response body failure leaves an unknown receipt without leaking the error", async () => {
+    const receipts: Row[] = [];
+    const response = new Response(new ReadableStream({
+      start(controller) { controller.error(new Error("private upstream detail")); },
+    }), { status: 200 });
+    const f = ledgerFetch(async r => { receipts.push(r); }, "k", (async () => response) as typeof fetch);
+    await expect(f("https://api.github.com/repos/a/b")).rejects.toThrow("The GitHub response body could not be read.");
+    expect(receipts.map(r => r.phase)).toEqual(["intent", "unknown"]);
+    expect(JSON.stringify(receipts)).not.toContain("private upstream detail");
+  });
+
+  test("declared and streamed oversized provider bodies are rejected with unknown receipts", async () => {
+    let cancelled = false;
+    for (const response of [
+      new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 200, headers: { "content-length": "262145" } }),
+      new Response(new Uint8Array(262145), { status: 200 }),
+    ]) {
+      const receipts: Row[] = [];
+      const f = ledgerFetch(async r => { receipts.push(r); }, "k", (async () => response) as typeof fetch);
+      await expect(f("https://api.github.com/repos/a/b")).rejects.toThrow("The GitHub response body could not be read.");
+      expect(receipts.map(r => r.phase)).toEqual(["intent", "unknown"]);
+    }
+    expect(cancelled).toBe(true);
+  });
+
+  test("an aborted stalled response is cancelled and recorded as unknown", async () => {
+    let cancelled = false;
+    const response = new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 200 });
+    const controller = new AbortController();
+    const receipts: Row[] = [];
+    const f = ledgerFetch(async r => { receipts.push(r); }, "k", (async () => response) as typeof fetch);
+    const pending = f("https://api.github.com/repos/a/b", { signal: controller.signal });
+    setTimeout(() => controller.abort(), 1);
+    await expect(pending).rejects.toThrow("The GitHub response body could not be read.");
+    expect(receipts.map(r => r.phase)).toEqual(["intent", "unknown"]);
+    expect(cancelled).toBe(true);
+  });
+
   test("an intent receipt before each call, a response after; only GitHub and its dispatch POST; ids collapsed", async () => {
     const receipts: Row[] = [];
     const calls: string[] = [];
