@@ -33,8 +33,10 @@ BEGIN
   END LOOP;
   IF (SELECT md5(schema::text) FROM public.cockpit_form_versions WHERE form_key='onboarding' AND version=2)
        IS DISTINCT FROM '230653a3d7bd14a79ee7edba40976cb4'
-     OR (SELECT md5(schema::text) FROM public.cockpit_form_versions WHERE form_key='onboarding' AND version=3)
-       IS DISTINCT FROM '2e187490c06d61169588bc9724870aed' THEN
+     OR ((SELECT md5(schema::text) FROM public.cockpit_form_versions WHERE form_key='onboarding' AND version=3)
+           IS DISTINCT FROM '2e187490c06d61169588bc9724870aed'
+         AND (SELECT md5(schema::text) FROM public.cockpit_form_versions WHERE form_key='onboarding' AND version=3)
+           IS DISTINCT FROM 'ca5a873dd26eeb55299c5f6da4a1bba0') THEN
     RAISE EXCEPTION 'Onboarding schemas changed; stop and re-read them.' USING ERRCODE = '55000';
   END IF;
   SELECT count(*) INTO v_before_invites FROM public.cockpit_form_invites WHERE form_key='onboarding' AND form_version=3;
