@@ -2,8 +2,11 @@ import { ChevronRight, Presentation, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
+import {
+  ClientDatabaseSkeleton,
+  ScriptDatabaseSkeleton,
+} from "@/components/skeletons/ClientDatabaseSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
@@ -126,8 +129,9 @@ export function ClientDatabasePage() {
 
   if (data === undefined) {
     return (
-      <div className="mx-auto w-full max-w-6xl">
-        <LoadingSkeleton variant="table" label="Loading clients" rows={6} />
+      <div role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading clients</span>
+        <ClientDatabaseSkeleton />
       </div>
     );
   }
@@ -142,29 +146,35 @@ export function ClientDatabasePage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl">
-      <PageHeader
-        title="Clients"
-        sub={`${data.counts.live} live · ${data.counts.toContact} waiting on you`}
-        actions={
-          <>
-            <Button size="sm" variant="outline" asChild>
-              <Link to="/blueprint/practice">
-                <Presentation aria-hidden />
-                Practice a Blueprint call
-              </Link>
-            </Button>
-            {view === "all" ? (
-              <SearchBox
-                value={q}
-                onChange={setQ}
-                placeholder="Find a client"
-              />
-            ) : null}
-          </>
-        }
-      />
+      <div data-section="page-header">
+        <PageHeader
+          title="Clients"
+          sub={`${data.counts.live} live · ${data.counts.toContact} waiting on you`}
+          actions={
+            <>
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/blueprint/practice">
+                  <Presentation aria-hidden />
+                  Practice a Blueprint call
+                </Link>
+              </Button>
+              {view === "all" ? (
+                <SearchBox
+                  value={q}
+                  onChange={setQ}
+                  placeholder="Find a client"
+                />
+              ) : null}
+            </>
+          }
+        />
+      </div>
 
-      <nav aria-label="Show the clients" className="-mt-2 mb-4 flex gap-1.5">
+      <nav
+        aria-label="Show the clients"
+        data-section="view-switcher"
+        className="-mt-2 mb-4 flex gap-1.5"
+      >
         {VIEWS.map(v => (
           <Link
             key={v.key}
@@ -184,7 +194,10 @@ export function ClientDatabasePage() {
       {view === "worst" ? (
         <ClientProfilesView />
       ) : (
-        <div className="divide-y overflow-hidden rounded-xl border">
+        <div
+          data-section="client-list"
+          className="divide-y overflow-hidden rounded-xl border"
+        >
           {rows.map(r => (
             <Link
               key={r.taskId}
@@ -285,28 +298,33 @@ export function ScriptDatabasePage() {
 
   if (data === undefined) {
     return (
-      <div className="mx-auto w-full max-w-6xl">
-        <LoadingSkeleton
-          variant="table"
-          label="Loading the scripting database"
-          rows={6}
-        />
+      <div role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading the scripting database</span>
+        <ScriptDatabaseSkeleton />
       </div>
     );
   }
 
   return (
     <div className="mx-auto w-full max-w-6xl">
-      <PageHeader
-        title="Scripting database"
-        sub={`${data.total} proven ads, ${data.live} still running${data.saved ? `, ${data.saved} saved by the team` : ""}`}
-      />
-      <p className="-mt-3 mb-6 text-xs text-muted-foreground">
+      <div data-section="page-header">
+        <PageHeader
+          title="Scripting database"
+          sub={`${data.total} proven ads, ${data.live} still running${data.saved ? `, ${data.saved} saved by the team` : ""}`}
+        />
+      </div>
+      <p
+        data-section="intro"
+        className="-mt-3 mb-6 text-xs text-muted-foreground"
+      >
         Before you write anything, read what already worked in the same service
         line. Search the actual copy and transcripts, not just the ad names.
       </p>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div
+        data-section="filters"
+        className="mb-3 flex flex-wrap items-center gap-2"
+      >
         <AnimatedSelect
           value={service}
           onChange={e => setService(e.target.value)}
@@ -339,7 +357,7 @@ export function ScriptDatabasePage() {
         </div>
       </div>
 
-      <div className="mb-3">
+      <div data-section="filter-chips" className="mb-3">
         <WinnerFilter
           rows={data.rows}
           origin={origin}
@@ -349,21 +367,23 @@ export function ScriptDatabasePage() {
         />
       </div>
 
-      <WinningAds
-        rows={rows}
-        title=""
-        sub="Ads found by the weekly check spent at least $100 at $15 or less a lead. Ads marked Saved were picked by the team, with their numbers from the day they were saved. Click one to read its hook, its copy and, for video, what is actually said and shown on screen."
-        empty={
-          q.trim()
-            ? "No ad here matches that search."
-            : origin === "saved" || savedBy
-              ? "Nobody has saved an ad here yet. The media buyer saves one from the Ads table with Save as winner."
-              : undefined
-        }
-      />
+      <div data-section="scripting-table">
+        <WinningAds
+          rows={rows}
+          title=""
+          sub="Ads found by the weekly check spent at least $100 at $15 or less a lead. Ads marked Saved were picked by the team, with their numbers from the day they were saved. Click one to read its hook, its copy and, for video, what is actually said and shown on screen."
+          empty={
+            q.trim()
+              ? "No ad here matches that search."
+              : origin === "saved" || savedBy
+                ? "Nobody has saved an ad here yet. The media buyer saves one from the Ads table with Save as winner."
+                : undefined
+          }
+        />
+      </div>
 
       {roster?.clients?.length ? (
-        <section className="mt-8">
+        <section data-section="client-links" className="mt-8">
           <h2 className="text-[15px] font-semibold">Or start from a client</h2>
           <p className="mt-1 mb-3 text-xs text-muted-foreground">
             Opens their full screen: brand direction, offer, everything we have

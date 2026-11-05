@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
   BudgetScopeNote,
   BudgetSources,
@@ -36,6 +35,10 @@ import {
 } from "@/components/launch/LaunchCardDetails";
 import { LaunchSetup } from "@/components/launch/LaunchSetup";
 import { LogLaunch } from "@/components/launch/LogLaunch";
+import {
+  ClientsSkeleton,
+  MetaHealthSkeleton,
+} from "@/components/skeletons/ClientsSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,9 +91,10 @@ export function LaunchPage() {
   const { data, error, loading, refresh, client } = useLaunch(id);
   if (loading)
     return (
-      <main className="launch-page">
-        <LoadingSkeleton variant="page" label="Loading the client book" />
-      </main>
+      <div role="status" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading the client book</span>
+        <ClientsSkeleton />
+      </div>
     );
   if (error || !data)
     return (
@@ -748,7 +752,7 @@ function LaunchDetail({
           {tab === "activity" && <ClientActivity c={c} />}
           {tab === "launch" && (
             <>
-              <section className="launch-section">
+              <section className="launch-section" data-section="meta-health">
                 <div className="launch-section-heading">
                   <div>
                     <p className="launch-eyebrow">Before you launch</p>
@@ -767,11 +771,12 @@ function LaunchDetail({
                   )}
                 </div>
                 {reading ? (
-                  <LoadingSkeleton
-                    variant="list"
-                    label="Reading account health and campaign ownership from Meta"
-                    rows={4}
-                  />
+                  <div>
+                    <span className="sr-only" role="status">
+                      Reading account health and campaign ownership from Meta
+                    </span>
+                    <MetaHealthSkeleton />
+                  </div>
                 ) : readError ? (
                   <div role="alert" className="launch-error">
                     <AlertTriangle size={18} />

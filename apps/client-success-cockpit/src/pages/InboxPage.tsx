@@ -29,28 +29,34 @@ export function InboxPage() {
   );
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
-      <PageHeader
-        title="Inbox"
-        sub="Client WhatsApp groups waiting on a reply, each with a reply drafted. Edit it if you want, then send. Your calls and calendar are on Today."
-        actions={<ReportIssue page="inbox" />}
-      />
+      <div data-section="page-header">
+        <PageHeader
+          title="Inbox"
+          sub="Client WhatsApp groups waiting on a reply, each with a reply drafted. Edit it if you want, then send. Your calls and calendar are on Today."
+          actions={<ReportIssue page="inbox" />}
+        />
+      </div>
 
       <VideoTaskReview />
       {/* Client groups first; the rest folds under them, never dropped. */}
       <WhatsAppDesk desk="csm" clients={snap ? clientNames : undefined} />
 
-      <Fold
-        title="More from WhatsApp"
-        hint="quiet clients and every thread's history"
-      >
-        <MeetingsPage embedded part="history" />
-      </Fold>
+      <div data-section="more-from-whatsapp">
+        <Fold
+          title="More from WhatsApp"
+          hint="quiet clients and every thread's history"
+        >
+          <MeetingsPage embedded part="history" />
+        </Fold>
+      </div>
 
       {/* Sending a cut for review, folded until it is needed: the reply a
           client is waiting for is often "here it is". */}
-      <SendForReview folded />
+      <div data-section="send-for-review">
+        <SendForReview folded />
+      </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground" data-section="footer">
         Looking for a client's own thread? Open the client from{" "}
         <Link
           to="/clients"

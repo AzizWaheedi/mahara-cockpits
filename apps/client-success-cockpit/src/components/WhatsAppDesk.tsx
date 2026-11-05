@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
+import { WhatsAppDeskSkeleton } from "@/components/skeletons/InboxSkeleton";
 import { archiveWaThread, fetchWaInbox, sendReply } from "@/lib/comms";
 import { clientMatcher } from "@/lib/search";
 
@@ -352,7 +352,14 @@ function WhatsAppDeskContent({
       </p>
     );
   if (threads === null)
-    return <LoadingSkeleton variant="list" label="Reading WhatsApp" />;
+    return (
+      <div>
+        <span className="sr-only" role="status">
+          Reading WhatsApp
+        </span>
+        <WhatsAppDeskSkeleton />
+      </div>
+    );
 
   const mine = isClient
     ? threads.filter(t => isClient(t.contact_name ?? ""))
@@ -362,7 +369,7 @@ function WhatsAppDeskContent({
     : [];
 
   return (
-    <section>
+    <section data-section="whatsapp-desk">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h2 className="text-[15px] font-semibold tracking-tight">WhatsApp</h2>
         {connection?.sourceNote ? (

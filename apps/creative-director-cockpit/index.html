@@ -6,6 +6,23 @@
     <link rel="icon" type="image/png" href="/favicon.png" sizes="512x512" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <script>
+      // Set the theme before the first paint, so the page never flashes the
+      // other one. Same key and same class as the other cockpits.
+      (function () {
+        try {
+          var s =
+            localStorage.getItem("mahara-cockpit-theme") ||
+            localStorage.getItem("theme");
+          // Dark unless someone chose light: the brand's web default.
+          var dark = s !== "light";
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {
+          /* a private window; the app sets it again once it loads */
+        }
+      })();
+    </script>
     <title>Mahara Creative Cockpit</title>
     <!--
       What WhatsApp, Slack and iMessage show when a cockpit link is pasted:

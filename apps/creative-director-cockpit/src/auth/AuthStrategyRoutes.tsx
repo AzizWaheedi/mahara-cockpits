@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
+import { RouteSkeleton } from "@/components/RouteSkeleton";
 
 const AuthenticatedAppRoutes = lazy(() =>
   import("./authenticated/AuthenticatedAppRoutes").then(module => ({
@@ -10,9 +10,7 @@ const AuthenticatedAppRoutes = lazy(() =>
 /** Native Supabase is the only staff sign-in path; public pages keep their route guards. */
 export function AuthStrategyRoutes() {
   return (
-    <Suspense
-      fallback={<LoadingSkeleton variant="page" label="Loading the cockpit" />}
-    >
+    <Suspense fallback={<RouteSkeleton label="Loading the cockpit" />}>
       <AuthenticatedAppRoutes />
     </Suspense>
   );

@@ -10,15 +10,19 @@ import {
 } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { HermesChat } from "./components/HermesChat";
+import { page } from "./components/kit";
 import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { MacOSDock, SALES_DOCK_ITEMS } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
 import { SalesBanner } from "./components/SalesBanner";
 import { SearchBox } from "./components/SearchBox";
+import { ShellSkeleton } from "./components/ShellSkeleton";
 import Sidebar from "./components/Sidebar";
+import { TodaySkeleton } from "./components/skeletons/TodaySkeleton";
 import { AlertsBell } from "./components/tasks/AlertsBell";
 import { TaskFocusHost } from "./components/tasks/TaskFocus";
+import { Skeleton } from "./components/ui/skeleton";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import {
@@ -458,10 +462,26 @@ function TabBar({
 }
 
 function AppSkeleton() {
+  const { pathname } = useLocation();
   return (
-    <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
-      <LoadingSkeleton variant="page" label="Opening the sales cockpit" />
+    <div role="status" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Opening the sales cockpit</span>
+      <ShellSkeleton>
+        {pathname === "/" ? <TodaySkeleton /> : <HeaderSkeleton />}
+      </ShellSkeleton>
     </div>
+  );
+}
+
+/** Any page but Today: the shell with only its title held back. */
+function HeaderSkeleton() {
+  return (
+    <main className={page}>
+      <div className="min-w-0 space-y-2">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-4 w-64" />
+      </div>
+    </main>
   );
 }
 

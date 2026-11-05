@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import { PageHeader } from "@/components/PageHeader";
+import { CalendarSectionSkeleton } from "@/components/skeletons/DashboardSkeleton";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -222,7 +222,7 @@ function ScriptQueue({
   // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
   const optional = (q.optional ?? []) as any[];
   return (
-    <section className={`${CARD} overflow-hidden`}>
+    <section data-section="script-queue" className={`${CARD} overflow-hidden`}>
       <CardHead
         icon={Sparkles}
         title="What to script next"
@@ -315,7 +315,12 @@ export function ScriptingCalendar({
 
   if (cal === undefined) {
     return (
-      <LoadingSkeleton variant="page" label="Loading the scripting calendar" />
+      <div>
+        <span className="sr-only" role="status">
+          Loading the scripting calendar
+        </span>
+        <CalendarSectionSkeleton />
+      </div>
     );
   }
 
@@ -369,7 +374,13 @@ export function ScriptingCalendar({
       {compact ? (
         // Inside Today the page already has its title, so the calendar is a
         // section of it, not a second page.
-        <CardHead icon={CalendarDays} title="Scripting calendar" sub={counts} />
+        <div data-section="calendar-header">
+          <CardHead
+            icon={CalendarDays}
+            title="Scripting calendar"
+            sub={counts}
+          />
+        </div>
       ) : (
         <PageHeader title="Scripting calendar" sub={counts} />
       )}
@@ -385,7 +396,7 @@ export function ScriptingCalendar({
       )}
 
       {/* Plan proactively ---------------------------------------------------- */}
-      <section className={CARD}>
+      <section data-section="plan-script" className={CARD}>
         <CardHead
           icon={Plus}
           title="Plan a script"
@@ -437,7 +448,10 @@ export function ScriptingCalendar({
       />
 
       {/* Filter -------------------------------------------------------------- */}
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div
+        data-section="calendar-filter"
+        className="flex flex-wrap items-center gap-2 text-sm"
+      >
         <span className="text-muted-foreground">Show</span>
         <AnimatedSelect
           value={onlyMine}
@@ -473,7 +487,10 @@ export function ScriptingCalendar({
       )}
 
       {/* The grid ------------------------------------------------------------ */}
-      <div className="grid gap-2 md:grid-cols-4 lg:grid-cols-7">
+      <div
+        data-section="calendar-grid"
+        className="grid gap-2 md:grid-cols-4 lg:grid-cols-7"
+      >
         {/* biome-ignore lint/suspicious/noExplicitAny: query payload is untyped */}
         {cal.days.map((d: any) => {
           const items = visible(d.items);
@@ -530,7 +547,7 @@ export function ScriptingCalendar({
       )}
 
       {/* Undated -------------------------------------------------------------- */}
-      <section className={CARD}>
+      <section data-section="undated" className={CARD}>
         <CardHead
           icon={CalendarDays}
           title="No date on them yet"
@@ -553,7 +570,10 @@ export function ScriptingCalendar({
       {/* A reference list as long as the rest of the calendar, so it starts
           folded: Today stays about what to write. A client's own page links
           their folder too. [simplification audit, 2026-10-06] */}
-      <details className="overflow-hidden rounded-2xl border bg-card">
+      <details
+        data-section="drive-folders"
+        className="overflow-hidden rounded-2xl border bg-card"
+      >
         <summary className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-3 sm:px-6">
           <span className="text-[15px] font-semibold">
             Client Drive folders

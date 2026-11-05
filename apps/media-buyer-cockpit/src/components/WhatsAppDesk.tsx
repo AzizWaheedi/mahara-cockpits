@@ -9,8 +9,9 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { LoadingSkeleton } from "@/components/LoadingSkeleton";
+import { WhatsAppStatusSkeleton } from "@/components/skeletons/TodaySkeleton";
 import { archiveWaThread, fetchWaInbox, sendReply } from "@/lib/comms";
+import { writeWaDeskShape } from "@/lib/waDeskShape";
 
 /**
  * The WhatsApp desk.
@@ -306,6 +307,7 @@ function WhatsAppDeskContent({ desk }: { desk: Desk }) {
         sourceNote: out.sourceNote,
       });
       setError(null);
+      writeWaDeskShape(desk, out.configured === false ? "line" : "list");
     } catch (e) {
       if (sequence === loadSequence.current)
         setError(e instanceof Error ? e.message : "The desk did not load.");
@@ -323,7 +325,10 @@ function WhatsAppDeskContent({ desk }: { desk: Desk }) {
   // without its own WhatsApp does not spend a card saying so every day.
   if (connection?.configured === false)
     return (
-      <details className="text-sm text-muted-foreground">
+      <details
+        data-section="whatsapp"
+        className="text-sm text-muted-foreground"
+      >
         <summary>WhatsApp is not connected for this desk</summary>
         <p className="mt-2 max-w-prose text-xs">
           This desk has no WhatsApp of its own. Connect one in GoHighLevel and
@@ -335,15 +340,22 @@ function WhatsAppDeskContent({ desk }: { desk: Desk }) {
 
   if (error)
     return (
-      <p className="text-sm text-muted-foreground">
+      <p data-section="whatsapp" className="text-sm text-muted-foreground">
         WhatsApp did not load: {error}
       </p>
     );
   if (threads === null)
-    return <LoadingSkeleton variant="list" label="Reading WhatsApp" rows={4} />;
+    return (
+      <div>
+        <span className="sr-only" role="status">
+          Reading WhatsApp
+        </span>
+        <WhatsAppStatusSkeleton desk={desk} />
+      </div>
+    );
 
   return (
-    <section>
+    <section data-section="whatsapp">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h2 className="text-[15px] font-semibold tracking-tight">WhatsApp</h2>
         {connection?.sourceNote ? (
