@@ -157,12 +157,13 @@ describe("Notes popup opening", () => {
   test("shows a full-height detail skeleton, not a text line", () => {
     const html = render(createElement(NotesOpening));
 
-    expect(html).toContain('role="status"');
+    expect(count(html, 'role="status"')).toBe(1);
     expect(html).toContain('aria-busy="true"');
-    expect(html).toContain("Opening the notes");
+    expect(html).toContain("Opening the notes…");
     expect(html).toContain("min-h-dvh");
     expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_18rem]");
-    expect(html).not.toContain("Opening the notes…");
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain("motion-safe:animate-pulse");
   });
 });
 
@@ -240,6 +241,10 @@ describe("Blueprint call content paths", () => {
 describe("Blueprint settings member field", () => {
   test("an unread member list shows a compact form skeleton", () => {
     const settings = settingsFixture(true);
+    settings.changes = {
+      ...settings.changes,
+      launch_assignee: { at: "2026-11-03T12:00:00Z", by: "Omar" },
+    };
     const html = render(
       createElement(BlueprintSettings, {
         io: fakeSettingsIO(settings),

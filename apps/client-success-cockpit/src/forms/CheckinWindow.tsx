@@ -317,7 +317,7 @@ export function CheckinWindowView({
             <div className="m-auto w-full max-w-4xl p-6">
               <LoadingSkeleton
                 variant="detail"
-                label="Loading the notes"
+                label="Loading the notes…"
                 rows={5}
               />
             </div>

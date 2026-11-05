@@ -848,7 +848,7 @@ export function BlueprintCall({
         {stage.kind === "ready" ? null : (
           <StageLine busy={stage.kind === "opening"}>
             {stage.kind === "opening" ? (
-              <LoadingSkeleton variant="media" label="Opening the Blueprint" />
+              <LoadingSkeleton variant="media" label="Opening the Blueprint…" />
             ) : stage.kind === "slow" ? (
               <>
                 <p className="text-[15px] font-semibold">
@@ -1037,7 +1037,7 @@ function Presenting({
       ) : null}
       {layer.kind === "opening" ? (
         <div className="absolute inset-0 p-6">
-          <LoadingSkeleton variant="media" label="Opening the deck" />
+          <LoadingSkeleton variant="media" label="Opening the deck…" />
         </div>
       ) : null}
       {layer.kind === "ended" ? (

@@ -296,7 +296,7 @@ function AdsSection({
       </p>
     );
   if (!model)
-    return <LoadingSkeleton variant="table" label="Loading the ads" />;
+    return <LoadingSkeleton variant="table" label="Loading the ads…" />;
   if (!model.campaigns.length)
     return (
       <p className="text-sm text-muted-foreground">

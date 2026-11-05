@@ -76,7 +76,7 @@ export function NotesOpening() {
   return (
     <div className="min-h-dvh bg-background p-4 sm:p-6">
       <div className="mx-auto w-full max-w-3xl">
-        <LoadingSkeleton variant="detail" label="Opening the notes" rows={6} />
+        <LoadingSkeleton variant="detail" label="Opening the notes…" rows={6} />
       </div>
     </div>
   );
