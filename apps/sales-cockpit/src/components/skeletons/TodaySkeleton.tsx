@@ -1,4 +1,5 @@
 import { page, SectionCard, StatTile } from "../kit";
+import { rememberedSkeleton } from "../RememberedSkeleton";
 import { Skeleton } from "../ui/skeleton";
 
 const ROWS = [0, 1, 2];
@@ -130,7 +131,7 @@ export function AfterCallSectionSkeleton() {
  * Today with its data held back: the same page frame, the same cards under
  * the same titles, and a skeleton block wherever a read will bring a value.
  */
-export function TodaySkeleton() {
+function TodaySkeletonStatic() {
   return (
     <div aria-hidden="true" data-page-skeleton="today" className={page}>
       <header
@@ -252,5 +253,7 @@ export function TodaySkeleton() {
     </div>
   );
 }
+
+export const TodaySkeleton = rememberedSkeleton("today", TodaySkeletonStatic);
 
 export const TODAY_SKELETON_PATHS: string[] = ["/"];

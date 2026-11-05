@@ -15,6 +15,7 @@ import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { MacOSDock, SALES_DOCK_ITEMS } from "./components/MacOSDock";
 import { MacOSMenuBar } from "./components/MacOSMenuBar";
 import { PageBoundary } from "./components/PageBoundary";
+import { LayoutRecorder } from "./components/RememberedSkeleton";
 import { SalesBanner } from "./components/SalesBanner";
 import { SearchBox } from "./components/SearchBox";
 import { ShellSkeleton } from "./components/ShellSkeleton";
@@ -265,6 +266,7 @@ export function Seated({
 
   return (
     <div className="flex h-full lg:pt-[env(safe-area-inset-top,0px)]">
+      <LayoutRecorder pathname={pathname} />
       {/* Floating Detached Sidebar Island (Mahara Soft Floating) */}
       <div className="hidden lg:flex lg:flex-col lg:justify-center my-2.5 ml-3 shrink-0">
         <aside
@@ -464,7 +466,7 @@ function TabBar({
 function AppSkeleton() {
   const { pathname } = useLocation();
   return (
-    <div role="status" aria-busy="true" aria-live="polite">
+    <div role="status" aria-busy="true" aria-live="polite" className="h-full">
       <span className="sr-only">Opening the sales cockpit</span>
       <ShellSkeleton>
         {pathname === "/" ? <TodaySkeleton /> : <HeaderSkeleton />}

@@ -1,4 +1,5 @@
 import { SectionCard } from "@/components/ceo/SectionCard";
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { BillingStripSkeleton } from "@/components/skeletons/AdsSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { readBillingStripShown } from "@/lib/billingStripShape";
@@ -157,7 +158,7 @@ function MorningSprintSkeleton() {
 }
 
 /** The Today page with its data held back, so the first screen keeps its shape. */
-export function TodaySkeleton() {
+function TodaySkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -193,3 +194,5 @@ export function TodaySkeleton() {
     </div>
   );
 }
+
+export const TodaySkeleton = rememberedSkeleton("today", TodaySkeletonStatic);

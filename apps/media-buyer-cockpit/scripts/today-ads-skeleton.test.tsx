@@ -34,6 +34,10 @@ const trackingIssues = readFileSync(
   new URL("../src/components/TrackingIssues.tsx", import.meta.url),
   "utf8",
 );
+const billingWatch = readFileSync(
+  new URL("../src/components/AdBillingWatch.tsx", import.meta.url),
+  "utf8",
+);
 
 const stored = new Map<string, string>();
 if (typeof globalThis.localStorage === "undefined") {
@@ -220,6 +224,42 @@ describe("Tracking backlog", () => {
     expect(trackingIssues).toContain("<TrackingBacklogSkeleton />");
     expect(trackingIssues).toContain('data-section="tracking-backlog"');
     expect(trackingIssues).toContain("Reading the tracking backlog");
+  });
+
+  test("the skeleton draws two line boxes and no paragraph", () => {
+    const html = renderToStaticMarkup(<TrackingBacklogSkeleton />);
+    expect(html).not.toContain("<p");
+    expect(html.match(/h-3\.5 w-(full|2\/3)/g)?.length).toBe(2);
+  });
+});
+
+describe("the sweep skeleton", () => {
+  test("draws the same seven rows as the loaded sweep", () => {
+    const html = renderToStaticMarkup(<AdsSkeleton />);
+    expect(html.match(/data-sweep-row/g)?.length).toBe(7);
+  });
+});
+
+describe("Payments strip holds its space while it reads", () => {
+  test("the watch takes a loading row and draws it before the first read", () => {
+    expect(billingWatch).toContain("loading?: ReactNode");
+    expect(billingWatch).toContain("if (!data) return <>{loading ?? null}</>;");
+  });
+
+  test("the page hands the watch the strip skeleton once it has shown", () => {
+    expect(page).toMatch(/loading=\{\s*readBillingStripShown\(\)/);
+    expect(page).toContain("<BillingStripSkeleton section={false} />");
+    expect(page).toContain("readBillingStripShown");
+  });
+
+  test("the inner skeleton drops the section name", () => {
+    const outer = renderToStaticMarkup(<BillingStripSkeleton />);
+    expect(outer).toContain('data-section="billing-strip"');
+    const inner = renderToStaticMarkup(
+      <BillingStripSkeleton section={false} />,
+    );
+    expect(inner).not.toContain('data-section="billing-strip"');
+    expect(inner).toContain("ceo-root rounded-xl border text-sm");
   });
 });
 
