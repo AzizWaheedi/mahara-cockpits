@@ -32,7 +32,7 @@ export type InvoiceDraft = {
   issue_date: string;
   due_date?: string | null;
   checkout_url?: string | null;
-  checkout_source?: "pasted" | "whop" | "ecom";
+  checkout_source?: "pasted" | "whop" | "ecom" | "tap";
   amount_kwd?: string | number | null;
   kwd_rate?: string | number | null;
   payments?: InvoicePayment[] | null;
@@ -153,12 +153,11 @@ export function fillInvoice(
   const period = (inv.period ?? "").trim();
   const taxId = (inv.client_tax_id ?? "").trim();
   let html = template;
-  html = stripBlock(
-    html,
-    "ECOM",
-    kind === "checkout" && inv.checkout_source === "ecom",
-  );
-  html = stripBlock(html, "NOT_ECOM", inv.checkout_source !== "ecom");
+  // Ecom and Tap links are in KWD at the day's rate, with no fee added at checkout.
+  const kwdLink =
+    inv.checkout_source === "ecom" || inv.checkout_source === "tap";
+  html = stripBlock(html, "ECOM", kind === "checkout" && kwdLink);
+  html = stripBlock(html, "NOT_ECOM", !kwdLink);
   html = stripBlock(html, "CHECKOUT", kind === "checkout");
   html = stripBlock(html, "AUTOCHARGE", kind === "autocharge");
   html = stripBlock(html, "PAID", kind === "paid");

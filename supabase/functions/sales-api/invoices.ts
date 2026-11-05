@@ -1,11 +1,12 @@
 // Invoices from the sales cockpit (Aziz, 2026-10-29: "the same invoices
 // section ... that the CSM has for the deposit ... If the ecom link doesn't
-// work, they can generate a WHOP link as well").
+// work, they can generate a WHOP link as well"; 2026-11-05: "Ecom is the main
+// one, but I need to have WHOP and Tap as backups").
 //
 // The invoice desk is the client success cockpit's: cockpit_invoice_request
 // and cockpit_invoice_change check the seat, the client and every number,
 // queue the row and write the audit; the VPS invoice desk numbers it, makes
-// the Ecom or Whop link, prints the PDF and files it. These actions only
+// the Ecom, Whop or Tap link, prints the PDF and files it. These actions only
 // carry the rep's own sign-in to those functions (auth.uid() decides who
 // asked), keep to the fields the form has, and mark the request as the sales
 // cockpit's. The database's refusals reach the rep word for word.
@@ -35,10 +36,12 @@ export const REQUEST_KEYS = [
   "checkoutUrl",
   "createLink",
   "provider",
+  "clientEmail",
   "payments",
 ] as const;
 
-export const CHANGES = ["cancel", "retry", "whop"] as const;
+/** Cancel, try again, or send a failed link out with another processor. */
+export const CHANGES = ["cancel", "retry", "ecom", "whop", "tap"] as const;
 
 /** Only the form's own fields go up, plus who is asking. */
 export function requestArgs(input: unknown): Row {
@@ -63,7 +66,11 @@ export function makeInvoices(deps: InvoiceDeps) {
       throw new ApiRefusal("Which invoice? Refresh the page.");
     const action = String(b.change ?? "");
     if (!(CHANGES as readonly string[]).includes(action)) throw new ApiRefusal("Unknown invoice action.");
-    const invoice = await deps.rpcAsUser(who, "cockpit_invoice_change", { p_id: id, p_action: action, p_app: "sales" });
+    // Switching to Tap may carry the client's email; the database checks it.
+    const email = cleanText(b.email, 254).toLowerCase();
+    const args: Row = { p_id: id, p_action: action, p_app: "sales" };
+    if (action === "tap" && email) args.p_email = email;
+    const invoice = await deps.rpcAsUser(who, "cockpit_invoice_change", args);
     return { invoice };
   }
 

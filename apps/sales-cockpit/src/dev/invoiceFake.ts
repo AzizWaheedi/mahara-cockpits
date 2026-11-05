@@ -1,7 +1,8 @@
 /**
  * Invoices in the harness: billing sheet clients, a few invoices in each
- * state (ready with Ecom paid and unpaid, a failed Ecom one that can switch
- * to Whop, one being made) and the invoice worker's heartbeat.
+ * state (ready with Ecom paid and unpaid, ready with Tap, a failed Ecom one
+ * that can switch to Whop or Tap, a failed Tap one, one being made) and the
+ * invoice worker's heartbeat.
  * /sales/harness.html?path=/invoices
  */
 type Row = Record<string, unknown>;
@@ -155,6 +156,47 @@ export const INVOICES: Row[] = [
   }),
 ];
 
+// Tap, the second backup (2026-11-05): an unpaid Tap invoice, and a failed
+// Tap one with the client's email on it.
+INVOICES.splice(
+  1,
+  0,
+  base({
+    id: "66666666-6666-4666-8666-666666666666",
+    clickup_task_id: "86eexample3",
+    client_name: "شركة الريم للتصميم",
+    kind: "checkout",
+    amount_usd: 1200,
+    description: "Deposit",
+    due_date: dayOf(now + 4 * D),
+    checkout_source: "tap",
+    tap_invoice_id: "inv_Example123456",
+    client_email: "owner@alreem.example",
+    amount_kwd: 367.8,
+    checkout_url: "https://invoices.tap.company/invoice/inv_Example123456",
+    status: "issued",
+    invoice_no: "INV-2026-028",
+    drive_url: "https://drive.google.com/file/d/t/view",
+    requested_at: iso(now - 90 * 60_000),
+    issued_at: iso(now - 88 * 60_000),
+  }),
+  base({
+    id: "77777777-7777-4777-8777-777777777777",
+    clickup_task_id: "86eexample2",
+    client_name: "Makers",
+    kind: "checkout",
+    amount_usd: 900,
+    description: "First payment",
+    due_date: dayOf(now + 6 * D),
+    checkout_source: "tap",
+    client_email: "finance@makers.example",
+    status: "failed",
+    error:
+      "Tap did not make the link: Tap HTTP 400: 1108 Invalid item name. On the invoices page press Use an Ecom link instead or Use a Whop link instead, or tell Muhammed.",
+    requested_at: iso(now - 20 * 60_000),
+  }),
+);
+
 export const DESK: Row[] = [
   { beat_at: iso(now - 30_000), ok: true, detail: null },
 ];
@@ -163,8 +205,10 @@ export function payments(ids: string[]): Row[] {
   return ids.flatMap((id): Row[] =>
     id.startsWith("1111")
       ? [{ id, status: "UNPAID", paid_at: null, method: null }]
-      : id.startsWith("5555")
-        ? [{ id, status: "PAID", paid_at: iso(now - 4 * D), method: "KNET" }]
-        : [],
+      : id.startsWith("6666")
+        ? [{ id, status: "UNPAID", paid_at: null, method: "Tap" }]
+        : id.startsWith("5555")
+          ? [{ id, status: "PAID", paid_at: iso(now - 4 * D), method: "KNET" }]
+          : [],
   );
 }
