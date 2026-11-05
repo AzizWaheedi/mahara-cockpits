@@ -31,7 +31,7 @@ function setup(overrides: Record<string, unknown> = {}) {
     permit: async () => { calls.push("rate"); return true; },
     comment: async (taskId: string, commentId: string) => { calls.push("comment"); return { taskId, commentId, bytes: text }; },
     readAtomic: async () => { calls.push("atomic"); return snapshot; },
-    recheckAtomic: async () => { calls.push("recheck"); return true; }, ...overrides,
+    recheckAtomic: async () => { calls.push("recheck"); return snapshot; }, ...overrides,
   };
   return { handler: candidateHandler(config, ports, () => seconds), calls, ports };
 }
@@ -54,6 +54,11 @@ describe("reader HTTP boundary, isolated fakes", () => {
     expect(r.status).toBe(200); expect(calls).toEqual(["rate", "keys", "atomic", "comment", "recheck"]);
     expect(await r.json()).toEqual({ taskId: snapshot.taskId, responseId: snapshot.responseId, schemaVersion: 3, submittedAt: snapshot.submittedAt, answers: snapshot.answers });
   });
+  test("accepts a verified confirmed response without changing its source state", async () => {
+    const confirmed = { ...snapshot, state: "confirmed" };
+    const { handler } = setup({ readAtomic: async () => confirmed, recheckAtomic: async () => confirmed });
+    expect((await handler(req())).status).toBe(200);
+  });
   test("denies a fake identity before reading a comment or response", async () => {
     const { handler, calls } = setup(); expect((await handler(req(binding, "not.a.jwt"))).status).toBe(403);
     expect(calls).not.toContain("comment"); expect(calls).not.toContain("atomic");
@@ -71,7 +76,23 @@ describe("reader HTTP boundary, isolated fakes", () => {
     expect((await handler(req())).status).toBe(403); expect(calls).not.toContain("comment");
   });
   test("does not return a response superseded during the provider read", async () => {
-    const { handler } = setup({ recheckAtomic: async () => false }); expect((await handler(req())).status).toBe(403);
+    const { handler } = setup({ recheckAtomic: async () => null }); expect((await handler(req())).status).toBe(403);
+  });
+  test("passes the same canonical secret and verified run to both database calls, not its hash", async () => {
+    const seen: unknown[] = [];
+    const db = async (request: unknown, capability: string, identity: unknown) => { seen.push({request,capability,identity}); return snapshot; };
+    const { handler } = setup({ readAtomic: db, recheckAtomic: db });
+    expect((await handler(req())).status).toBe(200);
+    expect(seen).toHaveLength(2);
+    for (const entry of seen as {request: Record<string,unknown>;capability:string;identity:{runId:string;attempt:string}}[]) {
+      expect(entry.capability).toBe(binding.capability);
+      expect(entry.request.capability).toBeUndefined();
+      expect(entry.identity).toEqual({runId:"10",attempt:"1"});
+    }
+  });
+  test("denies a different otherwise-valid second snapshot", async () => {
+    const { handler } = setup({ recheckAtomic: async () => ({...snapshot,answers:[{...snapshot.answers[0],value:"Different fictional answer"}]}) });
+    expect((await handler(req())).status).toBe(403);
   });
   test("denies provider failures without leaking exception content", async () => {
     const { handler } = setup({ comment: async () => { throw Error("synthetic secret"); } });

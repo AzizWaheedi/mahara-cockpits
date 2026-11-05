@@ -19,6 +19,20 @@ The key-fetch candidate pins `https://token.actions.githubusercontent.com/.well-
 
 The second database check reduces stale reads but does not serialize later external publication with new submissions. A response can still be superseded immediately afterward. The report publication fence, provider-side idempotency and unknown-outcome recovery remain unimplemented, so this candidate must not be deployed or used to justify the native switch.
 
+## Transactional source candidate
+
+The separate CLI-generated migration `supabase/migrations/20261105162937_native_research_source_reader_candidate.sql` is a local review candidate, not an applied migration. It creates an unexposed private schema with a default-off gate and no execute, schema or table grants to `anon`, `authenticated` or `service_role`. Its new dedicated reader role has no login or members. Its only explicit grants are schema usage and execution of this one function; it has no direct table privileges. PostgreSQL's inherited `PUBLIC` privileges also need an effective-permissions audit before any login or membership is provisioned. No application identity or capability issuer is provisioned. An authorized operator must separately review and create a narrowly scoped server identity, capability issuance and independent rate limiting before it could be connected. A general service-role key is not a substitute for a restricted identity.
+
+When deliberately enabled in a synthetic database, the function binds a 32-byte response capability to a single run and attempt, checks expiration against the wall clock, records up to six committed reads, locks the existing response, invite, effect, queue receipt and version rows, checks the current response against newer live onboarding submissions from any source, and validates a canonical stored answer object against the pinned v2/v3 schema and exact validator definitions. If another response has an equal or missing submission timestamp, it refuses to guess which one is later. It refuses versions containing file or date fields. The observed v2 and v3 onboarding schemas have no such fields; the Drive link is a URL text field. The function checks that the submitted-answer immutability trigger is present and enabled, renders with pinned printer definitions, and requires the resulting complete comment to match the effect plan and delivered queue digest. The service must still fetch the exact task comment and compare its bytes before exposing the snapshot.
+
+The handler passes the original capability only to its trusted database port; the function decodes and hashes it internally. The `source-port.ts` adapter maps the exact binding to parameterized SQL, but supplies no database driver or transaction implementation. Its injected gateway must commit before resolving and must not log the capability. Both the initial read and post-provider recheck must commit before their results are released, and the complete returned snapshots must agree. Each consumes one of the six committed reads.
+
+**The SQL read counter is not a durable abuse limit by itself.** PostgreSQL returns a function result before a caller commits, so a direct database caller can read and roll back repeatedly without consuming a use. This is reproduced by a synthetic test. Activation requires a trusted gateway that owns the restricted database connection, commits before releasing a result, never exposes its connection credentials, and enforces an independently durable rate and replay limit. Transaction or connection errors after a possible commit must be reconciled, not blindly retried.
+
+The database checks establish validity and source provenance under the pinned functions and existing immutability trigger; they do not imply the rendered summary is a byte-for-byte reproduction of the structured answers. The private worker must handle all returned contact and free-text fields under an approved access, retention and logging policy. Exception logging and database bind parameters must not expose capabilities or answers.
+
+**Do not activate this candidate.** There is no capability issuer, authenticated runtime role or provider adapter wired to it. The function locks existing rows but cannot stop a concurrent newer response from being inserted, and the timestamp used for ordering is not protected by the existing immutability guard. A post-provider check and shared submission/publication fence with unknown-outcome recovery remain required. Full end-to-end, multi-connection race and provider tests, reviewed role grants, and fresh live definition and flag checks are required before release. The Typeform/Make route remains live.
+
 The candidate has an eight-second whole-request deadline and passes an abort signal to database, rate-limiter and provider ports. Those adapters must actually honor cancellation and have their own verified deadlines. A timeout after a database or provider operation began is an unknown outcome and needs durable reconciliation, not an automatic retry. The test ports have no such durable state and do not prove production recovery.
 
 ## How we know it works
@@ -26,10 +40,12 @@ The candidate has an eight-second whole-request deadline and passes an abort sig
 Run only the explicitly named tests:
 
 ```
-bun test hermes/forms-relay/native-reader-service/auth.test.ts hermes/forms-relay/native-reader-service/jwks.test.ts hermes/forms-relay/native-reader-service/handler.test.ts
+bun test hermes/forms-relay/native-reader-service/auth.test.ts hermes/forms-relay/native-reader-service/jwks.test.ts hermes/forms-relay/native-reader-service/handler.test.ts hermes/forms-relay/native-reader-service/source-port.test.ts
 ```
 
 Tests use generated keys, fictional identifiers, a fake provider and fake database ports. They do not test provider delivery, deployed credentials, role grants, Postgres transactions, real schema validation, actual rate limits or concurrent production submissions. Source copied from the earlier offline prototype remains experimental.
+
+The source migration also has synthetic PGlite checks in `source-reader.test.mjs`. Set `PGLITE_MODULE` to the local `@electric-sql/pglite` `dist/index.js` and run it with Node. The default run uses stub validators. To exercise read-only captures of the actual deployed schema, title and function **definitions only**, set `REAL_SCHEMA=1`, `ONBOARDING_SCHEMA_FIXTURE`, `ONBOARDING_TITLES_FIXTURE` and `ONBOARDING_FUNCTION_FIXTURE` to local schema-only JSON files and run with `SOURCE_VERSION=2` and then `SOURCE_VERSION=3`. `source-validator-actual.test.mjs` exercises both actual captured schemas against fictional inputs. These tests do not read client responses, contact a provider, run against the hosted database or establish multi-connection concurrency behavior.
 
 ## Not in scope
 

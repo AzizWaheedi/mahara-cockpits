@@ -51,7 +51,8 @@ type RecordState = { hash: string; taskId: string; responseId: string; version: 
 /** In-memory simulation of required atomic behavior; never used by production. */
 class FakeAtomicReader implements AtomicReader<{ refs: string[] }> {
   constructor(public row: RecordState) {}
-  async consumeAndRead({ request: r, capabilityHash: hash, identity, now: time }: Parameters<AtomicReader<{ refs: string[] }>["consumeAndRead"]>[0]) {
+  async consumeAndRead({ request: r, capability, identity, now: time }: Parameters<AtomicReader<{ refs: string[] }>["consumeAndRead"]>[0]) {
+    const hash = await capabilityHash(capability);
     const s = this.row;
     if (!s.enabled || time >= s.expires || !s.native || !s.submitted || !s.live || !s.latest || !s.delivered
       || s.hash !== hash || s.taskId !== r.taskId || s.responseId !== r.responseId || s.version !== r.schemaVersion

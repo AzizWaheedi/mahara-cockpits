@@ -18,9 +18,9 @@ type Ports = {
   // The actual provider adapter must independently verify the task association and enforce its own byte/time limits.
   comment: (task: string, id: string, signal: AbortSignal) => Promise<{ taskId: string; commentId: string; bytes: Uint8Array } | null>;
   // The actual implementation must perform all bindings, freshness, receipt, schema and capability checks atomically.
-  readAtomic: (request: Omit<Binding, "capability">, capabilityHash: string, identity: Identity, signal: AbortSignal) => Promise<Snapshot | null>;
+  readAtomic: (request: Omit<Binding, "capability">, capability: string, identity: Identity, signal: AbortSignal) => Promise<Snapshot | null>;
   // The second transaction must verify that the same claim remains current after the external provider read.
-  recheckAtomic: (request: Omit<Binding, "capability">, capabilityHash: string, identity: Identity, signal: AbortSignal) => Promise<boolean>;
+  recheckAtomic: (request: Omit<Binding, "capability">, capability: string, identity: Identity, signal: AbortSignal) => Promise<Snapshot | null>;
   // Production must use an effective trusted rate limiter; callers must not supply their own identities.
   permit: (signal: AbortSignal) => Promise<boolean>;
 };
@@ -64,7 +64,7 @@ function validSnapshot(s: Snapshot, req: Binding, config: Config): boolean {
       || s.taskId !== req.taskId || s.responseId !== req.responseId || s.schemaVersion !== req.schemaVersion
       || s.commentId !== req.commentId || s.commentSha256 !== req.commentSha256
       || s.schemaHash !== pins.schema || s.printerHash !== pins.printer
-      || s.source !== "native" || s.state !== "submitted" || s.mode !== "live"
+      || s.source !== "native" || (s.state !== "submitted" && s.state !== "confirmed") || s.mode !== "live"
       || s.latest !== true || s.verifiedReceipt !== true || s.complete !== true
       || typeof s.submittedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(s.submittedAt)
       || !Number.isFinite(Date.parse(s.submittedAt)) || new Date(s.submittedAt).toISOString() !== s.submittedAt
@@ -80,6 +80,13 @@ function validSnapshot(s: Snapshot, req: Binding, config: Config): boolean {
     if (bytes > 800_000) return false;
   }
   return true;
+}
+
+// Compare only validated fields, in a fixed order, without logging private data.
+function comparable(s: Snapshot): string {
+  return JSON.stringify([s.taskId,s.responseId,s.schemaVersion,s.commentId,s.commentSha256,s.submittedAt,
+    s.schemaHash,s.printerHash,s.source,s.state,s.mode,s.latest,s.verifiedReceipt,s.complete,
+    s.answers.map(a => [a.ref,a.title,a.value])]);
 }
 
 /** This is not an installation entry point and has no production ports. */
@@ -104,19 +111,22 @@ export function candidateHandler(config: Config | null, ports: Ports | null, now
       const identity = await verifyGithub(auth.slice(7), config.policy, ports.githubKeys, now());
       check();
       const data = parseRequest(await body(request, controller.signal)); check();
-      const capHash = await capabilityHash(data.capability);
+      // Validate canonical encoding; the narrowly scoped DB function hashes
+      // the secret itself. A hash is not accepted as a bearer credential.
+      await capabilityHash(data.capability);
       // Authorize and bind the capability *before* invoking a privileged comment
       // provider, so a workflow cannot use the reader to probe unrelated tasks.
       // A later provider failure must be recovered by a bounded same-run retry.
       const { capability: _cap, ...binding } = data;
       check();
-      const snapshot = await ports.readAtomic(binding, capHash, identity, controller.signal); check();
+      const snapshot = await ports.readAtomic(binding, data.capability, identity, controller.signal); check();
       if (!snapshot || !validSnapshot(snapshot, data, config)) throw new Denied();
       const receipt = await ports.comment(data.taskId, data.commentId, controller.signal); check();
       if (!receipt || receipt.taskId !== data.taskId || receipt.commentId !== data.commentId
           || !(receipt.bytes instanceof Uint8Array) || receipt.bytes.byteLength > COMMENT_LIMIT
           || await digest(receipt.bytes) !== data.commentSha256) throw new Denied();
-      if (await ports.recheckAtomic(binding, capHash, identity, controller.signal) !== true) throw new Denied(); check();
+      const current = await ports.recheckAtomic(binding, data.capability, identity, controller.signal); check();
+      if (!current || !validSnapshot(current, data, config) || comparable(current) !== comparable(snapshot)) throw new Denied();
       // Deliberately select output fields, never return unreviewed database columns.
       return response(200, { taskId: snapshot.taskId, responseId: snapshot.responseId, schemaVersion: snapshot.schemaVersion,
         submittedAt: snapshot.submittedAt, answers: snapshot.answers });

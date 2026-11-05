@@ -118,14 +118,14 @@ export async function capabilityHash(value: string): Promise<string> {
  * deliberately supplies no database adapter or endpoint.
  */
 export interface AtomicReader<T> {
-  consumeAndRead(input: { request: Omit<Request, "capability">; capabilityHash: string; identity: Identity; now: number }): Promise<T | null>;
+  consumeAndRead(input: { request: Omit<Request, "capability">; capability: string; identity: Identity; now: number }): Promise<T | null>;
 }
 
 export async function authorizeAndRead<T>(raw: unknown, identity: Identity, reader: AtomicReader<T>, now: number): Promise<T> {
   const req = parseRequest(raw);
-  const hash = await capabilityHash(req.capability);
+  await capabilityHash(req.capability); // Validate canonical 32-byte encoding.
   const { capability: _, ...bound } = req;
-  const value = await reader.consumeAndRead({ request: bound, capabilityHash: hash, identity, now });
+  const value = await reader.consumeAndRead({ request: bound, capability: req.capability, identity, now });
   if (value === null) throw new Denied();
   return value;
 }
