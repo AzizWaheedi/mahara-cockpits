@@ -249,7 +249,7 @@ class Sections(unittest.TestCase):
 
     def test_jobs(self):
         from checks.sections import run_jobs
-        keys = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+        keys = ("ai-watch-tick", "billing-sync", "clickup-writeback:log",
                 "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
                 "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
                 "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
@@ -257,6 +257,9 @@ class Sections(unittest.TestCase):
                 "lead-sync-watch") + REQUEST_JOBS
         rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
+        # Retired on 1 Nov 2026: its row stops updating and must not page.
+        retired = rows + [{"key": "ceo-extensions-auto", "ok": True, "last_ok_at": fakes.ago(4 * 24 * 60)}]
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": retired})).status, OK)
         rows[0]["last_ok_at"] = fakes.ago(60)
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, FAIL)
         rows[0]["last_ok_at"] = fakes.ago(1)
@@ -266,7 +269,7 @@ class Sections(unittest.TestCase):
     def test_hours_watch_is_watched_at_15_minutes(self):
         # The Hubstaff watch runs every 5 minutes; its freshness row is late after 15.
         from checks.sections import run_jobs
-        keys = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+        keys = ("ai-watch-tick", "billing-sync", "clickup-writeback:log",
                 "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
                 "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hubstaff-sync", "onboarding-sync",
                 "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
@@ -287,7 +290,7 @@ class Sections(unittest.TestCase):
         # The Facebook-vs-CRM watch runs every 15 minutes; three missed runs is late.
         from checks.sections import run_jobs
         rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in (
-            "ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+            "ai-watch-tick", "billing-sync", "clickup-writeback:log",
             "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
             "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
             "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
@@ -298,7 +301,7 @@ class Sections(unittest.TestCase):
         rows[-1]["last_ok_at"] = fakes.ago(46)
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["lead-sync-watch"])
 
-    JOBS = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log", "clickup-writeback:kpi",
+    JOBS = ("ai-watch-tick", "billing-sync", "clickup-writeback:log", "clickup-writeback:kpi",
             "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine", "hiring-sync:intake",
             "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync", "tap-charges-sync",
             "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form", "csm-forms-history", "csm-fathom",
@@ -860,7 +863,7 @@ class OneOneNotesReadings(unittest.TestCase):
 
 
 class TestSectionsJobKeys:
-    ALL = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log", "clickup-writeback:kpi",
+    ALL = ("ai-watch-tick", "billing-sync", "clickup-writeback:log", "clickup-writeback:kpi",
            "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine", "hiring-sync:intake",
            "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync", "tap-charges-sync",
            "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form", "csm-forms-history", "csm-fathom",

@@ -266,6 +266,8 @@ const TRANSCRIPT_REF = "0773087f-beda-4e2c-bf50-acdac0dcbe05";
 /** A Fathom share link as the 1-1 form carries it. */
 const SHARE = /https:\/\/fathom\.video\/share\/[A-Za-z0-9_-]+/;
 const DAY = 86_400_000;
+// How far back the Meta activity sync reads an ad account that has nothing stored yet.
+const NEW_ACCOUNT_DAYS = 7;
 
 export type Ctx = {
   db: Db;
@@ -1411,9 +1413,15 @@ export async function metaSource(ctx: Ctx, sinceMs: number): Promise<Health> {
   let read = 0;
   for (const [acct, task] of accounts) {
     try {
+      // An account joins this list when the board first lists its campaign, which can be a day
+      // after the launch. Manshaat Khalida's first campaign was built at 02:20 Kuwait on 4 Nov 2026
+      // and listed at 03:07 on 5 Nov, so the normal one-day window never saw those 12 changes.
+      // An account with nothing stored yet is read from 7 days back.
+      const known = (await db.all("cockpit_csm_meta_activities", `select=account_id&account_id=eq.${acct}&limit=1`)).length > 0;
+      const since = known ? sinceMs : Math.min(sinceMs, ctx.now - NEW_ACCOUNT_DAYS * DAY);
       let page = await t.meta(`act_${acct}/activities`, {
         fields: "event_time,event_type,translated_event_type,actor_name,object_id,object_name,object_type,extra_data",
-        since: String(Math.floor(sinceMs / 1000)),
+        since: String(Math.floor(since / 1000)),
         limit: "200",
       });
       for (let n = 0; ; n++) {

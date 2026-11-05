@@ -101,8 +101,10 @@ def run_jobs(ctx: Context) -> Result:
     # The Machine section can be hours old while the sync rows are current.
     # Read the producer ledger directly so a new stall inside an open incident
     # changes its item set and the guardian alerts again.
+    # ceo-extensions-auto is not watched: waves 1-2 retired it (the billing sheet writes the
+    # extension field) and its pg_cron job was unscheduled on 1 Nov 2026, so its row stops updating.
     keys = {
-        "ai-watch-tick": 45, "billing-sync": 45, "ceo-extensions-auto": 90,
+        "ai-watch-tick": 45, "billing-sync": 45,
         "clickup-writeback:log": 45, "clickup-writeback:kpi": 90,
         "clickup-writeback:dosdonts": 90, "comment-watch": 45,
         "hiring-sync:engine": 45, "hiring-sync:intake": 90,
