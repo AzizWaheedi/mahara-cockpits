@@ -3669,3 +3669,27 @@ describe("20261103b: Typeform's hints and the fifth Meta choice on version 2 (B0
     });
   });
 });
+
+
+describe("test-card kickoff notice isolation", () => {
+  test("a real CEO canary mutes its notice before claim and the planner settles it, without changing a real-client notice", async () => {
+    await rolledBack(async () => {
+      await ex(migration("20261105111504_kickoff_canary_notice_mute.sql"));
+      const out = await submit(CEO, TEST_CARD, KICKOFF_ANSWERS);
+      expect(out.ok).toBe(true);
+      const fx = byKey(await effects(out.responseId));
+      const n = await one<any>("SELECT jsonb_build_object('id',id,'state',state,'error',error) AS r FROM public.cockpit_slack_notices WHERE dedupe_key = $1", [`kickoff:${out.responseId}`]);
+      expect(n).toMatchObject({state:"muted",error:"Canary on the test card: not posted."});
+      expect(fx.kickoff_notice.state).toBe("skipped");
+      const audit = await one<number>("SELECT count(*)::int AS r FROM public.cockpit_audit_log WHERE entity_id=$1 AND action IN ('slack_notice.queued','slack_notice.muted')", [n.id]);
+      expect(audit).toBe(2);
+      const claim = await as<any>("service", "SELECT public.cockpit_slack_notice_claim(1, $1::uuid) AS r", [n.id]);
+      expect(claim.rows).toEqual([]);
+      await goLive("kickoff", true);
+      const real = await submit(CSM_A, A, KICKOFF_ANSWERS);
+      expect(real.ok).toBe(true);
+      const realNotice = await one<any>("SELECT jsonb_build_object('state',state) AS r FROM public.cockpit_slack_notices WHERE dedupe_key=$1", [`kickoff:${real.responseId}`]);
+      expect(realNotice.state).toBe("queued");
+    });
+  });
+});

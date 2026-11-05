@@ -7,7 +7,7 @@ Checks every 15 minutes whether each client's **Facebook (Meta) leads reach its 
 | Side | Source | Notes |
 |---|---|---|
 | Meta | Graph API `act_<id>/insights`, account level, hourly breakdown in the ad account's own time zone, action `lead` | Read live every run, summed over every ad account of the client. Never taken from a cached table. |
-| CRM | `public.client_leads` for the client's GoHighLevel sub-account (kept fresh by the existing GHL lead sync, `lead_sync_state`) | Every new non-deleted contact, the way the Master Dashboard's **Leads in CRM** column counted it (`Leads View` rows per client per date). The Meta-tagged part is shown next to it. |
+| CRM | `public.client_leads` for the client's GoHighLevel sub-account (kept fresh by the existing GHL lead sync, `lead_sync_state`) | Every new non-deleted contact **that carries a Meta ad id** (`client_leads.ad_id`), since that is what Meta's lead number can match. The Meta-tagged part (any contact whose first touch was Facebook or Instagram) is shown next to it. Until 2026-11-05 every new contact counted, so Instagram messages and walk-ins could hide missing form leads: Smmim studio lost 6 leads from 2 forms not connected to the CRM and never alerted. |
 | Slack | #tech-general `C0AS2JLMJCB` | Alert and "fixed" reply only. Read for history to avoid double posts. |
 
 Both sides count the same window: the last 24 and 6 whole hours, ending at the end of the current hour.

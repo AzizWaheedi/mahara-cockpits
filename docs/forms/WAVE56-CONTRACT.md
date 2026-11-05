@@ -2450,7 +2450,13 @@ portal's schema-v2 release (P2). The Typeform door stays on version 2.
    Oman 6), not yet reconciled with the Ads Management board's Advertising Cities `b98aa20e` (the read is
    `cockpit-media-api` `board.advertisingCityOptions`, unreachable while the Supabase egress restriction holds):
    reconcile before the switch leaves `off`; a change is a version-3 text change in a later migration while version 3
-   has no answer and no invite.
+   has no answer and no invite. The proposed `20261105102219_onboarding_v3_area_alignment` migration adds
+   individual cities to cover the 71 options read from that field on 5 November, retaining existing regions and
+   adding a short whole-country selection hint in both languages. It updates the version-3 printer and schema in
+   one guarded transaction, only while both onboarding switches are off and version 3 has no invitations or
+   answers. It produces text for the existing handoff; it does not write city IDs to ClickUp. The migration
+   must be applied and verified separately before this reconciliation is live. Its switch-off recovery accepts
+   both the original and revised version-3 checksums and keeps existing answers and the version-aware reader.
 3. **The printer** (`cockpit_form_stage4_print(form, version, answers)`, IMMUTABLE). A version without a print map
    (every kickoff, the onboarding's version 2) prints through `cockpit_form_stage4_typeform_answers`, byte for byte.
    Version 3 applies `cockpit_form_stage4_print_map(3)` (server only, never sent to the portal), in the order and with

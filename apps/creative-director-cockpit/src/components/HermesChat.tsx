@@ -16,6 +16,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { Orb } from "@/components/ui/thinking-orbs";
 import {
   type ChatMessage,
   type CockpitApp,
@@ -23,9 +24,19 @@ import {
   clearAskAiThread,
   getAskAiThread,
   jobsToChatMessages,
+  logAskAiNudge,
   rateAskAiJob,
   submitAskAiJob,
 } from "@/lib/askAiClient";
+import {
+  loadNudge,
+  markDismissed,
+  markShown,
+  markUsed,
+  pickNudge,
+  saveNudge,
+  shouldNudge,
+} from "@/lib/hermesNudge";
 import {
   ASSISTANTS,
   type HermesSpan,
@@ -45,7 +56,14 @@ const ASSISTANT_ICONS = {
 
 const APP: CockpitApp = "creative";
 const LAUNCHER_BOTTOM = "bottom-[calc(1rem+env(safe-area-inset-bottom,0px))]";
+// One button height plus a small gap above the launcher.
+const NUDGE_BOTTOM = "bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))]";
 const PANEL_BOTTOM = "bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))]";
+
+/** The local ?nudge=fast switch; it must not count in the log. */
+const fastNudge = () =>
+  import.meta.env.DEV &&
+  new URLSearchParams(window.location.search).get("nudge") === "fast";
 
 const ago = (ms: number) => {
   const m = Math.round((Date.now() - ms) / 60000);
@@ -73,51 +91,37 @@ function Dots() {
   );
 }
 
-/** BoardUI's agent thinking: a diagonal wave of squares, a shimmer, seconds. */
-function HermesThinking({ label, since }: { label: string; since: number }) {
-  const [phase, setPhase] = useState(0);
+/** The orb's look for each step of an answer: sending, queued, reading. */
+const orbState = (stage: ChatMessage["status"] | undefined) =>
+  stage === "reading" ? "searching" : stage === "sent" ? "waiting" : "working";
+
+/** The agent thinking: an orb for the stage, a shimmer, seconds. */
+function HermesThinking({
+  label,
+  since,
+  stage,
+}: {
+  label: string;
+  since: number;
+  stage: ChatMessage["status"] | undefined;
+}) {
   const [now, setNow] = useState(() => Date.now());
-  const reduced = useRef(
-    typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
-  );
-  reduced.current =
-    typeof window !== "undefined" &&
-    (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
-  useEffect(() => {
-    if (reduced.current) return;
-    const timer = window.setInterval(() => setPhase(p => (p + 1 / 8) % 1), 80);
-    return () => window.clearInterval(timer);
-  }, []);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
   const elapsed = Math.max(0, Math.floor((now - since) / 1000));
-  const seed = [0.55, 0.3, 0.15, 0.85, 0.55, 0.3, 1, 0.85, 0.55];
   return (
     <>
       <div
         role="status"
         className="flex items-center gap-2.5 text-muted-foreground"
       >
-        <span aria-hidden="true" className="grid grid-cols-3 gap-0.5">
-          {Array.from({ length: 9 }, (_, n) => {
-            const col = n % 3;
-            const row = Math.floor(n / 3);
-            const s = ((col + row) / 4) * (3 / 4);
-            const behind = (phase - s + 1) % 1;
-            const lit = Math.max(0, 1 - behind / 0.3) ** 1.5;
-            const opacity = reduced.current ? seed[n] : 0.12 + 0.88 * lit;
-            return (
-              <span
-                key={n}
-                className="size-1 rounded-[1px] bg-current transition-opacity duration-[220ms]"
-                style={{ opacity }}
-              />
-            );
-          })}
-        </span>
+        <Orb
+          state={orbState(stage)}
+          size={28}
+          className="shrink-0 text-[color:var(--mahara-teal)]"
+        />
         <span className="hermes-shimmer text-sm">{label}</span>
         <span className="font-mono text-[11px] tabular-nums">{elapsed}s</span>
       </div>
@@ -302,6 +306,15 @@ export function HermesChat() {
   const assistant = ASSISTANTS[APP];
   const AssistantIcon = ASSISTANT_ICONS[APP];
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  // The panel shrinks back toward the button before it leaves the page.
+  const closePanel = () => {
+    setClosing(true);
+    window.setTimeout(() => {
+      setOpen(false);
+      setClosing(false);
+    }, 160);
+  };
   const [text, setText] = useState("");
   const [storedThread, setThread] = useState<ChatMessage[]>([]);
   const [threadOwner, setThreadOwner] = useState("");
@@ -309,7 +322,12 @@ export function HermesChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [ratings, setRatings] = useState<Map<string, -1 | 0 | 1>>(new Map());
+  const [nudge, setNudge] = useState<string | null>(null);
+  const [pulse, setPulse] = useState(false);
+  const nudgeTimer = useRef<number | null>(null);
   const location = useLocation();
+  const pathname = location.pathname;
+  const lastPath = useRef(pathname);
   const auth = useCockpitAuth();
   const { client } = auth;
   const requiredRole = (
@@ -408,6 +426,8 @@ export function HermesChat() {
     page?: string;
   }) => {
     if (!client || !isAllowed || sending.current) return;
+    saveNudge(APP, markUsed(loadNudge(APP), Date.now()));
+    setNudge(null);
     sending.current = true;
     const requestScope = scopeKey;
     const key = crypto.randomUUID();
@@ -503,6 +523,74 @@ export function HermesChat() {
     }
   }, [open, count, live?.status]);
 
+  // Offers one suggestion on a quiet page, and hides it after a while.
+  useEffect(() => {
+    if (nudgeTimer.current !== null) {
+      window.clearTimeout(nudgeTimer.current);
+      nudgeTimer.current = null;
+    }
+    if (lastPath.current !== pathname) {
+      lastPath.current = pathname;
+      setNudge(null);
+    }
+    if (open) {
+      setNudge(null);
+      return;
+    }
+    if (live || !isAllowed) return;
+    const fast = fastNudge();
+    if (!fast && !shouldNudge(loadNudge(APP), pathname, Date.now())) return;
+    const arm = (delay: number) => {
+      nudgeTimer.current = window.setTimeout(() => {
+        const active = document.activeElement;
+        const typing =
+          active instanceof HTMLElement &&
+          (active.tagName === "INPUT" ||
+            active.tagName === "TEXTAREA" ||
+            active.tagName === "SELECT" ||
+            active.isContentEditable);
+        if (typing || document.hidden) {
+          arm(8000);
+          return;
+        }
+        const question = pickNudge(
+          hermesSuggestions(APP, clientName),
+          Date.now(),
+        );
+        if (!question) return;
+        setNudge(question);
+        if (!fast) {
+          void logAskAiNudge(client, {
+            app: APP,
+            event: "shown",
+            page: pathname,
+            question,
+          });
+        }
+        saveNudge(APP, markShown(loadNudge(APP), pathname, Date.now()));
+      }, delay);
+    };
+    arm(fast ? 1500 : 8000);
+    return () => {
+      if (nudgeTimer.current !== null) {
+        window.clearTimeout(nudgeTimer.current);
+        nudgeTimer.current = null;
+      }
+    };
+  }, [open, pathname, clientName, live, isAllowed]);
+
+  // The bubble rises in, pulses the launcher, and leaves on its own.
+  useEffect(() => {
+    if (!nudge) return;
+    setPulse(true);
+    const hidden = window.setTimeout(() => setNudge(null), 15000);
+    const beat = window.setTimeout(() => setPulse(false), 700);
+    return () => {
+      window.clearTimeout(hidden);
+      window.clearTimeout(beat);
+    };
+  }, [nudge]);
+
   // Fail-closed authorization check
   if (!isAllowed || threadOwner !== scopeKey) return null;
 
@@ -519,6 +607,14 @@ export function HermesChat() {
       <style>{`
         @keyframes hermes-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: .45 } 40% { transform: translateY(-3px); opacity: 1 } }
         .hermes-dot { animation: hermes-bounce 1.2s infinite ease-in-out }
+        @keyframes hermes-nudge-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+        .hermes-nudge-in { animation: hermes-nudge-in 200ms ease-out }
+        @keyframes hermes-nudge-pulse { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.06) } }
+        .hermes-nudge-pulse { animation: hermes-nudge-pulse 600ms ease-out both }
+        @keyframes hermes-panel-in { from { opacity: 0; transform: translateY(14px) scale(.95) } to { opacity: 1; transform: none } }
+        .hermes-panel-in { animation: hermes-panel-in 260ms cubic-bezier(.16,1,.3,1) both; transform-origin: bottom right }
+        @keyframes hermes-panel-out { to { opacity: 0; transform: translateY(10px) scale(.96) } }
+        .hermes-panel-out { animation: hermes-panel-out 160ms ease-in both; transform-origin: bottom right }
         @keyframes hermes-rise { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
         .hermes-rise { animation: hermes-rise 320ms ease-out both }
         .hermes-shimmer { background: linear-gradient(90deg, color-mix(in oklab, var(--muted-foreground) 55%, transparent) 30%, var(--foreground) 50%, color-mix(in oklab, var(--muted-foreground) 55%, transparent) 70%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: hermes-shimmer 2s linear infinite }
@@ -526,21 +622,83 @@ export function HermesChat() {
         @keyframes hermes-orbit { to { stroke-dashoffset: -100 } }
         .hermes-orbit { animation: hermes-orbit 4.5s linear infinite }
         @media (prefers-reduced-motion: reduce) {
-          .hermes-rise, .hermes-orbit, .hermes-dot { animation: none }
+          .hermes-rise, .hermes-orbit, .hermes-dot, .hermes-nudge-in, .hermes-nudge-pulse, .hermes-panel-in, .hermes-panel-out { animation: none }
           .hermes-shimmer { animation: none; color: inherit; background: none }
         }
       `}</style>
+      {!open && nudge ? (
+        // Sits one button height plus a small gap above the launcher, at every screen size.
+        <div
+          className={`hermes-nudge-in fixed right-4 ${NUDGE_BOTTOM} z-40 max-w-[15rem] rounded-xl border bg-card/95 py-2 pr-7 pl-2.5 shadow-lg backdrop-blur lg:right-6 lg:bottom-[4.75rem]`}
+        >
+          <button
+            type="button"
+            dir="auto"
+            aria-label={`Ask ${assistant.name}: ${nudge}`}
+            className="flex w-full items-center gap-2 text-left"
+            onClick={() => {
+              saveNudge(APP, markUsed(loadNudge(APP), Date.now()));
+              if (!fastNudge()) {
+                void logAskAiNudge(client, {
+                  app: APP,
+                  event: "tapped",
+                  page: pathname,
+                  question: nudge,
+                });
+              }
+              setNudge(null);
+              setOpen(true);
+              void send({
+                text: nudge,
+                targetClient: clientName,
+                page: location.pathname,
+              });
+            }}
+          >
+            <Orb
+              size={18}
+              paused
+              className="shrink-0 text-[color:var(--mahara-teal)]"
+            />
+            <span className="text-[13px] leading-snug text-foreground">
+              {nudge}
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            className="absolute top-1.5 right-1.5 rounded p-0.5 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              saveNudge(APP, markDismissed(loadNudge(APP), Date.now()));
+              if (!fastNudge()) {
+                void logAskAiNudge(client, {
+                  app: APP,
+                  event: "dismissed",
+                  page: pathname,
+                  question: nudge,
+                });
+              }
+              setNudge(null);
+            }}
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
       {/* A round button on a phone so it covers as little of the page as
           possible; the label comes back from the small tablet size up. */}
       <button
         type="button"
-        onClick={() => setOpen(v => !v)}
-        className={`glow-teal fixed right-4 ${LAUNCHER_BOTTOM} z-40 flex h-11 items-center gap-2 rounded-full border bg-card/95 px-3.5 text-[13px] font-semibold text-foreground backdrop-blur hover:bg-muted sm:px-4 lg:right-6 lg:bottom-6`}
+        onClick={() => (open ? closePanel() : setOpen(true))}
+        className={`glow-teal fixed right-4 ${LAUNCHER_BOTTOM} z-40 flex h-11 items-center gap-2 rounded-full border bg-card/95 px-3.5 text-[13px] font-semibold text-foreground backdrop-blur hover:bg-muted sm:px-4 lg:right-6 lg:bottom-6 ${pulse ? "hermes-nudge-pulse" : ""}`}
         aria-label={`Ask ${assistant.name}`}
       >
-        <AssistantIcon className="size-4 sm:hidden" aria-hidden />
-        <span
-          className={`inline-block size-2 rounded-full bg-[color:var(--mahara-teal)] ${live ? "animate-pulse" : ""}`}
+        {/* The orb rests while idle and turns while the assistant works. */}
+        <Orb
+          state={live ? orbState(live.status) : undefined}
+          size={20}
+          paused={!live}
+          className="shrink-0 text-[color:var(--mahara-teal)]"
         />
         <span className="hidden sm:inline">Ask {assistant.name}</span>
         {live && !open ? (
@@ -552,7 +710,7 @@ export function HermesChat() {
       </button>
       {open ? (
         <section
-          className={`fixed right-4 ${PANEL_BOTTOM} z-40 flex h-[min(72vh,680px)] w-[min(92vw,440px)] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl dark:shadow-none lg:right-6 lg:bottom-20`}
+          className={`${closing ? "hermes-panel-out" : "hermes-panel-in"} fixed right-4 ${PANEL_BOTTOM} z-40 flex h-[min(72vh,680px)] w-[min(92vw,440px)] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl dark:shadow-none lg:right-6 lg:bottom-20`}
           aria-label={`${assistant.name} chat`}
         >
           <header className="flex items-center justify-between gap-2 border-b py-1.5 pr-1.5 pl-4">
@@ -589,7 +747,7 @@ export function HermesChat() {
               <button
                 type="button"
                 className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:size-10"
-                onClick={() => setOpen(false)}
+                onClick={closePanel}
                 aria-label={`Close ${assistant.name}`}
               >
                 <X className="size-4" />
@@ -669,7 +827,13 @@ export function HermesChat() {
                 </div>
               ),
             )}
-            {live ? <HermesThinking label={liveLabel} since={live.at} /> : null}
+            {live ? (
+              <HermesThinking
+                label={liveLabel}
+                since={live.at}
+                stage={live.status}
+              />
+            ) : null}
             <div ref={endRef} />
           </div>
           <div className="border-t-0 p-3">

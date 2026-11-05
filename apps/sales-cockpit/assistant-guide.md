@@ -342,6 +342,8 @@ How to:
 
 The round button at the bottom right opens the chat assistant, Ace. Type a question and send it. Ace answers how-to questions from this guide. It also reads the page you are on and the data that page holds, such as the lead, the call, the proposal or the day's numbers. It can read a file you attach. It cannot send a message, change a record, move a card or send a proposal.
 
+Now and then a small bubble above the chat button suggests one question for the page you are on: click it to ask that question, or press the X to hide it. It shows at most once per page a day, and two dismissals in a row hide it for a week.
+
 Ask Ace where a page or a button is, what a page shows, or how a task is done. For anything that needs a change, Ace points to the place in the cockpit and the person does it.
 
 ## Common tasks

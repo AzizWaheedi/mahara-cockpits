@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deliver, failureText, loadRoster, mentionsFor, run, sumHours, window } from "./worker";
+import { crmCounts, deliver, failureText, loadRoster, mentionsFor, run, sumHours, window } from "./worker";
 
 type Row = Record<string, any>;
 
@@ -175,5 +175,19 @@ describe("who the alert tags", () => {
   test("no systems manager on the roster tags nobody rather than guessing", async () => {
     const f = fakeIo({ cockpit_people: [{ email: "buyer@m.com", role: "Media buyer", active: true }] });
     expect(await mentionsFor(f.io, client, new Map())).toEqual([]);
+  });
+});
+
+describe("CRM count", () => {
+  const w24 = { start: Date.parse("2026-10-31T00:00:00Z"), end: Date.parse("2026-11-01T00:00:00Z") };
+  const w6 = { start: Date.parse("2026-10-31T18:00:00Z"), end: Date.parse("2026-11-01T00:00:00Z") };
+  test("Instagram messages and walk-ins do not hide missing form leads", () => {
+    const leads = [
+      { created_at: "2026-10-31T04:42:51Z", channel: "Meta", ad_id: "120249273369480280" },
+      { created_at: "2026-10-31T15:19:08Z", channel: "Meta", ad_id: null }, // Instagram message
+      { created_at: "2026-10-31T19:00:00Z", channel: "Other", ad_id: null }, // walk-in
+      { created_at: "2026-10-30T12:00:00Z", channel: "Meta", ad_id: "1202" }, // outside the window
+    ];
+    expect(crmCounts(leads, w24, w6)).toEqual({ crm24: 1, crmMeta24: 2, crm6: 0 });
   });
 });
