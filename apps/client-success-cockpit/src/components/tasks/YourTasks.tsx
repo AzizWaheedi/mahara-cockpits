@@ -184,7 +184,7 @@ function CardNote({ state }: { state: CardState }) {
   const feed = useTaskFeed();
   if (state.kind === "reading")
     return (
-      <LoadingSkeleton variant="list" label="Reading your tasks" rows={3} />
+      <LoadingSkeleton variant="list" label="Reading your tasks…" rows={3} />
     );
   if (state.kind === "failed")
     return (
