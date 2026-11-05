@@ -2535,9 +2535,13 @@ describe("20261105102219: align onboarding areas with the advertising board", ()
         answers.areaCountries.push(country);
         answers[key] = addedValues[key];
       }
+      const validAnswers = { ...GOLDENS.cases[0].answers, ...answers };
+      delete validAnswers.areasOther; // Hidden when only the six listed countries are selected.
+      const checked = await answersCheck(after, validAnswers);
+      expect([checked.ok, checked.errors]).toEqual([true, {}]);
       const printed = await one<Row[]>(
         "SELECT public.cockpit_form_stage4_print('onboarding',3,$1::jsonb) AS r",
-        [json(answers)],
+        [json(checked.answers)],
       );
       const value = printed.find((x: Row) =>
         String(x.ref).startsWith("fa017616"),
