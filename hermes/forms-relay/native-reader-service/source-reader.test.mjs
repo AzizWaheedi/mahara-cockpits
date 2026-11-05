@@ -5,7 +5,9 @@ import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { committedSourcePort } from './source-port.ts';
+import { committedSourcePort, READ_SOURCE_SQL } from './source-port.ts';
+import { committedGateway } from './gateway.ts';
+import { nodePostgresOwnedPool } from './pg-driver.ts';
 if (!process.env.PGLITE_MODULE) throw new Error('Set PGLITE_MODULE to the local PGlite dist/index.js');
 const { PGlite } = await import(pathToFileURL(process.env.PGLITE_MODULE).href);
 const db = new PGlite();
@@ -69,6 +71,7 @@ if (!real) sql=sql.replace('175f46516fd0bf33423e47dc74a2571e6f881d26d88fdf05bb08
 else assert.equal(h,formVersion===2 ? 'acafcf8c397502000d5ff7314e8d21ba513f116e726efdd7b991b7d3cafebf9e'
                                   : '175f46516fd0bf33423e47dc74a2571e6f881d26d88fdf05bb08b3462f0df3e7');
 await db.exec(sql);
+await db.exec(await readFile(new URL('../../../supabase/migrations/20261105164639_native_research_gateway_reservations_candidate.sql', import.meta.url),'utf8'));
 const response='11111111-1111-4111-8111-111111111111', invite='22222222-2222-4222-8222-222222222222';
 const effect='33333333-3333-4333-8333-333333333333', queue='44444444-4444-4444-8444-444444444444';
 const secret=Buffer.alloc(32,7).toString('base64url'), capHash=createHash('sha256').update(Buffer.alloc(32,7)).digest('hex');
@@ -197,5 +200,60 @@ assert.equal((await sourcePort(requestBinding,secret,sourceIdentity,signal)).sta
 for(let n=0;n<4;n++) assert.ok(await read());
 assert.equal(await read(),null,'six committed reads exhausted');
 await db.exec('reset role');
+await db.exec("update native_research_private.capabilities set uses=0,run_id=null,run_attempt=null");
+await db.exec('begin');
+await db.exec("update native_research_private.capabilities set issued_at=clock_timestamp()-interval '1 second',expires_at=clock_timestamp()+interval '40 milliseconds'");
+await db.exec('select pg_sleep(0.10)');
+const expiredReservation=await db.query('select native_research_private.reserve_source($1,$2,$3,$4,$5,$6,$7,$8) value',[secret,'test_task',response,formVersion,'test_comment',digest,'1',1]);
+assert.equal(expiredReservation.rows[0].value,null,'reservation expiration uses wall clock inside an old transaction');
+await db.exec('rollback');
+await db.exec('set role cockpit_native_research_reader');
+let gatewaySql=[]; let failRead=false; let releaseDiscard=false;
+const gateway=committedGateway({acquire:async()=>({
+ idle:true,
+ // PGlite does not expose command tags; this fixture labels successful local
+ // transaction calls. A production driver must expose actual server tags.
+ execute:async (statement,params)=>{gatewaySql.push(statement); if(failRead && statement===READ_SOURCE_SQL) throw Error('fictional failure'); const result=await db.query(statement,[...params]); return {...result,command:statement==='BEGIN'||statement==='COMMIT'?statement:undefined};},
+ release:async ({discard})=>{releaseDiscard=discard;},
+})});
+const throughGateway=committedSourcePort(gateway);
+assert.ok(await throughGateway(requestBinding,secret,sourceIdentity,signal));
+assert.ok(await throughGateway(requestBinding,secret,sourceIdentity,signal));
+assert.deepEqual(gatewaySql.slice(0,7),['select current_user as role','BEGIN','select native_research_private.reserve_source($1,$2,$3,$4,$5,$6,$7,$8) as admission','COMMIT','BEGIN',READ_SOURCE_SQL,'COMMIT']);
+failRead=true;
+assert.equal(await throughGateway(requestBinding,secret,sourceIdentity,signal),null,'source failure emits no answer');
+assert.equal(releaseDiscard,true,'failed connection is discarded');
+await db.exec('reset role');
+assert.equal((await db.query('select reservations from native_research_private.gateway_quotas')).rows[0].reservations,3,'admission commits even when the source transaction fails');
+assert.equal((await db.query('select uses from native_research_private.capabilities')).rows[0].uses,2,'failed source transaction did not expose or consume an answer');
+for(const role of ['anon','authenticated','service_role']) {
+ const {rows:[f]}=await db.query("select has_function_privilege($1,'native_research_private.reserve_source(text,text,uuid,integer,text,text,text,integer)','EXECUTE') allowed",[role]);
+ assert.equal(f.allowed,false);
+}
+assert.equal((await db.query("select has_table_privilege('cockpit_native_research_reader','native_research_private.gateway_quotas','SELECT') allowed")).rows[0].allowed,false);
+failRead=false;
+await db.exec('set role cockpit_native_research_reader');
+assert.equal(await throughGateway(requestBinding,secret,{runId:'456',attempt:'1'},signal),null,'quota is bound to the verified run');
+for(let n=0;n<3;n++) assert.ok(await throughGateway(requestBinding,secret,sourceIdentity,signal));
+assert.equal(await throughGateway(requestBinding,secret,sourceIdentity,signal),null,'six committed admissions exhaust quota');
+await db.exec('reset role');
+assert.equal((await db.query('select reservations from native_research_private.gateway_quotas')).rows[0].reservations,6);
+if(process.env.PG_MODULE && process.env.PGLITE_PG_MODULE) {
+  // Fictional session and transport. The in-memory socket cannot verify TLS;
+  // these synthetic attributes exercise the guard only, never production TLS.
+  await db.exec("delete from native_research_private.gateway_quotas; update native_research_private.capabilities set uses=0,run_id=null,run_attempt=null; create role synthetic_reader_login login noinherit; grant cockpit_native_research_reader to synthetic_reader_login; revoke execute on all functions in schema public from public");
+  const pg=(await import(pathToFileURL(process.env.PG_MODULE).href)).default;
+  const {createPgConfig}=await import(pathToFileURL(process.env.PGLITE_PG_MODULE).href);
+  const rawPool=new pg.Pool(createPgConfig(db));
+  const localClient=await rawPool.connect();
+  await localClient.query('set session authorization synthetic_reader_login');
+  Object.assign(localClient.connection.stream,{encrypted:true,authorized:true,servername:'db.example.invalid'});
+  localClient.release();
+  const owned=nodePostgresOwnedPool(rawPool,'synthetic_reader_login','db.example.invalid');
+  const driverPort=committedSourcePort(committedGateway(owned));
+  assert.ok(await driverPort(requestBinding,secret,sourceIdentity,signal),'node-postgres adapter, role, reservation and actual source SQL integrate');
+  assert.ok(await driverPort(requestBinding,secret,sourceIdentity,signal),'reused connection resets to the restricted login');
+  await rawPool.end();
+}
 console.log(`Synthetic local source-reader checks passed (v${formVersion}${real ? ', deployed schema definitions' : ', stubs'}).`);
 await db.close();
