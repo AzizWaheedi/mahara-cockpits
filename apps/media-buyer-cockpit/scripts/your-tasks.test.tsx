@@ -103,7 +103,12 @@ function fakeClient(
   options: {
     settleOnFirstPoll?: boolean;
     /** Subtasks the focus view's detail read carries. */
-    subtasks?: { id: string; name: string; status: string; statusType: string }[];
+    subtasks?: {
+      id: string;
+      name: string;
+      status: string;
+      statusType: string;
+    }[];
     /** The list the focus view's task sits on (the harness applies the done rule). */
     detailList?: string;
     /** How the writer settles a press: delivered (default) or skipped. */
@@ -543,7 +548,9 @@ test("on Video Pipeline a task takes a tick and a comment but no Mark done, said
     "Mark done is not offered on Video Pipeline, where done means the video is live. Move it in ClickUp.";
   expect(panel?.textContent?.split(why).length).toBe(2);
   // The steps and the comment box stay.
-  expect(panel?.querySelectorAll('[role="checkbox"]').length).toBeGreaterThan(0);
+  expect(panel?.querySelectorAll('[role="checkbox"]').length).toBeGreaterThan(
+    0,
+  );
   expect(button("Comment", panel ?? document)).toBeDefined();
   expect(button(/Open in ClickUp/, panel ?? document)).toBeDefined();
 });
@@ -720,9 +727,7 @@ test("the shared stylesheets: teal text that reads on white, one Details chevron
   expect(css).toMatch(
     /@container \(min-width: 520px\) \{\s*\.tk-row-client \{\s*display: block;/,
   );
-  expect(css).not.toMatch(
-    /@media \(min-width: 640px\) \{\s*\.tk-row-client/,
-  );
+  expect(css).not.toMatch(/@media \(min-width: 640px\) \{\s*\.tk-row-client/);
   // The focus view's Details draws its own chevron, in every cockpit (D7).
   expect(css).toContain(".tk-details > summary::before");
   expect(css).toContain(".tk-details[open] > summary::before");
@@ -828,7 +833,18 @@ test("the next seat on the same tab never sees the last seat's tasks or alerts",
   tab.hold();
   await render(cardAndBell());
   // Its first paint: nothing of the last seat's, and its own read at once.
-  expect(document.querySelectorAll(".tk-row")).toHaveLength(0);
+  expect(
+    document.querySelectorAll(".tk-row:not(.tk-row-skeleton)"),
+  ).toHaveLength(0);
+  // The reading card draws only aria-hidden placeholder rows, with no text.
+  const placeholders = [...document.querySelectorAll(".tk-row-skeleton")];
+  expect(placeholders).toHaveLength(5);
+  expect(
+    placeholders.every(row => row.closest('[aria-hidden="true"]') !== null),
+  ).toBe(true);
+  expect(placeholders.every(row => (row.textContent ?? "").trim() === "")).toBe(
+    true,
+  );
   expect(text()).not.toContain("Harbor Interiors");
   expect(text()).toContain("Reading your tasks…");
   expect(button("Alerts, 0 unread")).toBeDefined();

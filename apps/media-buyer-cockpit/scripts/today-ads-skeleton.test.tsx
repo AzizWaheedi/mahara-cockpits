@@ -4,12 +4,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   ADS_SKELETON_PATHS,
   AdsSkeleton,
+  BillingStripSkeleton,
+  TrackingBacklogSkeleton,
 } from "../src/components/skeletons/AdsSkeleton";
 import {
   TODAY_SKELETON_PATHS,
   TodaySkeleton,
   WhatsAppStatusSkeleton,
 } from "../src/components/skeletons/TodaySkeleton";
+import {
+  readBillingStripShown,
+  writeBillingStripShown,
+} from "../src/lib/billingStripShape";
 import { readWaDeskShape, writeWaDeskShape } from "../src/lib/waDeskShape";
 
 const page = readFileSync(
@@ -22,6 +28,10 @@ const exceptionAlerts = readFileSync(
 );
 const whatsappDesk = readFileSync(
   new URL("../src/components/WhatsAppDesk.tsx", import.meta.url),
+  "utf8",
+);
+const trackingIssues = readFileSync(
+  new URL("../src/components/TrackingIssues.tsx", import.meta.url),
   "utf8",
 );
 
@@ -194,5 +204,63 @@ describe("WhatsApp shape", () => {
     expect(exceptionAlerts).toContain('data-section="exception-alerts"');
     expect(whatsappDesk).toContain("<WhatsAppStatusSkeleton desk={desk} />");
     expect(whatsappDesk).toContain('data-section="whatsapp"');
+  });
+});
+
+describe("Tracking backlog", () => {
+  test("the skeleton holds the real card, without controls", () => {
+    const html = renderToStaticMarkup(<TrackingBacklogSkeleton />);
+    expect(html).toContain('data-section="tracking-backlog"');
+    expect(html).toContain("Tracking backlog");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<a ");
+  });
+
+  test("the live card and its loading state share the section name", () => {
+    expect(trackingIssues).toContain("<TrackingBacklogSkeleton />");
+    expect(trackingIssues).toContain('data-section="tracking-backlog"');
+    expect(trackingIssues).toContain("Reading the tracking backlog");
+  });
+});
+
+describe("Payments strip shape", () => {
+  test("starts absent and is drawn once it has shown", () => {
+    globalThis.localStorage.removeItem("mahara-billing-strip-shown");
+    expect(readBillingStripShown()).toBe(false);
+    expect(renderToStaticMarkup(<AdsSkeleton />)).not.toContain(
+      'data-section="billing-strip"',
+    );
+    expect(renderToStaticMarkup(<TodaySkeleton />)).not.toContain(
+      'data-section="billing-strip"',
+    );
+
+    writeBillingStripShown(true);
+    expect(readBillingStripShown()).toBe(true);
+
+    // It sits right after the header, as on the loaded page.
+    const ads = renderToStaticMarkup(<AdsSkeleton />);
+    expect(ads).toContain('data-section="billing-strip"');
+    expect(ads.indexOf('data-section="billing-strip"')).toBeLessThan(
+      ads.indexOf('data-section="stat-tiles"'),
+    );
+
+    const today = renderToStaticMarkup(<TodaySkeleton />);
+    expect(today).toContain('data-section="billing-strip"');
+    expect(today.indexOf('data-section="billing-strip"')).toBeLessThan(
+      today.indexOf('data-section="whatsapp"'),
+    );
+
+    const strip = renderToStaticMarkup(<BillingStripSkeleton />);
+    expect(strip).toContain('data-section="billing-strip"');
+    expect(strip).toContain("ceo-root rounded-xl border text-sm");
+    expect(strip).not.toContain("<button");
+
+    writeBillingStripShown(false);
+    expect(readBillingStripShown()).toBe(false);
+  });
+
+  test("the page tags the strip and remembers whether it showed", () => {
+    expect(page).toContain('data-section="billing-strip"');
+    expect(page).toContain("writeBillingStripShown");
   });
 });

@@ -69,6 +69,7 @@ import {
   winsApi,
 } from "@/components/ClientWins";
 import { FormsButton } from "@/components/FormsButton";
+import { HeldHeight } from "@/components/HeldHeight";
 import { KickoffItems, KickoffItemsBand } from "@/components/KickoffItems";
 import {
   Chip,
@@ -3659,155 +3660,156 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       )}
 
       {section === "today" && (
-        <TodayBands
-          client={auth.client}
-          doors={doors}
-          bands={bands}
-          types={ticketTypes}
-          clients={clients}
-          checker={checker}
-          onDoor={openDoor}
-          onTicket={setTicketOpen}
-          onChanged={() => setLifeVersion(v => v + 1)}
-          onAskReceipt={
-            w56?.receipts.open
-              ? row =>
-                  row.taskId &&
+        <HeldHeight id="cs-today-bands" section="today-bands">
+          <div className="space-y-6">
+            <TodayBands
+              client={auth.client}
+              doors={doors}
+              bands={bands}
+              types={ticketTypes}
+              clients={clients}
+              checker={checker}
+              onDoor={openDoor}
+              onTicket={setTicketOpen}
+              onChanged={() => setLifeVersion(v => v + 1)}
+              onAskReceipt={
+                w56?.receipts.open
+                  ? row =>
+                      row.taskId &&
+                      setSendOpen({
+                        taskId: String(row.taskId),
+                        name: row.clientName,
+                        preset: {
+                          formKey: "bank_receipt",
+                          origin: "billing",
+                          context: {
+                            part: "payment",
+                            partNo: 0,
+                            expectedAmount: row.amount,
+                            currency: row.currency,
+                            dueOn: null,
+                            manualPaymentId: row.id,
+                            dealResponseId: null,
+                          },
+                        },
+                      })
+                  : undefined
+              }
+            />
+
+            {/* Wins, receipts and returns on Today (WAVE56-CONTRACT.md 5.12). */}
+            <WinBands
+              bands={winBands}
+              onAction={b => {
+                const name =
+                  clients.find(x => String(x.taskId) === b.taskId)?.name ??
+                  b.text.replace(/^.*\((.*)\)$/, "$1");
+                if (
+                  b.kind === "accepted_no_agreement" &&
+                  b.taskId &&
+                  b.ref.proposalId
+                )
+                  navigate(
+                    `/clients/${encodeURIComponent(b.taskId)}/proposals/${String(b.ref.proposalId)}`,
+                  );
+                else if (b.kind === "invoice_paid_untied" && b.taskId)
+                  navigate(
+                    `/clients/${encodeURIComponent(b.taskId)}?tab=money`,
+                  );
+                else if (b.kind === "tie_waiting") navigate("/money?tab=wins");
+                else if (
+                  b.kind === "receipt_in" ||
+                  b.kind === "receipt_checked"
+                )
+                  navigate("/money?tab=billing");
+                else if (b.kind === "back" && b.taskId)
+                  setTicketOpen({
+                    type: "client_relaunch",
+                    taskId: b.taskId,
+                    name: String(name),
+                    details: `${String(name)} is back in the cockpit: relaunch their ads.`,
+                  });
+                else if (b.kind === "due_no_money" && b.taskId)
                   setSendOpen({
-                    taskId: String(row.taskId),
-                    name: row.clientName,
+                    taskId: b.taskId,
+                    name: String(name),
                     preset: {
                       formKey: "bank_receipt",
                       origin: "billing",
-                      context: {
-                        part: "payment",
-                        partNo: 0,
-                        expectedAmount: row.amount,
-                        currency: row.currency,
-                        dueOn: null,
-                        manualPaymentId: row.id,
-                        dealResponseId: null,
-                      },
+                      context: b.ref,
                     },
-                  })
-              : undefined
-          }
-        />
+                  });
+              }}
+            />
+
+            {/* Client forms out and the client's voice on Today (WAVE34-CONTRACT.md 5.3). */}
+            {more?.invites || more?.voice ? (
+              <FormBands
+                io={more?.invites ? fio : null}
+                bands={formBands}
+                ticketTypes={ticketTypes}
+                onSend={(taskId, name, preset) =>
+                  setSendOpen({ taskId, name, preset })
+                }
+                onOpenClient={taskId =>
+                  navigate(
+                    `/clients/${encodeURIComponent(taskId)}?tab=overview#forms-out`,
+                  )
+                }
+                onTicket={setTicketOpen}
+                onChanged={() => setLifeVersion(v => v + 1)}
+              />
+            ) : null}
+            {more && !more.invites ? (
+              <p className="text-xs text-muted-foreground">
+                Client forms: {NOT_YET}
+              </p>
+            ) : null}
+
+            {/* CEO item 7: kickoff items to decide, a Yes or No each (4.20). */}
+            <KickoffItemsBand
+              api={itemsApi}
+              reloadKey={lifeVersion}
+              onTicket={t =>
+                setTicketOpen({
+                  type: t.type,
+                  taskId: t.taskId,
+                  name: t.name,
+                  details: t.details,
+                  onSent: t.onSent,
+                })
+              }
+            />
+
+            {/* CEO item 6: sales the cockpit could not tie to a card (4.19). */}
+            <SalesNotOnCard
+              api={saleApi}
+              isCeo={auth.isCeo}
+              cards={clients.map(x => ({
+                taskId: String(x.taskId),
+                name: String(x.name),
+              }))}
+            />
+
+            {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
+                most, each opening in place. The Client Success board below stays
+                until the per-seat read is shown to hold the same tasks (TD 11.3). */}
+            <YourTasks />
+
+            <AdBillingDailyTask />
+
+            <TodaysCalls snap={snap} />
+
+            <AfterCalls snap={snap} onPlaced={() => void sb.refetch()} />
+
+            {/* Client recaps waiting on a person (docs/forms/STAGE2B-CONTRACT.md
+                5.1): each opens the client's Messages card. */}
+            <RecapsWaiting readKey={snap} native={notesNative(entry)} />
+
+            <CallList />
+          </div>
+        </HeldHeight>
       )}
-
-      {/* Wins, receipts and returns on Today (WAVE56-CONTRACT.md 5.12). */}
-      {section === "today" ? (
-        <WinBands
-          bands={winBands}
-          onAction={b => {
-            const name =
-              clients.find(x => String(x.taskId) === b.taskId)?.name ??
-              b.text.replace(/^.*\((.*)\)$/, "$1");
-            if (
-              b.kind === "accepted_no_agreement" &&
-              b.taskId &&
-              b.ref.proposalId
-            )
-              navigate(
-                `/clients/${encodeURIComponent(b.taskId)}/proposals/${String(b.ref.proposalId)}`,
-              );
-            else if (b.kind === "invoice_paid_untied" && b.taskId)
-              navigate(`/clients/${encodeURIComponent(b.taskId)}?tab=money`);
-            else if (b.kind === "tie_waiting") navigate("/money?tab=wins");
-            else if (b.kind === "receipt_in" || b.kind === "receipt_checked")
-              navigate("/money?tab=billing");
-            else if (b.kind === "back" && b.taskId)
-              setTicketOpen({
-                type: "client_relaunch",
-                taskId: b.taskId,
-                name: String(name),
-                details: `${String(name)} is back in the cockpit: relaunch their ads.`,
-              });
-            else if (b.kind === "due_no_money" && b.taskId)
-              setSendOpen({
-                taskId: b.taskId,
-                name: String(name),
-                preset: {
-                  formKey: "bank_receipt",
-                  origin: "billing",
-                  context: b.ref,
-                },
-              });
-          }}
-        />
-      ) : null}
-
-      {/* Client forms out and the client's voice on Today (WAVE34-CONTRACT.md 5.3). */}
-      {section === "today" && (more?.invites || more?.voice) ? (
-        <FormBands
-          io={more?.invites ? fio : null}
-          bands={formBands}
-          ticketTypes={ticketTypes}
-          onSend={(taskId, name, preset) =>
-            setSendOpen({ taskId, name, preset })
-          }
-          onOpenClient={taskId =>
-            navigate(
-              `/clients/${encodeURIComponent(taskId)}?tab=overview#forms-out`,
-            )
-          }
-          onTicket={setTicketOpen}
-          onChanged={() => setLifeVersion(v => v + 1)}
-        />
-      ) : null}
-      {section === "today" && more && !more.invites ? (
-        <p className="text-xs text-muted-foreground">Client forms: {NOT_YET}</p>
-      ) : null}
-
-      {/* CEO item 7: kickoff items to decide, a Yes or No each (4.20). */}
-      {section === "today" ? (
-        <KickoffItemsBand
-          api={itemsApi}
-          reloadKey={lifeVersion}
-          onTicket={t =>
-            setTicketOpen({
-              type: t.type,
-              taskId: t.taskId,
-              name: t.name,
-              details: t.details,
-              onSent: t.onSent,
-            })
-          }
-        />
-      ) : null}
-
-      {/* CEO item 6: sales the cockpit could not tie to a card (4.19). */}
-      {section === "today" ? (
-        <SalesNotOnCard
-          api={saleApi}
-          isCeo={auth.isCeo}
-          cards={clients.map(x => ({
-            taskId: String(x.taskId),
-            name: String(x.name),
-          }))}
-        />
-      ) : null}
-
-      {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
-          most, each opening in place. The Client Success board below stays
-          until the per-seat read is shown to hold the same tasks (TD 11.3). */}
-      {section === "today" && <YourTasks />}
-
-      {section === "today" && <AdBillingDailyTask />}
-
-      {section === "today" && <TodaysCalls snap={snap} />}
-
-      {section === "today" && (
-        <AfterCalls snap={snap} onPlaced={() => void sb.refetch()} />
-      )}
-
-      {/* Client recaps waiting on a person (docs/forms/STAGE2B-CONTRACT.md
-          5.1): each opens the client's Messages card. */}
-      {section === "today" && (
-        <RecapsWaiting readKey={snap} native={notesNative(entry)} />
-      )}
-
-      {section === "today" && <CallList />}
 
       {section === "today" && (
         <section

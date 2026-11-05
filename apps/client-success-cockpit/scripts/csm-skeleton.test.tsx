@@ -76,6 +76,7 @@ describe("Today skeleton", () => {
       "page-header",
       "today-summary",
       "today-stats",
+      "today-bands",
       "who-needs-you",
       "commitments",
       "requests",
@@ -88,10 +89,24 @@ describe("Today skeleton", () => {
     const at = positions(html, order);
     expect(at.every(i => i >= 0)).toBe(true);
     expect(at).toEqual([...at].sort((a, b) => a - b));
-    expect(order.every(name => page.includes(`data-section="${name}"`))).toBe(
-      true,
-    );
+    expect(
+      order
+        .filter(name => name !== "today-bands")
+        .every(name => page.includes(`data-section="${name}"`)),
+    ).toBe(true);
+    expect(page).toContain('section="today-bands"');
     expect(page).toContain("<TodaySkeleton />");
+  });
+
+  test("the numbers fold is closed and the bands hold their own space", () => {
+    expect(html).toContain('<details class="text-sm">');
+    expect(html).not.toContain('<details class="text-sm" open');
+    expect(html).toContain(
+      '<summary class="text-muted-foreground">The rest of the numbers</summary>',
+    );
+    expect(count(html, 'data-section="today-bands"')).toBe(1);
+    expect(html).toContain("min-height:");
+    expect(page).toContain('<HeldHeight id="cs-today-bands"');
   });
 
   test("the rows are bounded and each block shimmers", () => {

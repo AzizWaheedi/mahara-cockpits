@@ -69,6 +69,7 @@ import {
   type RowNumbers,
 } from "@/lib/adsFilters";
 import { feedbackTaskIdForClient } from "@/lib/appointmentFeedback";
+import { writeBillingStripShown } from "@/lib/billingStripShape";
 import { api, useAction } from "@/lib/board";
 import { adAccountsParam, parseAdAccounts } from "@/lib/clientRange";
 import {
@@ -1104,6 +1105,29 @@ function Cockpit({ view }: { view: View }) {
    */
   const [params, setParams] = useSearchParams();
   const accountView = view === "ads" ? params.get("account") : null;
+  /**
+   * The Payments strip reads its own panel, so the page watches whether it
+   * drew a row. The next Today or Ads skeleton then holds the same space.
+   */
+  const [billingStripShown, setBillingStripShown] = useState(false);
+  const billingStripRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!hasSnapshot) return;
+    const shows = view === "sod" || (view === "ads" && !accountView);
+    if (!shows) return;
+    const node = billingStripRef.current;
+    if (!node) return;
+    const read = () => setBillingStripShown(node.childElementCount > 0);
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(node, { childList: true });
+    return () => observer.disconnect();
+  }, [hasSnapshot, view, accountView]);
+  useEffect(() => {
+    if (!hasSnapshot) return;
+    if (view !== "sod" && (view !== "ads" || accountView)) return;
+    writeBillingStripShown(billingStripShown);
+  }, [hasSnapshot, view, accountView, billingStripShown]);
   // The ad accounts a client's page was opened with (?adAccounts=): a client
   // with no campaign listed is read by them on every range (R8, 2026-10-22).
   const accountIdsParam = params.get("adAccounts");
@@ -4151,17 +4175,25 @@ function Cockpit({ view }: { view: View }) {
           One quiet row, folded, and nothing when all is well (Aziz,
           2026-10-13: "so we can focus on the ads"). */}
       {(view === "sod" || (view === "ads" && !accountView)) && (
-        <AdBillingWatch
-          campaigns={(snap.campaigns as Campaign[]).map(c => ({
-            metaAccountId: c.metaAccountId,
-            dataThrough: c.dataThrough,
-            internal: c.internal,
-            accountIssue: c.accountIssue,
-            // On the Off tab, so the Payment problem filter never shows it.
-            parked: isParked(c),
-          }))}
-          onShowOnBoard={showPaymentProblems}
-        />
+        // empty:hidden keeps the strip's parent out of the page's space-y
+        // when the strip draws nothing.
+        <div
+          ref={billingStripRef}
+          data-section="billing-strip"
+          className="empty:hidden"
+        >
+          <AdBillingWatch
+            campaigns={(snap.campaigns as Campaign[]).map(c => ({
+              metaAccountId: c.metaAccountId,
+              dataThrough: c.dataThrough,
+              internal: c.internal,
+              accountIssue: c.accountIssue,
+              // On the Off tab, so the Payment problem filter never shows it.
+              parked: isParked(c),
+            }))}
+            onShowOnBoard={showPaymentProblems}
+          />
+        </div>
       )}
 
       {/* Clients who wrote on WhatsApp, with the reply already drafted.

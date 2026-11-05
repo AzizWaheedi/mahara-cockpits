@@ -1,5 +1,7 @@
 import { SectionCard } from "@/components/ceo/SectionCard";
+import { BillingStripSkeleton } from "@/components/skeletons/AdsSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
+import { readBillingStripShown } from "@/lib/billingStripShape";
 import { readWaDeskShape } from "@/lib/waDeskShape";
 import "@/components/ceo/ceo.css";
 import "@/components/tasks/tasks.css";
@@ -178,6 +180,8 @@ export function TodaySkeleton() {
           <Skeleton className="h-8 w-32 rounded-md" />
         </div>
       </header>
+
+      {readBillingStripShown() ? <BillingStripSkeleton /> : null}
 
       <WhatsAppStatusSkeleton />
 

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Wordmark } from "@/components/Wordmark";
+import "@/components/tasks/tasks.css";
 
 /** A group of rail rows, one per real item, under a label block. */
 function RailGroup({ rows }: { rows: number }) {
@@ -77,6 +78,11 @@ export function ShellSkeleton({ children }: { children?: ReactNode }) {
       </Sidebar>
       <SidebarInset>
         <main className="flex-1 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-28 sm:px-6 sm:pt-[max(1.5rem,env(safe-area-inset-top))] lg:px-8 lg:pt-8 lg:pb-12">
+          {/* AppLayout draws the alerts row above every page. Held here so the
+              page does not start higher than the loaded one. */}
+          <div className="tk-bell-bar" aria-hidden>
+            <Skeleton className="h-8 w-[86px] rounded-[0.625rem]" />
+          </div>
           {children}
         </main>
         <div
