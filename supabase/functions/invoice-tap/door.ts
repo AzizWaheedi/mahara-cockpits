@@ -1,7 +1,8 @@
 // invoice-tap's doors and operations (2026-11-05). index.ts serves them.
 //
 // Two doors, nothing else (deploy with --verify-jwt off; the doors check):
-//  - the exact service role key (the invoice worker on the VPS): op doctor | find |
+//  - a service key of this project (the invoice worker on the VPS), proven by
+//    equality with the function's own or by reading a service-only table: op doctor | find |
 //    create | get. The worker has no Tap key; this function holds the live one
 //    (TAP_SECRET_KEY, the secret tap-charges-sync already reads).
 //  - x-cron-secret (pg_cron mahara-invoice-tap-sync, four times an hour): op
@@ -324,11 +325,34 @@ export function makeHandler(deps: Deps) {
     const auth = req.headers.get("authorization") ?? "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
     const serviceKey = deps.env("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    // verify_jwt is off (pg_cron sends no JWT), so only the exact service key opens
-    // this door: a token's claims are never trusted unverified.
-    if (!token || !sameSecret(token, serviceKey)) {
+    // verify_jwt is off (pg_cron sends no JWT), so a token's claims are never
+    // trusted unverified: the function's own service key opens this door, or a
+    // key that proves itself to the database (serviceKeyProves).
+    if (!token || !(sameSecret(token, serviceKey) || (await serviceKeyProves(deps, token)))) {
       return json({ error: "Only the invoice worker may call this." }, 403);
     }
     return work(deps, body);
   };
+}
+
+/**
+ * Whether a presented key is a service key of this project: it may read
+ * cockpit_invoice_desk_health, which only the service role may read. The
+ * database checks the key's signature, so a forged or copied anon or user
+ * token fails. (The worker's key and the function's own service key are both
+ * service keys of this project but need not be the same string.)
+ */
+export async function serviceKeyProves(deps: Deps, token: string): Promise<boolean> {
+  if (!/^(eyJ[\w-]+\.[\w-]+\.[\w-]+|sb_secret_[\w-]+)$/.test(token) || token.length > 2048) return false;
+  const base = (deps.env("SUPABASE_URL") ?? "").replace(/\/$/, "");
+  if (!base) return false;
+  try {
+    const res = await deps.fetch(`${base}/rest/v1/cockpit_invoice_desk_health?select=id&limit=1`, {
+      headers: { apikey: token, Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+    await res.text();
+    return res.status === 200;
+  } catch {
+    return false;
+  }
 }

@@ -114,6 +114,33 @@ function fakeDeps(opts: { key?: string; tap?: (c: Call) => { status: number; bod
 const post = (body: unknown, headers: Record<string, string>) =>
   new Request("https://fn.example/invoice-tap", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 
+describe("a service key that is not the function's own", () => {
+  it("opens the door only when the database lets it read a service-only table", async () => {
+    const worker = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2lnbmVk";
+    const forged = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.Zm9yZ2Vk";
+    const { deps, calls } = fakeDeps({
+      rest: c => c,
+    });
+    const probe = deps.fetch;
+    deps.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("cockpit_invoice_desk_health?select=id")) {
+        const key = (init?.headers as Record<string, string>).apikey;
+        calls.push({ url, method: "GET", body: undefined });
+        return new Response(key === worker ? "[]" : JSON.stringify({ message: "JWSInvalidSignature" }), { status: key === worker ? 200 : 401 });
+      }
+      return probe(input, init);
+    }) as typeof fetch;
+    const h = makeHandler(deps);
+    // Past the door (the fake Tap answers 500, so the doctor itself reports a 502).
+    const ok = await h(post({ op: "doctor" }, { Authorization: `Bearer ${worker}` }));
+    expect(ok.status).not.toBe(403);
+    expect((await h(post({ op: "doctor" }, { Authorization: `Bearer ${forged}` }))).status).toBe(403);
+    expect((await h(post({ op: "doctor" }, { Authorization: "Bearer not a key" }))).status).toBe(403);
+    expect(calls.filter(c => c.url.includes("desk_health?select=id")).length).toBe(2);
+  });
+});
+
 describe("the doors", () => {
   it("lets only the exact service key or the cron secret in", async () => {
     const { deps } = fakeDeps();
