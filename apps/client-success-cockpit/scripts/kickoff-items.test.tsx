@@ -331,6 +331,592 @@ const onPage = (api: any, onTicket?: (t: any) => void) =>
   });
 
 describe("the client page's card (variant page)", () => {
+  test("returning A to B to A waits for a fresh A read", async () => {
+    const { api } = fx.fakeItemsApi({
+      "test-client-a": fx.rawRead([fx.rawItem()]),
+    });
+    const original = api.read;
+    let aReads = 0;
+    let finishA: (v: any) => void = () => {};
+    api.read = taskId => {
+      if (taskId === "test-client-a" && ++aReads === 1) return original(taskId);
+      if (taskId === "test-client-a")
+        return new Promise(resolve => {
+          finishA = resolve;
+        });
+      return new Promise(() => {});
+    };
+    const page = (taskId: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page("test-client-a"));
+    expect(item("funded_card")).toBeTruthy();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-client-b"))),
+    );
+    await flush();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-client-a"))),
+    );
+    await flush();
+    expect(item("funded_card")).toBeNull();
+    expect(body().querySelector('[data-kickoff-items="loading"]')).toBeTruthy();
+    await act(async () =>
+      finishA(words.readItems(fx.rawRead([fx.rawMaharaOs()]), "test-client-a")),
+    );
+    await flush();
+    expect(item("mahara_os")).toBeTruthy();
+    await clear(root);
+  });
+
+  test("disconnecting and reconnecting the same API requires a fresh read", async () => {
+    const { api } = fx.fakeItemsApi({ [T]: fx.rawRead([fx.rawItem()]) });
+    const original = api.read;
+    let reads = 0;
+    let finish: (v: any) => void = () => {};
+    api.read = taskId =>
+      ++reads === 1
+        ? original(taskId)
+        : new Promise(resolve => {
+            finish = resolve;
+          });
+    const page = (value: any) =>
+      createElement(KickoffItems, {
+        api: value,
+        taskId: T,
+        clientName: C,
+        variant: "page",
+      });
+    const root = await draw(page(api));
+    expect(item("funded_card")).toBeTruthy();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(null))),
+    );
+    await flush();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(api))),
+    );
+    await flush();
+    expect(item("funded_card")).toBeNull();
+    expect(body().querySelector('[data-kickoff-items="loading"]')).toBeTruthy();
+    await act(async () =>
+      finish(words.readItems(fx.rawRead([fx.rawMaharaOs()]), T)),
+    );
+    await flush();
+    expect(item("mahara_os")).toBeTruthy();
+    await clear(root);
+  });
+
+  test("switching API instances and back cannot resurrect a previous read", async () => {
+    const { api: first } = fx.fakeItemsApi({ [T]: fx.rawRead([fx.rawItem()]) });
+    const { api: second } = fx.fakeItemsApi({});
+    const original = first.read;
+    let reads = 0;
+    let finish: (v: any) => void = () => {};
+    first.read = taskId =>
+      ++reads === 1
+        ? original(taskId)
+        : new Promise(resolve => {
+            finish = resolve;
+          });
+    second.read = () => new Promise(() => {});
+    const page = (api: any) =>
+      createElement(KickoffItems, {
+        api,
+        taskId: T,
+        clientName: C,
+        variant: "page",
+      });
+    const root = await draw(page(first));
+    expect(item("funded_card")).toBeTruthy();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(second))),
+    );
+    await flush();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(first))),
+    );
+    await flush();
+    expect(item("funded_card")).toBeNull();
+    expect(body().querySelector('[data-kickoff-items="loading"]')).toBeTruthy();
+    await act(async () =>
+      finish(words.readItems(fx.rawRead([fx.rawMaharaOs()]), T)),
+    );
+    await flush();
+    expect(item("mahara_os")).toBeTruthy();
+    await clear(root);
+  });
+
+  test("a fresh API session never inherits another session's pending request ID", async () => {
+    const task = "test-separate-sessions";
+    const { api: first } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    const { api: second, cards: secondCards } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    const ids: string[] = [];
+    first.raise = async (_task, _item, id) => {
+      ids.push(id);
+      throw new Error("Result unknown");
+    };
+    second.raise = async (_task, _item, id) => {
+      ids.push(id);
+      secondCards[task] = fx.rawRead([fx.raised(fx.rawItem())]);
+      return {
+        raised: true,
+        alreadyOpen: false,
+        reused: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+        submit: null,
+      };
+    };
+    const page = (api: any) =>
+      createElement(KickoffItems, {
+        api,
+        taskId: task,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page(first));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(second))),
+    );
+    await flush();
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+    await clear(root);
+  });
+
+  test("reloading during Yes joins the same in-flight operation", async () => {
+    const task = "test-reload-inflight";
+    const { api, cards } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    const ids: string[] = [];
+    let resolveRaise: (v: any) => void = () => {};
+    api.raise = (_task, _item, id) => {
+      ids.push(id);
+      return new Promise(resolve => {
+        resolveRaise = resolve;
+      });
+    };
+    const page = (reloadKey: number) =>
+      createElement(KickoffItems, {
+        api,
+        taskId: task,
+        clientName: "Example client",
+        variant: "page",
+        reloadKey,
+      });
+    const root = await draw(page(0));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(1))),
+    );
+    await flush();
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    expect(ids).toHaveLength(1);
+    cards[task] = fx.rawRead([fx.raised(fx.rawItem())]);
+    await act(async () =>
+      resolveRaise({
+        raised: true,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      }),
+    );
+    await flush();
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeTruthy();
+    expect(toasts).toEqual(["Raised: Card missing for ads."]);
+    await clear(root);
+  });
+
+  test("two mounted views share one pending Yes and both receive its result", async () => {
+    const task = "test-two-views";
+    const { api, cards } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    const ids: string[] = [];
+    let finish: (v: any) => void = () => {};
+    api.raise = (_task, _item, id) => {
+      ids.push(id);
+      return new Promise(resolve => {
+        finish = resolve;
+      });
+    };
+    const view = () =>
+      createElement(KickoffItems, {
+        api,
+        taskId: task,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(createElement("div", null, view(), view()));
+    const rows = [
+      ...body().querySelectorAll('[data-item="funded_card"]'),
+    ] as any[];
+    expect(rows).toHaveLength(2);
+    await click(
+      button("Yes, raise Card missing for ads for Example client", rows[0]),
+    );
+    await click(
+      button("Yes, raise Card missing for ads for Example client", rows[1]),
+    );
+    expect(ids).toHaveLength(1);
+    cards[task] = fx.rawRead([fx.raised(fx.rawItem())]);
+    await act(async () =>
+      finish({
+        raised: true,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      }),
+    );
+    await flush();
+    expect([
+      ...body().querySelectorAll('[data-receipt="raised"]'),
+    ]).toHaveLength(2);
+    await clear(root);
+  });
+
+  test("a delayed Yes after navigation cannot show a success toast on another client", async () => {
+    const task = "test-delayed-toast";
+    const { api } = fx.fakeItemsApi({ [task]: fx.rawRead([fx.rawItem()]) });
+    let resolveRaise: (v: any) => void = () => {};
+    api.raise = () =>
+      new Promise(resolve => {
+        resolveRaise = resolve;
+      });
+    const page = (taskId: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page(task));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-other"))),
+    );
+    await flush();
+    await act(async () =>
+      resolveRaise({
+        raised: true,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      }),
+    );
+    await flush();
+    expect(toasts).toEqual([]);
+    await clear(root);
+  });
+
+  test("returning while Yes is in flight joins the same request and shows its receipt once", async () => {
+    const task = "test-inflight";
+    const { api, cards } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    const ids: string[] = [];
+    let resolveRaise: (v: any) => void = () => {};
+    api.raise = (_task, _item, id) => {
+      ids.push(id);
+      return new Promise(resolve => {
+        resolveRaise = resolve;
+      });
+    };
+    const page = (taskId: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page(task));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-other"))),
+    );
+    await flush();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(task))),
+    );
+    await flush();
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    expect(ids).toHaveLength(1);
+    cards[task] = fx.rawRead([fx.raised(fx.rawItem())]);
+    await act(async () =>
+      resolveRaise({
+        raised: true,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      }),
+    );
+    await flush();
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeTruthy();
+    expect(toasts).toEqual(["Raised: Card missing for ads."]);
+    await clear(root);
+  });
+
+  test("a returned client sees the confirmed receipt when an earlier Yes finishes", async () => {
+    const task = "test-returned-before-completion";
+    const { api, cards } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    const ids: string[] = [];
+    let resolveRaise: (v: any) => void = () => {};
+    api.raise = (_task, _item, id) => {
+      ids.push(id);
+      return new Promise(resolve => {
+        resolveRaise = resolve;
+      });
+    };
+    const page = (taskId: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page(task));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-other"))),
+    );
+    await flush();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(task))),
+    );
+    await flush();
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeNull();
+    cards[task] = fx.rawRead([fx.raised(fx.rawItem())]);
+    await act(async () =>
+      resolveRaise({
+        raised: true,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      }),
+    );
+    await flush();
+    expect(ids).toHaveLength(1);
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeTruthy();
+    expect(toasts).toEqual([]);
+    await clear(root);
+  });
+
+  test("a Yes finishing during the returned client's read is not lost", async () => {
+    const task = "test-completion-during-read";
+    const { api } = fx.fakeItemsApi({ [task]: fx.rawRead([fx.rawItem()]) });
+    const originalRead = api.read;
+    let count = 0;
+    let finishRead: (v: any) => void = () => {};
+    let finishRaise: (v: any) => void = () => {};
+    api.read = id => {
+      if (id !== task) return originalRead(id);
+      count++;
+      if (count === 1) return originalRead(id);
+      if (count === 2)
+        return new Promise(resolve => {
+          finishRead = resolve;
+        });
+      return Promise.resolve(
+        words.readItems(fx.rawRead([fx.raised(fx.rawItem())]), task),
+      );
+    };
+    api.raise = () =>
+      new Promise(resolve => {
+        finishRaise = resolve;
+      });
+    const page = (taskId: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page(task));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-other"))),
+    );
+    await flush();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(task))),
+    );
+    await flush();
+    await act(async () =>
+      finishRaise({
+        raised: true,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      }),
+    );
+    await flush();
+    await act(async () =>
+      finishRead(words.readItems(fx.rawRead([fx.rawItem()]), task)),
+    );
+    await flush();
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeTruthy();
+    expect(count).toBe(3);
+    expect(toasts).toEqual([]);
+    await clear(root);
+  });
+
+  test("a read resolving immediately before Yes still refreshes from the server", async () => {
+    const task = "test-read-completion-gap";
+    const { api } = fx.fakeItemsApi({ [task]: fx.rawRead([fx.rawItem()]) });
+    const originalRead = api.read;
+    let count = 0;
+    let finishRead: (v: any) => void = () => {};
+    let finishRaise: (v: any) => void = () => {};
+    api.read = id => {
+      if (id !== task) return originalRead(id);
+      count++;
+      if (count === 1) return originalRead(id);
+      if (count === 2)
+        return new Promise(resolve => {
+          finishRead = resolve;
+        });
+      return Promise.resolve(
+        words.readItems(fx.rawRead([fx.raised(fx.rawItem())]), task),
+      );
+    };
+    api.raise = () =>
+      new Promise(resolve => {
+        finishRaise = resolve;
+      });
+    const page = (taskId: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page(task));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-other"))),
+    );
+    await flush();
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(task))),
+    );
+    await flush();
+    await act(async () => {
+      finishRead(words.readItems(fx.rawRead([fx.rawItem()]), task));
+      finishRaise({
+        raised: true,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      });
+    });
+    await flush();
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeTruthy();
+    expect(count).toBe(3);
+    expect(toasts).toEqual([]);
+    await clear(root);
+  });
+
+  test("a newer teammate decision is read from the server after Yes", async () => {
+    const task = "test-teammate-update";
+    const { api, cards } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    api.raise = async () => {
+      cards[task] = fx.rawRead([fx.declined(fx.rawItem())]);
+      return {
+        raised: true,
+        alreadyOpen: false,
+        reused: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+        submit: null,
+      };
+    };
+    const root = await draw(
+      createElement(KickoffItems, {
+        api,
+        taskId: task,
+        clientName: "Example client",
+        variant: "page",
+      }),
+    );
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeNull();
+    expect(
+      item("funded_card").querySelector('[data-receipt="declined"]'),
+    ).toBeTruthy();
+    await clear(root);
+  });
+
+  test("an uncertain Yes retry after navigation keeps its original request ID", async () => {
+    const task = "test-uncertain";
+    const { api, cards } = fx.fakeItemsApi({
+      [task]: fx.rawRead([fx.rawItem()]),
+    });
+    const ids: string[] = [];
+    let rejectRaise: (e: Error) => void = () => {};
+    api.raise = (_task, _item, id) => {
+      ids.push(id);
+      if (ids.length === 1)
+        return new Promise((_resolve, reject) => {
+          rejectRaise = reject;
+        });
+      cards[task] = fx.rawRead([fx.raised(fx.rawItem())]);
+      return Promise.resolve({
+        raised: true,
+        alreadyOpen: false,
+        reused: true,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+      } as any);
+    };
+    const page = (taskId: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: "Example client",
+        variant: "page",
+      });
+    const root = await draw(page(task));
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page("test-other"))),
+    );
+    await flush();
+    await act(async () => rejectRaise(new Error("Network result unknown")));
+    await flush();
+    expect(toasts).toEqual([]);
+    await act(async () =>
+      root.render(createElement(MemoryRouter, null, page(task))),
+    );
+    await flush();
+    await click(button("Yes, raise Card missing for ads for Example client"));
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+    expect(
+      item("funded_card").querySelector('[data-receipt="raised"]'),
+    ).toBeTruthy();
+    await clear(root);
+  });
+
   test("a late read for another client cannot replace this client's kickoff items", async () => {
     const nextTask = "test-client-b";
     const { api } = fx.fakeItemsApi({});
@@ -897,6 +1483,110 @@ describe("Today, Kickoff items to decide (variant band)", () => {
       name: C,
       type: "card_missing",
     });
+    await clear(root);
+  });
+
+  test("the band keeps a newer teammate decision from the authoritative read", async () => {
+    const { api, cards } = fx.fakeItemsApi(
+      { [T]: fx.rawRead([fx.rawItem()]) },
+      { due },
+    );
+    api.raise = async () => {
+      cards[T] = fx.rawRead([fx.declined(fx.rawItem())]);
+      return {
+        raised: true,
+        reused: false,
+        alreadyOpen: false,
+        item: words.readItemRow(fx.raised(fx.rawItem())),
+        submit: null,
+      };
+    };
+    const root = await draw(createElement(KickoffItemsBand, { api }));
+    const row = body().querySelector(`[data-kickoff-band-row="${T}"]`);
+    await click(button(`Yes, raise Card missing for ads for ${C}`, row));
+    expect(row.querySelector('[data-receipt="declined"]')).toBeTruthy();
+    expect(row.querySelector('[data-receipt="raised"]')).toBeNull();
+    await clear(root);
+  });
+
+  test("overlapping band refreshes cannot replace a newer result with an older one", async () => {
+    const { api } = fx.fakeItemsApi(
+      { [T]: fx.rawRead([fx.rawItem(), fx.rawMaharaOs()]) },
+      { due },
+    );
+    const reads: Array<(v: any) => void> = [];
+    api.read = () =>
+      new Promise(resolve => {
+        reads.push(resolve);
+      });
+    api.raise = async (_task, item) => ({
+      raised: true,
+      reused: false,
+      alreadyOpen: false,
+      item: words.readItemRow(
+        fx.raised(item === "funded_card" ? fx.rawItem() : fx.rawMaharaOs()),
+      ),
+      submit: null,
+    });
+    const root = await draw(createElement(KickoffItemsBand, { api }));
+    const row = body().querySelector(`[data-kickoff-band-row="${T}"]`);
+    await click(button(`Yes, raise Card missing for ads for ${C}`, row));
+    await click(button(`Yes, raise General tech request for ${C}`, row));
+    expect(reads).toHaveLength(2);
+    await act(async () =>
+      reads[1](
+        words.readItems(
+          fx.rawRead([fx.declined(fx.rawItem()), fx.rawMaharaOs()]),
+          T,
+        ),
+      ),
+    );
+    await flush();
+    await act(async () =>
+      reads[0](
+        words.readItems(
+          fx.rawRead([fx.raised(fx.rawItem()), fx.rawMaharaOs()]),
+          T,
+        ),
+      ),
+    );
+    await flush();
+    expect(
+      Boolean(
+        row.querySelector(
+          '[data-item="funded_card"] [data-receipt="declined"]',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      Boolean(
+        row.querySelector('[data-item="funded_card"] [data-receipt="raised"]'),
+      ),
+    ).toBe(false);
+    await clear(root);
+  });
+
+  test("the band explains when the confirmed Yes cannot be refreshed", async () => {
+    const { api } = fx.fakeItemsApi(
+      { [T]: fx.rawRead([fx.rawItem()]) },
+      { due },
+    );
+    api.read = async () => {
+      throw new Error("Network unavailable");
+    };
+    api.raise = async () => ({
+      raised: true,
+      reused: false,
+      alreadyOpen: false,
+      item: words.readItemRow(fx.raised(fx.rawItem())),
+      submit: null,
+    });
+    const root = await draw(createElement(KickoffItemsBand, { api }));
+    const row = body().querySelector(`[data-kickoff-band-row="${T}"]`);
+    await click(button(`Yes, raise Card missing for ads for ${C}`, row));
+    expect(text(row)).toContain(
+      "Saved, but the latest status could not be read. Reload the page.",
+    );
     await clear(root);
   });
 
