@@ -1,5 +1,6 @@
 """The production upload must never be retried on an ambiguous CLI result."""
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -26,11 +27,11 @@ class UploadOnceTest(unittest.TestCase):
                 encoding="utf-8",
             )
             cli.chmod(0o700)
-            env = dict(os.environ, PATH=f"{tmp}:{os.environ.get('PATH', '')}",
+            env = dict(os.environ, PATH=f"{tmp}{os.pathsep}{os.environ.get('PATH', '')}",
                        FAKE_TRACE=str(root / "trace"), FAKE_ARGS=str(root / "args"),
                        FAKE_FAIL="yes" if fail else "no")
             args = ["--prod", "--yes", "--force", "--archive", "tgz", "--build-env", "SYNTHETIC=value"]
-            result = subprocess.run(["bash", str(SCRIPT), *args], env=env,
+            result = subprocess.run([shutil.which("bash") or "bash", str(SCRIPT), *args], env=env,
                                     capture_output=True, text=True, timeout=10)
             return result, (root / "trace").read_text().splitlines(), (root / "args").read_text().splitlines(), args
 
