@@ -2115,6 +2115,10 @@ export type B2bAdWindow = {
    */
   leadsToConfirmedIntro?: number;
   leadsToDemo?: number;
+  /** Leads with a non-cancelled demo; a demo also establishes intro progression. */
+  leadsToProgressedDemo?: number;
+  /** Leads whose demo was explicitly marked showed by the end of the window. */
+  leadsToDemoAttended?: number;
   demosBooked: number;
   demosDue: number;
   demosShown: number;

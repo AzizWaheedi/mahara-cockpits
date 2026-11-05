@@ -41,11 +41,15 @@ function win(o: {
   leads: number;
   intros?: number;
   confirmed?: number;
+  demos?: number;
+  attended?: number;
   closes?: number;
   contracted?: number;
 }): B2bAdWindow {
   const intros = o.intros ?? 0;
   const confirmed = o.confirmed ?? 0;
+  const demos = o.demos ?? Math.floor(confirmed * 0.6);
+  const attended = o.attended ?? Math.ceil(demos * 0.7);
   const closes = o.closes ?? 0;
   const contracted = o.contracted ?? 0;
   return {
@@ -66,6 +70,8 @@ function win(o: {
     leadsToIntro: intros,
     leadsToConfirmedIntro: confirmed,
     leadsToDemo: 0,
+    leadsToProgressedDemo: demos,
+    leadsToDemoAttended: attended,
     demosBooked: 0,
     demosDue: 0,
     demosShown: 0,
@@ -114,6 +120,8 @@ function sum(ws: B2bAdWindow[]): B2bAdWindow {
       leads: a.leads + w.leads,
       intros: a.intros + (w.leadsToIntro ?? 0),
       confirmed: a.confirmed + (w.leadsToConfirmedIntro ?? 0),
+      demos: a.demos + (w.leadsToProgressedDemo ?? 0),
+      attended: a.attended + (w.leadsToDemoAttended ?? 0),
       closes: a.closes + w.closes,
       contracted: a.contracted + w.contracted,
     }),
@@ -124,6 +132,8 @@ function sum(ws: B2bAdWindow[]): B2bAdWindow {
       leads: 0,
       intros: 0,
       confirmed: 0,
+      demos: 0,
+      attended: 0,
       closes: 0,
       contracted: 0,
     },
