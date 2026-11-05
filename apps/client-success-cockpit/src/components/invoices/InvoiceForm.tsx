@@ -19,10 +19,13 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   type ClientFolder,
   cents,
+  emailOk,
   type InvoiceClient,
   type InvoicePrefill,
   type InvoiceRequest,
+  LINK_NAME,
   type LinkMode,
+  type MadeLink,
 } from "@/lib/invoices";
 import {
   type InvoiceDraft,
@@ -67,6 +70,11 @@ export const LINKS: { key: LinkMode; label: string; hint: string }[] = [
     hint: "Cards and Apple Pay, charged in USD. Use it when Ecom does not work for the client.",
   },
   {
+    key: "tap",
+    label: "Tap link (KWD)",
+    hint: "KNET and cards, charged in KWD at today's rate. Another backup when Ecom does not work. Tap needs the client's email.",
+  },
+  {
     key: "paste",
     label: "Paste a link",
     hint: "Use a payment link you already have. It goes on the invoice as a Pay now button.",
@@ -95,16 +103,19 @@ type State = {
   period: string;
   payNote: string;
   dueDate: string;
-  /** "Pay online": the worker makes an Ecom or a Whop link, or a person pastes one. */
+  /** "Pay online": the worker makes an Ecom, Whop or Tap link, or a person pastes one. */
   linkMode: LinkMode;
   checkoutUrl: string;
+  /** Tap only: Tap will not make a link without the client's email. */
+  clientEmail: string;
   payments: PayLine[];
 };
 
 /** What the preview's Pay now button points at until the worker makes the real link. */
-const PREVIEW_LINK: Record<"ecom" | "whop", string> = {
+const PREVIEW_LINK: Record<MadeLink, string> = {
   ecom: "https://invoice.ecom.io/",
   whop: "https://whop.com/checkout/",
+  tap: "https://invoices.tap.company/",
 };
 
 let nextKey = 1;
@@ -124,6 +135,7 @@ const fresh = (
   taskId = "",
   clientDetail = "",
   taxId = "",
+  clientEmail = "",
 ): State => ({
   taskId,
   kind: "paid",
@@ -137,6 +149,7 @@ const fresh = (
   dueDate: "",
   linkMode: "ecom",
   checkoutUrl: "",
+  clientEmail,
   payments: [blankPayment(today)],
 });
 
@@ -204,6 +217,8 @@ function problemOf(s: State, today: string): string | null {
   ) {
     return "Paste the full payment link, starting with https://.";
   }
+  if (s.kind === "checkout" && s.linkMode === "tap" && !emailOk(s.clientEmail))
+    return "Type the client's email for Tap, for example name@company.com.";
   if (s.kind !== "paid" && !s.dueDate)
     return "Pick the date the payment is due.";
   if (s.kind === "paid") {
@@ -229,6 +244,7 @@ export function InvoiceForm({
   clients,
   folders,
   taxIds,
+  emails = {},
   today,
   canSetFolder,
   prefill,
@@ -240,6 +256,8 @@ export function InvoiceForm({
   folders: Record<string, ClientFolder>;
   /** Each client's tax number from their last invoice that had one. */
   taxIds: Record<string, string>;
+  /** Each client's email from their last invoice that had one (Tap links). */
+  emails?: Record<string, string>;
   today: string;
   canSetFolder: boolean;
   /**
@@ -272,6 +290,7 @@ export function InvoiceForm({
       taskId,
       clientDetail: c?.country ?? "",
       taxId: taxIds[taskId] ?? "",
+      clientEmail: emails[taskId] ?? "",
       amount:
         prev.amount || prev.kind === "paid" || !c?.nextUsd
           ? prev.amount
@@ -357,6 +376,10 @@ export function InvoiceForm({
         s.kind === "checkout" && s.linkMode !== "paste"
           ? s.linkMode
           : undefined,
+      clientEmail:
+        s.kind === "checkout" && s.linkMode === "tap"
+          ? s.clientEmail.trim().toLowerCase()
+          : undefined,
       payments:
         s.kind === "paid"
           ? s.payments.map(p => ({
@@ -369,7 +392,8 @@ export function InvoiceForm({
     });
     setSending(false);
     setAsking(false);
-    if (ok) setS(fresh(today, s.taskId, s.clientDetail, s.taxId));
+    if (ok)
+      setS(fresh(today, s.taskId, s.clientDetail, s.taxId, s.clientEmail));
   }
 
   async function saveFolder() {
@@ -671,6 +695,23 @@ export function InvoiceForm({
                   onChange={e => set({ checkoutUrl: e.target.value })}
                 />
               </Field>
+            ) : s.kind === "checkout" && s.linkMode === "tap" ? (
+              <Field
+                id="inv-email"
+                label="Client email"
+                hint="Shown on Tap's payment page. Tap sends the client nothing; you send the invoice."
+              >
+                <Input
+                  id="inv-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="off"
+                  maxLength={254}
+                  placeholder="name@company.com"
+                  value={s.clientEmail}
+                  onChange={e => set({ clientEmail: e.target.value })}
+                />
+              </Field>
             ) : (
               <div className="hidden sm:block" />
             )}
@@ -724,11 +765,9 @@ export function InvoiceForm({
               {total !== null ? usd(total) : ""} for {chosen?.name}. It gets the
               next invoice number, goes into the client's Drive folder, where
               the client can see it, and is locked against edits.
-              {s.kind === "checkout" && s.linkMode === "ecom"
-                ? " The worker also creates its Ecom payment link in KWD first."
-                : s.kind === "checkout" && s.linkMode === "whop"
-                  ? " The worker also creates its Whop payment link in USD first."
-                  : null}
+              {s.kind === "checkout" && s.linkMode !== "paste"
+                ? ` The worker also creates its ${LINK_NAME[s.linkMode]} payment link in ${s.linkMode === "whop" ? "USD" : "KWD"} first.`
+                : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

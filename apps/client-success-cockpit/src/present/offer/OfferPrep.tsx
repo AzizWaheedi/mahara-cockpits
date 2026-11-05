@@ -446,11 +446,12 @@ export function OfferPrep({
           <input
             type="url"
             defaultValue={text("payment_link")}
-            placeholder="Whop checkout or ecom invoice"
+            placeholder="Ecom, Whop or Tap payment link"
             onBlur={e => save({ payment_link: e.target.value || null })}
           />
           <small>
-            Paste a real existing checkout. No checkout is created here.
+            Paste a real existing checkout: Ecom first, or Whop or Tap as a
+            backup. No checkout is created here.
           </small>
         </label>
         {key === "website" ? <ProjectValue offer={m} save={save} /> : null}

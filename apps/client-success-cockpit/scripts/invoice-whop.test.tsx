@@ -386,6 +386,7 @@ describe("the Whop helpers", () => {
       payNote: "Pay by the due date, please.",
       dueDate: "2026-11-20",
       linkMode: "whop",
+      clientEmail: "",
     });
     const late = lib.sameWithWhop(
       { ...ecomUnpaid, due_date: "2026-10-01", line_note: null },
@@ -403,10 +404,11 @@ describe("the Whop helpers", () => {
     expect(lib.cents("1500.5")).toBe(150050);
   });
 
-  test("three link choices, short enough for a phone, Ecom first", () => {
+  test("four link choices, short enough for a phone, Ecom first, the backups next", () => {
     expect(LINKS.map(l => l.label)).toEqual([
       "Ecom link (KWD)",
       "Whop link (USD)",
+      "Tap link (KWD)",
       "Paste a link",
     ]);
     for (const l of LINKS) expect(l.label.length).toBeLessThanOrEqual(15);
@@ -593,20 +595,24 @@ describe("the invoice form's link choice", () => {
 // --- The list -------------------------------------------------------------------
 
 async function list(invoices: Row[], paid: any = {}) {
-  const changes: [string, string][] = [];
+  const changes: string[][] = [];
   const whops: Row[] = [];
+  const redos: [string, string][] = [];
   const out = await draw(
     createElement(InvoiceList, {
       invoices,
       paid,
-      onChange: async (id: string, action: string) => {
-        changes.push([id, action]);
+      onChange: async (id: string, action: string, email?: string) => {
+        changes.push(email === undefined ? [id, action] : [id, action, email]);
         return true;
       },
-      onWhop: (i: Row) => whops.push(i),
+      onRedo: (i: Row, mode: string) => {
+        redos.push([i.id, mode]);
+        if (mode === "whop") whops.push(i);
+      },
     }),
   );
-  return { ...out, changes, whops };
+  return { ...out, changes, whops, redos };
 }
 
 describe("the invoice list's Whop buttons and payment chips", () => {
@@ -741,7 +747,7 @@ describe("the Invoices page", () => {
     expect(text(p.host)).toContain("Not paid yet");
     expect(text(p.host)).toContain("Payment shows in Whop");
     expect(text(p.host)).toContain(
-      "Pay online invoices get an Ecom or Whop link.",
+      "Pay online invoices get an Ecom link, or a Whop or Tap link as a backup.",
     );
     await clear(p.root);
   });
@@ -754,7 +760,7 @@ describe("the Invoices page", () => {
     expect(t).toContain("Example Clinic");
     expect(t).not.toContain("Not paid yet");
     expect(t).toContain(
-      "Whether the Ecom links were paid did not load. Reload the page to see it.",
+      "Whether the Ecom and Tap links were paid did not load. Reload the page to see it.",
     );
     await clear(p.root);
   });
@@ -791,5 +797,342 @@ describe("the Invoices page", () => {
     await click(button("Same invoice with Whop", p.host));
     expect(p.host.querySelector("#inv-desc").value).toBe("Month 2");
     await clear(p.root);
+  });
+});
+
+// --- Tap, the second backup (2026-11-05) -------------------------------------------
+
+const tapUnpaid = row({
+  id: "tap-unpaid",
+  invoice_no: "INV-2026-032",
+  checkout_source: "tap",
+  tap_invoice_id: "inv_Example123456",
+  checkout_url: "https://invoices.tap.company/invoice/inv_Example123456",
+  client_email: "owner@example-clinic.com",
+  amount_kwd: 460.5,
+  kwd_rate: 0.307,
+});
+
+describe("Tap beside Ecom and Whop", () => {
+  test("the helpers: which links a failed or unpaid invoice can move to, and the email rule", () => {
+    expect(lib.switchTargets(failedEcom)).toEqual(["whop", "tap"]);
+    expect(
+      lib.switchTargets({ ...failedEcom, checkout_source: "tap" }),
+    ).toEqual(["ecom", "whop"]);
+    expect(
+      lib.switchTargets({ ...failedEcom, checkout_source: "whop" }),
+    ).toEqual(["ecom", "tap"]);
+    expect(
+      lib.switchTargets({
+        ...failedEcom,
+        checkout_source: "tap",
+        tap_invoice_id: "inv_Example123456",
+      }),
+    ).toEqual([]);
+    expect(
+      lib.switchTargets({ ...failedEcom, checkout_source: "pasted" }),
+    ).toEqual([]);
+    expect(lib.switchTargets({ ...failedEcom, status: "queued" })).toEqual([]);
+    expect(lib.redoTargets(ecomUnpaid, unpaid)).toEqual(["whop", "tap"]);
+    expect(lib.redoTargets(tapUnpaid, undefined)).toEqual(["ecom", "whop"]);
+    expect(lib.redoTargets(tapUnpaid, paidState)).toEqual([]);
+    expect(lib.redoTargets(issuedWhop, undefined)).toEqual([]);
+    expect(
+      lib.redoTargets(tapUnpaid, undefined, [tapUnpaid, ecomUnpaid]),
+    ).toEqual(["whop"]);
+    expect(
+      lib.redoTargets(tapUnpaid, undefined, [
+        { ...ecomUnpaid, status: "cancelled" },
+      ]),
+    ).toEqual(["ecom", "whop"]);
+    expect(
+      lib.redoTargets(tapUnpaid, undefined, [
+        { ...ecomUnpaid, amount_usd: 900 },
+      ]),
+    ).toEqual(["ecom", "whop"]);
+    expect(lib.paymentWord(tapUnpaid, undefined)).toEqual({
+      text: "Not paid yet",
+      tone: "neutral",
+    });
+    expect(
+      lib.paymentWord(tapUnpaid, {
+        status: "CANCELLED",
+        paid_at: null,
+        method: "Tap",
+      })?.text,
+    ).toBe("Link cancelled");
+    const tapCopy = { ...tapUnpaid, requested_at: "2026-10-31T09:00:00Z" };
+    expect(lib.copyOf(ecomUnpaid, [tapCopy])).toBe(tapCopy);
+    expect(lib.whopCopyOf(ecomUnpaid, [tapCopy])).toBeNull();
+    expect(lib.sameWith(tapUnpaid, TODAY_FOR_ROWS, "ecom")).toMatchObject({
+      linkMode: "ecom",
+      clientEmail: "owner@example-clinic.com",
+    });
+    expect(lib.emailOk(" Owner@Example-Clinic.COM ")).toBe(true);
+    expect(lib.emailOk("owner at clinic")).toBe(false);
+    expect(lib.emailOk("owner@clinic")).toBe(false);
+  });
+
+  test("Tap link (KWD) asks for the client's email and sends provider tap with it", async () => {
+    const f = await form();
+    await click(button("Tap link (KWD)", f.host));
+    expect(button("Tap link (KWD)", f.host).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(text(f.host)).toContain(
+      "Another backup when Ecom does not work. Tap needs the client's email.",
+    );
+    expect(f.last().checkout_source).toBe("tap");
+    expect(f.last().checkout_url).toBe("https://invoices.tap.company/");
+    const email = f.host.querySelector("#inv-email");
+    expect(email).toBeTruthy();
+    const submit = () =>
+      buttons("Issue invoice", f.host).find((b: any) => b.type === "submit");
+    expect(submit().disabled).toBe(true);
+    expect(text(f.host)).toContain(
+      "Type the client's email for Tap, for example name@company.com.",
+    );
+    await type(email, "owner at clinic");
+    expect(submit().disabled).toBe(true);
+    await type(email, " Owner@Example-Clinic.COM ");
+    const sentence = await issue(f.host);
+    expect(sentence).toContain(
+      "The worker also creates its Tap payment link in KWD first.",
+    );
+    expect(f.issued[0]).toMatchObject({
+      createLink: true,
+      provider: "tap",
+      clientEmail: "owner@example-clinic.com",
+    });
+    await clear(f.root);
+  });
+
+  test("the email goes only with Tap", async () => {
+    const f = await form({ ...start, clientEmail: "owner@example-clinic.com" });
+    expect(f.host.querySelector("#inv-email")).toBeNull();
+    await issue(f.host);
+    expect(f.issued[0].provider).toBe("ecom");
+    expect(f.issued[0].clientEmail).toBeUndefined();
+    await clear(f.root);
+  });
+
+  test("a failed Ecom invoice offers Whop and Tap; Tap asks for the email first", async () => {
+    const l = await list([failedEcom]);
+    expect(button("Use a Whop link instead", l.host)).toBeTruthy();
+    await click(button("Use a Tap link instead", l.host));
+    expect(l.changes).toEqual([]);
+    const input = l.host.querySelector("#tap-email-ecom-failed");
+    expect(input).toBeTruthy();
+    expect(text(l.host)).toContain("Tap needs the client's email");
+    expect(button("Use the Tap link", l.host).disabled).toBe(true);
+    await type(input, "owner@example-clinic.com");
+    await click(button("Use the Tap link", l.host));
+    expect(l.changes).toEqual([
+      ["ecom-failed", "tap", "owner@example-clinic.com"],
+    ]);
+    await clear(l.root);
+  });
+
+  test("with the email already on the invoice, Use a Tap link instead goes straight away", async () => {
+    const l = await list([
+      { ...failedEcom, client_email: "owner@example-clinic.com" },
+    ]);
+    await click(button("Use a Tap link instead", l.host));
+    expect(l.changes).toEqual([["ecom-failed", "tap"]]);
+    await clear(l.root);
+  });
+
+  test("a failed Tap invoice offers Ecom and Whop", async () => {
+    const l = await list([
+      {
+        ...failedEcom,
+        checkout_source: "tap",
+        client_email: "a@b.co",
+        error: "Tap did not make the link.",
+      },
+    ]);
+    expect(text(l.host)).toContain("Pay online · Tap link · Month 2");
+    await click(button("Use an Ecom link instead", l.host));
+    expect(button("Use a Whop link instead", l.host)).toBeTruthy();
+    expect(button("Use a Tap link instead", l.host)).toBeUndefined();
+    expect(l.changes).toEqual([["ecom-failed", "ecom"]]);
+    await clear(l.root);
+  });
+
+  test("an unpaid Tap invoice: its page, Not paid yet, and the same invoice with Ecom or Whop", async () => {
+    const l = await list([tapUnpaid], {
+      "tap-unpaid": { status: "UNPAID", paid_at: null, method: "Tap" },
+    });
+    const t = text(l.host);
+    expect(t).toContain("Tap payment page");
+    expect(t).toContain("Not paid yet");
+    const redo = button("Same invoice with Ecom", l.host);
+    expect(redo.getAttribute("title")).toBe(
+      "Tap does not work for this client? Make the same invoice with an Ecom link, then send the client the new link. The Tap link stays payable until it expires.",
+    );
+    await click(redo);
+    await click(button("Same invoice with Whop", l.host));
+    expect(l.redos).toEqual([
+      ["tap-unpaid", "ecom"],
+      ["tap-unpaid", "whop"],
+    ]);
+    await clear(l.root);
+    const paid = await list([tapUnpaid], {
+      "tap-unpaid": {
+        status: "PAID",
+        paid_at: "2026-11-01T08:00:00Z",
+        method: "Tap",
+      },
+    });
+    expect(text(paid.host)).toContain("Paid");
+    expect(button("Same invoice with Ecom", paid.host)).toBeUndefined();
+    await clear(paid.root);
+  });
+
+  test("an Ecom invoice offers both backups until one copy is asked for", async () => {
+    const l = await list([ecomUnpaid], { "ecom-unpaid": unpaid });
+    expect(button("Same invoice with Whop", l.host)).toBeTruthy();
+    await click(button("Same invoice with Tap", l.host));
+    expect(l.redos).toEqual([["ecom-unpaid", "tap"]]);
+    await clear(l.root);
+    const copy = { ...tapUnpaid, requested_at: "2026-10-31T09:00:00Z" };
+    const after = await list([copy, ecomUnpaid], { "ecom-unpaid": unpaid });
+    const [tapRow, ecomRow] = [...after.host.querySelectorAll("li")] as any[];
+    // The Ecom row says the copy is made and offers nothing more.
+    expect(button("Same invoice with Whop", ecomRow)).toBeUndefined();
+    expect(button("Same invoice with Tap", ecomRow)).toBeUndefined();
+    const note = [...ecomRow.querySelectorAll("span")].find(
+      (s: any) => text(s) === "Tap copy made",
+    ) as any;
+    expect(note.getAttribute("title")).toContain(
+      "The same invoice with a Tap link is INV-2026-032.",
+    );
+    // The Tap copy offers the one link not tried yet, never Ecom again.
+    expect(button("Same invoice with Whop", tapRow)).toBeTruthy();
+    expect(button("Same invoice with Ecom", tapRow)).toBeUndefined();
+    await clear(after.root);
+  });
+
+  test("the page asks for Ecom and Tap payments, switches with the saved email, and refills Tap with it", async () => {
+    // A Tap invoice for another amount: its email is the client's saved one,
+    // and Tap is still untried for the Ecom invoice's amount.
+    seed([
+      { ...tapUnpaid, amount_usd: 1700 },
+      ecomUnpaid,
+      { ...failedEcom, client_email: "owner@example-clinic.com" },
+    ]);
+    const p = await draw(createElement(InvoicesPage, { embedded: true }));
+    expect(rpcCalls.filter(c => c.name === "cockpit_invoice_payments")).toEqual(
+      [
+        {
+          name: "cockpit_invoice_payments",
+          args: { p_ids: ["tap-unpaid", "ecom-unpaid"] },
+        },
+      ],
+    );
+    await click(button("Use a Tap link instead", p.host));
+    expect(rpcCalls.find(c => c.name === "cockpit_invoice_change")).toEqual({
+      name: "cockpit_invoice_change",
+      args: { p_id: "ecom-failed", p_action: "tap" },
+    });
+    expect(toasts).toContain("Sent back to be issued with a Tap link");
+    toasts.length = 0;
+    await click(buttons("Same invoice with Tap", p.host)[0]);
+    expect(button("Tap link (KWD)", p.host).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    // The Ecom invoice had no email; the client's saved one from another invoice fills in.
+    expect(p.host.querySelector("#inv-email").value).toBe(
+      "owner@example-clinic.com",
+    );
+    expect(toasts[0]).toBe(
+      "The form has the same invoice with a Tap link. Check it and the client's email and issue it, then send the client the new link. The old Ecom link stays payable until it expires.",
+    );
+    await clear(p.root);
+  });
+
+  test("switching with a typed email sends it in lower case", async () => {
+    seed([failedEcom]);
+    const p = await draw(createElement(InvoicesPage, { embedded: true }));
+    await click(button("Use a Tap link instead", p.host));
+    await type(
+      p.host.querySelector("#tap-email-ecom-failed"),
+      "Owner@Example-Clinic.com",
+    );
+    await click(button("Use the Tap link", p.host));
+    expect(rpcCalls.find(c => c.name === "cockpit_invoice_change")).toEqual({
+      name: "cockpit_invoice_change",
+      args: {
+        p_id: "ecom-failed",
+        p_action: "tap",
+        p_email: "owner@example-clinic.com",
+      },
+    });
+    await clear(p.root);
+  });
+});
+
+describe("backups count copies of the same charge only (review 2026-11-05)", () => {
+  test("last month's invoice for the same amount does not use up a backup", () => {
+    const lastMonthWhop = row({
+      id: "oct-whop",
+      checkout_source: "whop",
+      whop_plan_id: "plan_Example999",
+      checkout_url: "https://whop.com/checkout/plan_Example999",
+      period: "Days 1-30",
+      requested_at: "2026-09-30T09:00:00Z",
+    });
+    const oldSameWords = {
+      ...lastMonthWhop,
+      id: "sep-whop",
+      period: "Days 31-60",
+      requested_at: "2026-09-01T09:00:00Z",
+    };
+    expect(
+      lib.redoTargets(ecomUnpaid, unpaid, [
+        ecomUnpaid,
+        lastMonthWhop,
+        oldSameWords,
+      ]),
+    ).toEqual(["whop", "tap"]);
+    expect(lib.copyOf(ecomUnpaid, [lastMonthWhop, oldSameWords])).toBeNull();
+  });
+
+  test("a failed Tap copy of a live Ecom invoice offers Whop, never a second Ecom link", () => {
+    const tapCopyFailed = row({
+      id: "tap-copy-failed",
+      status: "failed",
+      invoice_no: null,
+      drive_url: null,
+      issued_at: null,
+      checkout_source: "tap",
+      client_email: "owner@example-clinic.com",
+      requested_at: "2026-10-31T09:00:00Z",
+    });
+    expect(
+      lib.switchTargets(tapCopyFailed, [tapCopyFailed, ecomUnpaid]),
+    ).toEqual(["whop"]);
+    // On its own (no live Ecom link for this charge) both others stay.
+    expect(lib.switchTargets(tapCopyFailed, [tapCopyFailed])).toEqual([
+      "ecom",
+      "whop",
+    ]);
+  });
+
+  test("the copy note stays when every backup was tried", async () => {
+    const whopCopy = { ...issuedWhop, requested_at: "2026-10-31T09:00:00Z" };
+    const tapCopy = row({
+      id: "tap-copy",
+      checkout_source: "tap",
+      tap_invoice_id: "inv_Example654321",
+      checkout_url: "https://invoices.tap.company/invoice/inv_Example654321",
+      requested_at: "2026-11-01T09:00:00Z",
+    });
+    const l = await list([tapCopy, whopCopy, ecomUnpaid], {
+      "ecom-unpaid": unpaid,
+    });
+    expect(buttons("Same invoice with Whop", l.host)).toHaveLength(0);
+    expect(text(l.host)).toContain("copy made");
+    await clear(l.root);
   });
 });

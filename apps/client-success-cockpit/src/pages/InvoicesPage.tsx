@@ -7,17 +7,22 @@ import { InvoicePaper } from "@/components/invoices/InvoicePaper";
 import { Kicker, PageHeader } from "@/components/kit";
 import { LoadingSkeleton } from "@/components/LoadingSkeleton";
 import {
+  aLink,
   changeInvoice,
   deskProblem,
   fetchDeskStatus,
   fetchInvoices,
+  type InvoiceAction,
   type InvoicePrefill,
   type InvoiceRequest,
   type InvoiceRow,
   type InvoicesData,
+  isMadeLink,
   kuwaitToday,
+  LINK_NAME,
+  type MadeLink,
   requestInvoice,
-  sameWithWhop,
+  sameWith,
   setClientFolder,
 } from "@/lib/invoices";
 import {
@@ -59,6 +64,17 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
     for (const i of data?.invoices ?? []) {
       if (i.client_tax_id && !(i.clickup_task_id in out)) {
         out[i.clickup_task_id] = i.client_tax_id;
+      }
+    }
+    return out;
+  }, [data]);
+
+  // Each client's email from their newest invoice that had one (Tap links need it).
+  const emails = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const i of data?.invoices ?? []) {
+      if (i.client_email && !(i.clickup_task_id in out)) {
+        out[i.clickup_task_id] = i.client_email;
       }
     }
     return out;
@@ -150,15 +166,15 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
   );
 
   const change = useCallback(
-    async (id: string, action: "cancel" | "retry" | "whop") => {
+    async (id: string, action: InvoiceAction, email?: string) => {
       if (!auth.client) return false;
       try {
-        await changeInvoice(auth.client, id, action);
+        await changeInvoice(auth.client, id, action, email);
         toast.success(
           action === "retry"
             ? "Sent back to be issued"
-            : action === "whop"
-              ? "Sent back to be issued with a Whop link"
+            : isMadeLink(action)
+              ? `Sent back to be issued with ${aLink(action)}`
               : "Invoice cancelled",
         );
         await load();
@@ -187,21 +203,28 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
     [auth.client, load],
   );
 
-  /** The same invoice again with a Whop link, in the form, for the CSM to check and issue. */
-  const againWithWhop = useCallback(
-    (inv: InvoiceRow) => {
+  /** The same invoice again with another link, in the form, for the CSM to check and issue. */
+  const againWith = useCallback(
+    (inv: InvoiceRow, mode: MadeLink) => {
       setPrefill(prev => ({
         nonce: (prev?.nonce ?? 0) + 1,
-        values: sameWithWhop(inv, today),
+        values: {
+          ...sameWith(inv, today, mode),
+          // The client's email from any earlier invoice, for Tap.
+          clientEmail: inv.client_email ?? emails[inv.clickup_task_id] ?? "",
+        },
       }));
       formTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const old = isMadeLink(inv.checkout_source)
+        ? LINK_NAME[inv.checkout_source]
+        : "old";
       toast.success(
-        "The form has the same invoice with a Whop link. Check it and issue it, then send the client the new link. The old Ecom link stays payable until it expires.",
+        `The form has the same invoice with ${aLink(mode)}. Check it${mode === "tap" ? " and the client's email" : ""} and issue it, then send the client the new link. The old ${old} link stays payable until it expires.`,
         // Long enough to read on a phone.
         { duration: 10_000 },
       );
     },
-    [today],
+    [today, emails],
   );
 
   const deskNote = data ? deskProblem(data.desk) : null;
@@ -212,7 +235,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
       <PageHeader
         as={embedded ? "h2" : "h1"}
         title="Invoices"
-        sub="Issue an invoice for a client. It is numbered, filed locked in the client's Drive folder and added to the invoice register. Pay online invoices get an Ecom or Whop link."
+        sub="Issue an invoice for a client. It is numbered, filed locked in the client's Drive folder and added to the invoice register. Pay online invoices get an Ecom link, or a Whop or Tap link as a backup."
       />
 
       {error ? (
@@ -232,6 +255,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
               clients={data.clients}
               folders={data.folders}
               taxIds={taxIds}
+              emails={emails}
               today={today}
               canSetFolder={auth.isAdmin || auth.isCeo}
               prefill={prefill?.values}
@@ -263,15 +287,15 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
           </div>
           {data.paid === null ? (
             <p className="text-xs text-muted-foreground">
-              Whether the Ecom links were paid did not load. Reload the page to
-              see it.
+              Whether the Ecom and Tap links were paid did not load. Reload the
+              page to see it.
             </p>
           ) : null}
           <InvoiceList
             invoices={data.invoices}
             paid={data.paid}
             onChange={change}
-            onWhop={againWithWhop}
+            onRedo={againWith}
           />
         </div>
       ) : null}

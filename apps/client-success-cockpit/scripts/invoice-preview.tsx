@@ -1,8 +1,9 @@
 /**
  * Local-only visual acceptance harness for the Invoices tab. Fictional
- * clients; nothing is issued. The list has a row for every Whop path: a
- * failed Ecom invoice that can switch, an issued Whop one, and issued Ecom
- * ones unpaid, paid, and unpaid with its Whop copy already made.
+ * clients; nothing is issued. The list has a row for every backup path: a
+ * failed Ecom invoice that can switch to Whop or Tap, an issued Whop one,
+ * issued Ecom ones unpaid, paid, and unpaid with its Whop copy already made,
+ * an unpaid Tap one and a failed Tap one (Tap joined 2026-11-05).
  */
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -12,11 +13,15 @@ import { InvoiceList } from "../src/components/invoices/InvoiceList";
 import { InvoicePaper } from "../src/components/invoices/InvoicePaper";
 import { Kicker, PageHeader } from "../src/components/kit";
 import {
+  aLink,
   type InvoicePrefill,
   type InvoiceRow,
+  isMadeLink,
   kuwaitToday,
+  LINK_NAME,
+  type MadeLink,
   type PaymentState,
-  sameWithWhop,
+  sameWith,
 } from "../src/lib/invoices";
 import {
   fillInvoice,
@@ -196,11 +201,49 @@ const invoices = [
     issued_at: "2026-10-20T09:02:00Z",
   }),
   row({ client_tax_id: "300123456700003" }),
+  row({
+    id: "ex-tap-unpaid",
+    kind: "checkout",
+    invoice_no: "INV-2026-033",
+    client_name: "Example Interior Design",
+    clickup_task_id: "ex1",
+    amount_usd: 2500,
+    description: "Month 3",
+    period: null,
+    due_date: "2026-11-15",
+    checkout_source: "tap",
+    tap_invoice_id: "inv_Example123456",
+    client_email: "owner@example-design.com",
+    checkout_url: "https://invoices.tap.company/invoice/inv_Example123456",
+    amount_kwd: 767.5,
+    kwd_rate: 0.307,
+    requested_at: "2026-11-02T09:00:00Z",
+    issued_at: "2026-11-02T09:02:00Z",
+  }),
+  row({
+    id: "ex-tap-failed",
+    status: "failed",
+    invoice_no: null,
+    drive_url: null,
+    issued_at: null,
+    kind: "checkout",
+    client_name: "Example Interior Design",
+    clickup_task_id: "ex1",
+    amount_usd: 900,
+    description: "Filming day",
+    period: null,
+    due_date: "2026-11-18",
+    checkout_source: "tap",
+    client_email: "owner@example-design.com",
+    error:
+      "Tap did not make the link: Tap HTTP 400: 1108 Invalid item name. On the invoices page press Use an Ecom link instead or Use a Whop link instead, or tell Muhammed.",
+  }),
 ];
 // What cockpit_invoice_payments would say about the issued Ecom rows.
 const paid: Record<string, PaymentState> = {
   "ex-ecom-unpaid": { status: "UNPAID", paid_at: null, method: null },
   "ex-ecom-copied": { status: "UNPAID", paid_at: null, method: null },
+  "ex-tap-unpaid": { status: "UNPAID", paid_at: null, method: "Tap" },
   "ex-ecom-paid": {
     status: "PAID",
     paid_at: "2026-10-21T08:00:00Z",
@@ -209,6 +252,7 @@ const paid: Record<string, PaymentState> = {
 };
 // What the page works out from the list: the newest tax number per client.
 const taxIds = { ex1: "300123456700003" };
+const emails = { ex1: "owner@example-design.com" };
 
 function Preview() {
   const [template, setTemplate] = useState<string | null>(null);
@@ -234,14 +278,17 @@ function Preview() {
     toast.success("Preview only. Nothing was issued.");
     return true;
   };
-  const whop = (inv: InvoiceRow) => {
+  const redo = (inv: InvoiceRow, mode: MadeLink) => {
     setPrefill(prev => ({
       nonce: (prev?.nonce ?? 0) + 1,
-      values: sameWithWhop(inv, kuwaitToday()),
+      values: sameWith(inv, kuwaitToday(), mode),
     }));
     formTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const old = isMadeLink(inv.checkout_source)
+      ? LINK_NAME[inv.checkout_source]
+      : "old";
     toast.success(
-      "The form has the same invoice with a Whop link. Check it and issue it, then send the client the new link. The old Ecom link stays payable until it expires.",
+      `The form has the same invoice with ${aLink(mode)}. Check it and issue it, then send the client the new link. The old ${old} link stays payable until it expires.`,
       // Long enough to read on a phone.
       { duration: 10_000 },
     );
@@ -255,7 +302,7 @@ function Preview() {
         <PageHeader
           as="h2"
           title="Invoices"
-          sub="Issue an invoice for a client. It is numbered, filed locked in the client's Drive folder and added to the invoice register. Pay online invoices get an Ecom or Whop link."
+          sub="Issue an invoice for a client. It is numbered, filed locked in the client's Drive folder and added to the invoice register. Pay online invoices get an Ecom link, or a Whop or Tap link as a backup."
         />
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start lg:gap-6">
           <div ref={formTop} className="min-w-0 scroll-mt-4">
@@ -264,6 +311,7 @@ function Preview() {
               clients={clients}
               folders={folders}
               taxIds={taxIds}
+              emails={emails}
               today={kuwaitToday()}
               canSetFolder
               prefill={prefill?.values}
@@ -291,7 +339,7 @@ function Preview() {
             invoices={invoices}
             paid={paid}
             onChange={fake}
-            onWhop={whop}
+            onRedo={redo}
           />
         </div>
       </section>
