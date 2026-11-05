@@ -18,7 +18,9 @@ import {
   type PaymentState,
   paymentWord,
   redoTargets,
+  SAME_WITH,
   switchTargets,
+  USE_INSTEAD,
   watched,
 } from "@/lib/invoices";
 import { money } from "@/lib/invoiceTemplate";
@@ -45,9 +47,6 @@ const PAGE_WORD: Record<InvoiceRow["checkout_source"], string> = {
   tap: "Tap payment page",
   pasted: "Payment page",
 };
-
-/** The switch button's words: "Use a Whop link instead". */
-const USE_INSTEAD = (m: MadeLink) => `Use ${aLink(m)} instead`;
 
 /** Every invoice asked for from the cockpit, newest first, with what to do next. */
 export function InvoiceList({
@@ -225,7 +224,7 @@ export function InvoiceList({
                       title={`${from} does not work for this client? Make the same invoice with ${aLink(m)}, then send the client the new link. The ${from} link stays payable until it expires.`}
                       onClick={() => onRedo?.(inv, m)}
                     >
-                      Same invoice with {LINK_NAME[m]}
+                      {SAME_WITH[m]}
                     </Button>
                   ))
                 )}
@@ -290,7 +289,7 @@ export function InvoiceList({
                       {busy === `${inv.id}:${m}` ? (
                         <Loader2 className="animate-spin" />
                       ) : null}
-                      {USE_INSTEAD(m)}
+                      {USE_INSTEAD[m]}
                     </Button>
                   ))
                 )}
