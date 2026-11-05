@@ -79,6 +79,14 @@ describe("RouteSkeleton", () => {
     }
   });
 
+  test("the shell holds the alerts row above the page", () => {
+    const html = render("/dashboard");
+    expect(html).toContain("tk-bell-bar");
+    expect(html.indexOf("tk-bell-bar")).toBeLessThan(
+      html.indexOf('data-page-skeleton="today"'),
+    );
+  });
+
   test("an unknown signed-in path draws the shell and the header only", () => {
     const html = render("/zz-unknown");
     expect(html).toContain("data-sidebar");

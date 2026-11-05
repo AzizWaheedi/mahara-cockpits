@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TrackingBacklogSkeleton } from "@/components/skeletons/AdsSkeleton";
 import { Button } from "@/components/ui/button";
 import { api, useQuery } from "@/lib/cockpitApi";
 
@@ -17,12 +18,24 @@ import { api, useQuery } from "@/lib/cockpitApi";
 export function TrackingIssues() {
   const rows = useQuery(api.tracking.issues, {});
   const [open, setOpen] = useState(false);
-  if (!rows || rows.length === 0) return null;
+  if (rows === undefined)
+    return (
+      <div>
+        <span className="sr-only" role="status">
+          Reading the tracking backlog
+        </span>
+        <TrackingBacklogSkeleton />
+      </div>
+    );
+  if (rows.length === 0) return null;
 
   const total = rows.reduce((n: any, r: any) => n + r.count, 0);
 
   return (
-    <section className="rounded-2xl border bg-card p-4 sm:p-6">
+    <section
+      data-section="tracking-backlog"
+      className="rounded-2xl border bg-card p-4 sm:p-6"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
           <h2 className="text-[15px] font-semibold">Tracking backlog</h2>

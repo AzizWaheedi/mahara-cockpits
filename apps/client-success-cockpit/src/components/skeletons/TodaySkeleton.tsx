@@ -1,3 +1,4 @@
+import { readHeldHeight } from "@/components/HeldHeight";
 import { PageHeader, SectionCard, StatTile } from "@/components/kit";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -60,6 +61,26 @@ function ClientRows({ rows }: { rows: number }) {
         </div>
       ))}
     </>
+  );
+}
+
+/** One band card: its title row and the rows a person acts on. */
+function BandCardSkeleton({ rows }: { rows: number }) {
+  return (
+    <SectionCard title={<Skeleton className="h-4 w-40" />} flush>
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="space-y-2 px-4 py-3 sm:px-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <Skeleton className="h-4 w-64" />
+            <Skeleton className="h-3.5 w-16" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Skeleton className="h-7 w-24 rounded-md" />
+            <Skeleton className="h-7 w-20 rounded-md" />
+          </div>
+        </div>
+      ))}
+    </SectionCard>
   );
 }
 
@@ -150,15 +171,26 @@ export function TodaySkeleton() {
           <Stat label="New signups" />
           <Stat label="Invoices past due" />
         </div>
-        <div className="text-sm">
-          <span className="text-muted-foreground">The rest of the numbers</span>
+        <details className="text-sm">
+          <summary className="text-muted-foreground">
+            The rest of the numbers
+          </summary>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
             <Stat label="In onboarding" />
             <Stat label="Managed clients" />
             <Stat label="Hot list" />
             <Stat label="Loose ends" />
           </div>
-        </div>
+        </details>
+      </div>
+
+      <div
+        className="space-y-6"
+        data-section="today-bands"
+        style={{ minHeight: readHeldHeight("cs-today-bands") }}
+      >
+        <BandCardSkeleton rows={2} />
+        <BandCardSkeleton rows={1} />
       </div>
 
       <section className="space-y-8" data-section="who-needs-you">

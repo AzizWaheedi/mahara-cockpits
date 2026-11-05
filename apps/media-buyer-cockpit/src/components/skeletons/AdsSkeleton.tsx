@@ -1,4 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { readBillingStripShown } from "@/lib/billingStripShape";
+import "@/components/ceo/ceo.css";
 
 /** The route paths AdsSkeleton stands for. */
 export const ADS_SKELETON_PATHS = ["/ads"];
@@ -56,7 +58,7 @@ function StatTilesSkeleton() {
   );
 }
 
-function TrackingBacklogSkeleton() {
+export function TrackingBacklogSkeleton() {
   return (
     <section
       data-section="tracking-backlog"
@@ -73,6 +75,35 @@ function TrackingBacklogSkeleton() {
         <Skeleton className="h-8 w-16 rounded-md" />
       </div>
     </section>
+  );
+}
+
+/**
+ * The Payments row as it looked on the last load: icon, label, what it says
+ * and its two buttons. Today and Ads draw it only after it has shown once.
+ */
+export function BillingStripSkeleton() {
+  return (
+    <div
+      data-section="billing-strip"
+      className="ceo-root rounded-xl border text-sm"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4">
+        <Skeleton className="order-1 size-4 shrink-0 rounded" />
+        <div className="order-2 flex-1 sm:flex-none sm:shrink-0">
+          <Skeleton className="h-4 w-20 max-w-full" />
+        </div>
+        <div className="order-4 flex min-w-0 basis-full flex-wrap items-center gap-x-2 gap-y-1.5 sm:basis-0 sm:flex-1">
+          <Skeleton className="h-4 w-56 max-w-full" />
+        </div>
+        <div className="order-5 shrink-0">
+          <Skeleton className="h-7 w-40 rounded-md" />
+        </div>
+        <div className="order-3 shrink-0 sm:order-6">
+          <Skeleton className="h-7 w-16 rounded-md" />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -199,6 +230,8 @@ export function AdsSkeleton() {
           <Skeleton className="h-8 w-32 rounded-md" />
         </div>
       </header>
+
+      {readBillingStripShown() ? <BillingStripSkeleton /> : null}
 
       <StatTilesSkeleton />
       <TrackingBacklogSkeleton />
