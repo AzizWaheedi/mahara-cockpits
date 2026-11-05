@@ -81,10 +81,6 @@ export function makeDb(env: Env, request: typeof fetch = fetch) {
   };
 }
 
-const PROVIDERS: Record<string, string> = {
-  "api.github.com": "github",
-};
-
 /** Host and path with every id collapsed: never a repository id, a card or a token. */
 export function resourceOf(url: URL): string {
   const parts = url.pathname.split("/").map(seg => {
@@ -99,6 +95,46 @@ export function resourceOf(url: URL): string {
 /** A call the ledger stopped before it left. */
 export class NotSent extends Error {}
 
+const MAX_PROVIDER_BODY = 256 * 1024;
+
+/** Bound provider bodies before decoding; never persist the contents. */
+async function providerBody(res: Response, signal: AbortSignal): Promise<string> {
+  const declared = res.headers.get("content-length");
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > MAX_PROVIDER_BODY)) {
+    void res.body?.cancel().catch(() => {});
+    throw new Error("Invalid provider body size.");
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let stop: () => void = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    stop = () => reject(new Error("Provider body read aborted."));
+    if (signal.aborted) stop();
+    else signal.addEventListener("abort", stop, { once: true });
+  });
+  try {
+    for (;;) {
+      const part = await Promise.race([reader.read(), aborted]);
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > MAX_PROVIDER_BODY) throw new Error("Provider body too large.");
+      chunks.push(part.value);
+    }
+  } finally {
+    signal.removeEventListener("abort", stop);
+    void reader.cancel().catch(() => {});
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 /**
  * Every provider call writes an intent receipt before it leaves (no receipt, no call) and a response or unknown
  * receipt after. Only GitHub, and only GET and the one POST this worker makes (the dispatch).
@@ -109,15 +145,15 @@ export function ledgerFetch(
   request: typeof fetch = fetch,
 ) {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(
-      typeof input === "string" || input instanceof URL
-        ? String(input)
-        : input.url,
-    );
-    const provider = PROVIDERS[url.host];
-    if (!provider || url.protocol !== "https:")
+    // Snapshot target, method, headers and the current caller's string body
+    // before awaiting the receipt. A streamed body can still produce later data.
+    // URL and init objects supplied by a caller can otherwise change mid-call.
+    const requestSnapshot = new Request(input, { ...init, redirect: "error" });
+    const url = new URL(requestSnapshot.url);
+    if (url.host !== "api.github.com" || url.protocol !== "https:")
       throw new NotSent("Only GitHub is called from this worker.");
-    const method = String(init?.method ?? "GET").toUpperCase();
+    const provider = "github";
+    const method = requestSnapshot.method.toUpperCase();
     const allowedPost =
       method === "POST" &&
       /^\/repos\/[^/]+\/[^/]+\/dispatches$/.test(url.pathname);
@@ -142,14 +178,24 @@ export function ledgerFetch(
     }
     let res: Response;
     try {
-      res = await request(input, init);
-    } catch (e) {
+      res = await request(requestSnapshot);
+    } catch {
       await insert({ ...base, phase: "unknown", http_status: null }).catch(
         () => {},
       );
-      throw e;
+      throw new Error("The GitHub request did not return a response.");
     }
-    const body = await res.text();
+    let body: string;
+    try {
+      // A 204 response already confirms delivery and has no body. Do not let a
+      // broken body reader turn that known result into an ambiguous retry.
+      body = res.status === 204 ? "" : await providerBody(res, requestSnapshot.signal);
+    } catch {
+      await insert({ ...base, phase: "unknown", http_status: null }).catch(
+        () => {},
+      );
+      throw new Error("The GitHub response body could not be read.");
+    }
     await insert({ ...base, phase: "response", http_status: res.status }).catch(
       () => {},
     );
