@@ -1190,11 +1190,12 @@ describe("the daily budget as an amount and a currency (4.21, 5.16)", () => {
     ]);
   });
 
-  test("the dollars and the words: ≈ at the cockpit's rate, no rate for BHD, Make's text", () => {
+  test("the dollars and words distinguish informational estimates from action rates", () => {
     expect(budget.budgetUsd(150, "SAR")).toBe(39.99);
     expect(budget.budgetUsd(37.5, "QAR")).toBe(10.3);
     expect(budget.budgetUsd(20, "KWD")).toBe(65.2);
     expect(budget.budgetUsd(100, "BHD")).toBeNull();
+    expect(budget.budgetUsd(100, "OMR")).toBeNull();
     expect(budget.budgetLine(150, "SAR")).toBe(
       "≈ $39.99 a day at the cockpit's rate.",
     );
@@ -1205,7 +1206,13 @@ describe("the daily budget as an amount and a currency (4.21, 5.16)", () => {
       "≈ $272.30 a day at the cockpit's rate.",
     );
     expect(budget.budgetLine(100, "BHD")).toBe(
-      "No fixed rate for BHD yet, so the media buyers see the amount as typed.",
+      "≈ $265.96 a day. Estimate only; this is not yet used for launch or card budgets.",
+    );
+    expect(budget.budgetLine(100, "OMR")).toBe(
+      "No fixed rate for OMR yet, so the media buyers see the amount as typed.",
+    );
+    expect(budget.budgetLine(100, "EUR")).toBe(
+      "No fixed rate for EUR yet, so the media buyers see the amount as typed.",
     );
     expect(budget.budgetLine(40, "USD")).toBeNull();
     expect(budget.budgetLine(null, "SAR")).toBeNull();
@@ -1406,7 +1413,7 @@ describe("the daily budget as an amount and a currency (4.21, 5.16)", () => {
     );
     await click(budgetField().querySelector('.fs-seg input[value="BHD"]'));
     expect(text(budgetField().querySelector(".fs-live"))).toBe(
-      "No fixed rate for BHD yet, so the media buyers see the amount as typed.",
+      "≈ $398.94 a day. Estimate only; this is not yet used for launch or card budgets.",
     );
     // No sale figure on the card: no "Same as the sale".
     expect(budgetField().querySelector(".fs-quick")).toBeNull();

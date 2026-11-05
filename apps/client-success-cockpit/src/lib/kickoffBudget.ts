@@ -7,7 +7,8 @@
  * hermes/cockpit-sync, cockpit-media-api); scripts/kickoff-sheet.test.tsx
  * reads both and fails when they drift. The kickoff check (B5) converts on
  * the server; this file only says the dollars on screen before the send.
- * A currency with no rate (BHD) gives no dollars, never 0.
+ * The BHD estimate below is display-only. It does not change the
+ * server's launch or card-budget conversion or allow Meta budget writes.
  */
 
 /** The currencies the kickoff asks, in the sheet's order; the first is the default. */
@@ -28,6 +29,16 @@ export const USD_PER: Readonly<Record<string, number>> = {
   SAR: 0.2666,
   AED: 0.2723,
   KWD: 3.26,
+};
+
+/**
+ * Indicative USD per unit, based on the Bahrain central bank's
+ * 0.376 BHD per USD peg.
+ * https://www.cbb.gov.bh/wp-content/uploads/2025/03/Feb-2025.pdf
+ * This estimate is deliberately separate from the action-producing rates.
+ */
+export const INDICATIVE_ONLY_USD_PER: Readonly<Record<string, number>> = {
+  BHD: 2.6596,
 };
 
 /** The amount in dollars to the cent at the cockpit's rate, or null with no rate. */
@@ -72,6 +83,12 @@ export function budgetLine(
   if (amount === null || !Number.isFinite(amount) || amount <= 0) return null;
   const c = currency.trim().toUpperCase();
   if (c === "USD") return null;
+  const indicativeRate = INDICATIVE_ONLY_USD_PER[c];
+  if (indicativeRate) {
+    const estimate =
+      Math.round(Math.round(amount * indicativeRate * 1e6) / 1e4) / 100;
+    return `≈ ${dollarsWords(estimate)} a day. Estimate only; this is not yet used for launch or card budgets.`;
+  }
   const usd = budgetUsd(amount, c);
   if (usd === null)
     return `No fixed rate for ${c} yet, so the media buyers see the amount as typed.`;
