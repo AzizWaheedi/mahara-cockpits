@@ -84,6 +84,7 @@ On the client's own page:
 - "Give more time", "Pause this client", "Resume this client" and "Client is leaving": open the matching form and update the client's card.
 - "Log a win": records a review, referral or upsell.
 - "Overview", "Results", "Ads", "Onboarding & files" and "Money": the client page's five tabs.
+- "Try again": reads the client's kickoff items again if they could not be loaded.
 - "Open billing" and "Plan the renewal": jump to the matching Money tab for this client.
 
 How to:

@@ -331,6 +331,104 @@ const onPage = (api: any, onTicket?: (t: any) => void) =>
   });
 
 describe("the client page's card (variant page)", () => {
+  test("a late read for another client cannot replace this client's kickoff items", async () => {
+    const nextTask = "test-client-b";
+    const { api } = fx.fakeItemsApi({});
+    const pending: Record<string, (v: any) => void> = {};
+    api.read = taskId =>
+      new Promise(resolve => {
+        pending[taskId] = resolve;
+      });
+    const page = (taskId: string, name: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: name,
+        variant: "page",
+      });
+    const root = await draw(page("test-client-a", "Client A"));
+    await act(async () =>
+      root.render(
+        createElement(MemoryRouter, null, page(nextTask, "Client B")),
+      ),
+    );
+    await flush();
+    await act(async () =>
+      pending[nextTask](
+        words.readItems(fx.rawRead([fx.rawMaharaOs()]), nextTask),
+      ),
+    );
+    await flush();
+    expect(item("mahara_os")).toBeTruthy();
+    await act(async () =>
+      pending["test-client-a"](
+        words.readItems(fx.rawRead([fx.rawItem()]), "test-client-a"),
+      ),
+    );
+    await flush();
+    expect(item("mahara_os")).toBeTruthy();
+    expect(item("funded_card")).toBeNull();
+    await clear(root);
+  });
+
+  test("changing client hides previously loaded items while the new read is pending", async () => {
+    const { api } = fx.fakeItemsApi({
+      "test-client-a": fx.rawRead([fx.rawItem()]),
+    });
+    const originalRead = api.read;
+    let finishNext: (v: any) => void = () => {};
+    api.read = taskId =>
+      taskId === "test-client-b"
+        ? new Promise(resolve => {
+            finishNext = resolve;
+          })
+        : originalRead(taskId);
+    const page = (taskId: string, name: string) =>
+      createElement(KickoffItems, {
+        api,
+        taskId,
+        clientName: name,
+        variant: "page",
+      });
+    const root = await draw(page("test-client-a", "Client A"));
+    expect(item("funded_card")).toBeTruthy();
+    await act(async () =>
+      root.render(
+        createElement(MemoryRouter, null, page("test-client-b", "Client B")),
+      ),
+    );
+    await flush();
+    expect(item("funded_card")).toBeNull();
+    await act(async () =>
+      finishNext(
+        words.readItems(fx.rawRead([fx.rawMaharaOs()]), "test-client-b"),
+      ),
+    );
+    await flush();
+    expect(item("mahara_os")).toBeTruthy();
+    await clear(root);
+  });
+
+  test("retry reloads kickoff items without resending a decision", async () => {
+    const { api, calls } = fx.fakeItemsApi({ [T]: fx.rawRead([fx.rawItem()]) });
+    const originalRead = api.read;
+    let attempts = 0;
+    api.read = async taskId => {
+      if (++attempts === 1)
+        throw new RequestError("Try again shortly.", "P0001");
+      return originalRead(taskId);
+    };
+    const root = await draw(onPage(api));
+    expect(text(body().querySelector('[role="alert"]'))).toContain(
+      "Try again shortly.",
+    );
+    await click(button("Try again"));
+    expect(item("funded_card")).toBeTruthy();
+    expect(attempts).toBe(2);
+    expect(calls.every(c => c.name === "read")).toBe(true);
+    await clear(root);
+  });
+
   test("open items ask Raise …? with equal Yes and No, the route line and Change it first", async () => {
     const { api } = fx.fakeItemsApi({
       [T]: fx.rawRead([fx.rawItem(), fx.rawMaharaOs()]),

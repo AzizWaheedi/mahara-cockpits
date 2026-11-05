@@ -104,29 +104,50 @@ export function KickoffItems({
   /** A change here reads the items again (a kickoff sent from the page). */
   reloadKey?: number;
 }) {
-  const [load, setLoad] = useState<Load>({ kind: "loading" });
-  const read = useCallback(async () => {
-    if (!api) return;
-    try {
-      setLoad({ kind: "ready", read: await api.read(taskId) });
-    } catch (e) {
-      setLoad(
-        itemsMissing(e)
-          ? { kind: "missing" }
-          : (e as { code?: string })?.code === "42501"
-            ? { kind: "hidden" }
-            : { kind: "error", text: errorWords(e) },
-      );
-    }
-  }, [api, taskId]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey asks for a fresh read
+  const [attempt, setAttempt] = useState(0);
+  const [loaded, setLoaded] = useState<{
+    api: KickoffItemsApi | null;
+    taskId: string;
+    reloadKey: number;
+    attempt: number;
+    value: Load;
+  }>({ api, taskId, reloadKey, attempt, value: { kind: "loading" } });
+  // A result belongs to the exact client, API and read that produced it. Hide
+  // the old rows immediately on a client change, before the effect runs.
+  const load: Load =
+    loaded.api === api &&
+    loaded.taskId === taskId &&
+    loaded.reloadKey === reloadKey &&
+    loaded.attempt === attempt
+      ? loaded.value
+      : { kind: "loading" };
   useEffect(() => {
-    void read();
-  }, [read, reloadKey]);
+    if (!api) return;
+    let live = true;
+    const finish = (value: Load) => {
+      if (live) setLoaded({ api, taskId, reloadKey, attempt, value });
+    };
+    Promise.resolve()
+      .then(() => api.read(taskId))
+      .then(
+        read => finish({ kind: "ready", read }),
+        e =>
+          finish(
+            itemsMissing(e)
+              ? { kind: "missing" }
+              : (e as { code?: string })?.code === "42501"
+                ? { kind: "hidden" }
+                : { kind: "error", text: errorWords(e) },
+          ),
+      );
+    return () => {
+      live = false;
+    };
+  }, [api, taskId, reloadKey, attempt]);
 
   if (!api || load.kind === "hidden") return null;
   if (load.kind === "loading")
-    return variant === "sheet" ? (
+    return (
       <div data-kickoff-items="loading">
         <LoadingSkeleton
           variant="list"
@@ -134,7 +155,7 @@ export function KickoffItems({
           rows={3}
         />
       </div>
-    ) : null;
+    );
   if (load.kind === "missing")
     return (
       <p className="ki-note" data-kickoff-items="missing">
@@ -143,9 +164,16 @@ export function KickoffItems({
     );
   if (load.kind === "error")
     return (
-      <p className="ki-note ki-fail" role="alert" data-kickoff-items="error">
-        Kickoff items could not be read: {load.text}
-      </p>
+      <div className="ki-note ki-fail" data-kickoff-items="error">
+        <p role="alert">Kickoff items could not be read: {load.text}</p>
+        <button
+          type="button"
+          className="fs-link"
+          onClick={() => setAttempt(n => n + 1)}
+        >
+          Try again
+        </button>
+      </div>
     );
   const r = load.read;
   if (!r.items.length) {
