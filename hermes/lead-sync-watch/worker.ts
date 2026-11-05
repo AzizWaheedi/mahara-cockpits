@@ -318,6 +318,26 @@ async function findInHistory(io: Io, ref: string, threadTs: string | null): Prom
 
 // ------------------------------------------------------------------ run
 
+/**
+ * The CRM side of the comparison. Only contacts that carry a Meta ad id count, because that is
+ * what Meta's "lead" number can match. Counting every new contact let Instagram messages and
+ * walk-ins hide missing form leads: Smmim studio, Oct-Nov 2026, lost 6 leads from 2 forms that
+ * were not connected to the CRM, and 4 Instagram contacts made the totals look even.
+ */
+export const fromMetaAd = (l: Row) => Boolean(l.ad_id);
+
+export function crmCounts(leads: Row[], w24: { start: number; end: number }, w6: { start: number; end: number }) {
+  const inW = (w: { start: number; end: number }, l: Row) => {
+    const t = Date.parse(l.created_at);
+    return t >= w.start && t < w.end;
+  };
+  return {
+    crm24: leads.filter(l => inW(w24, l) && fromMetaAd(l)).length,
+    crmMeta24: leads.filter(l => inW(w24, l) && l.channel === "Meta").length,
+    crm6: leads.filter(l => inW(w6, l) && fromMetaAd(l)).length,
+  };
+}
+
 export async function run(env: Env, apply: boolean, nowMs = Date.now()) {
   const io = makeIo(env);
   const nowIso = new Date(nowMs).toISOString();
@@ -356,22 +376,16 @@ export async function run(env: Env, apply: boolean, nowMs = Date.now()) {
       const since = new Date(Math.min(w24.start, nowMs - 7 * 24 * HOUR)).toISOString();
       const leads = await io.db.all(
         "client_leads",
-        `select=created_at,channel,deleted&location_id=eq.${encodeURIComponent(c.locationId)}&created_at=gte.${since}&deleted=is.false`,
+        `select=created_at,channel,ad_id,deleted&location_id=eq.${encodeURIComponent(c.locationId)}&created_at=gte.${since}&deleted=is.false`,
       );
-      const inW = (w: { start: number; end: number }, l: Row) => {
-        const t = Date.parse(l.created_at);
-        return t >= w.start && t < w.end;
-      };
-      crm24 = leads.filter(l => inW(w24, l)).length;
-      crmMeta24 = leads.filter(l => inW(w24, l) && l.channel === "Meta").length;
-      crm6 = leads.filter(l => inW(w6, l)).length;
+      ({ crm24, crmMeta24, crm6 } = crmCounts(leads, w24, w6));
       // Seven calendar days in the ad account's time zone, for the panel.
       const metaDays = new Map<string, number>();
       for (const r of reads) for (const [d, v] of r.days) metaDays.set(d, (metaDays.get(d) ?? 0) + v);
       for (let i = 6; i >= 0; i--) {
         const day = zonedDay(nowMs - i * 24 * HOUR, tz);
         const crm = leads.filter(l => zonedDay(Date.parse(l.created_at), tz) === day);
-        days.push({ day, meta: metaOk ? (metaDays.get(day) ?? 0) : null, crm: crm.length, crmMeta: crm.filter(l => l.channel === "Meta").length });
+        days.push({ day, meta: metaOk ? (metaDays.get(day) ?? 0) : null, crm: crm.filter(fromMetaAd).length, crmMeta: crm.filter(l => l.channel === "Meta").length });
       }
     }
     const counts = {
