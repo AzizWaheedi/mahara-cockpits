@@ -255,7 +255,7 @@ describe("the funnel's hints", () => {
     expect(src).toContain('label: "Demos booked"');
     expect(src).toContain('label: "Intro to demo"');
     expect(src).toContain('label: "Demo attended"');
-    expect(DEMO_PROGRESSION_HINT).toContain("explicitly marked showed");
+    expect(DEMO_PROGRESSION_HINT).toContain("marked showed or confirmed after its time");
     expect(
       demoFigures({
         leadsToProgressedDemo: 2,
