@@ -3915,6 +3915,23 @@ describe("the old form's tickets in All Tasks", () => {
       await expect(db.exec(forward)).rejects.toThrow("Preflight function drift: cockpit_request_plan");
       await db.exec("ROLLBACK TO SAVEPOINT bad_forward");
       expect((await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column"))[0].policy_column).toBe(false);
+      await db.exec("REVOKE EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) FROM authenticated");
+      await db.exec("SAVEPOINT bad_snapshot_policy");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"="row" || '{"retained_context_policy":"retained_v1"}'::jsonb WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_policy");
+      await db.exec("SAVEPOINT bad_snapshot_version");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"=jsonb_set("row",'{version}','999'::jsonb) WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_version");
+      await db.exec("SAVEPOINT bad_snapshot_key");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"=jsonb_set("row",'{key}','"fictional_other"'::jsonb) WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_key");
+      await db.exec("SAVEPOINT bad_snapshot_shape");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"='{}'::jsonb WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_shape");
     } finally { await db.exec("ROLLBACK"); await asOwner(); }
   });
 

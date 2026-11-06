@@ -62,6 +62,13 @@ BEGIN
      OR EXISTS (SELECT 1 FROM public.cockpit_request_type_versions v JOIN public.cockpit_request_types t ON t.key=v.key WHERE v.version>t.version) THEN
     RAISE EXCEPTION 'Preflight request type snapshots need reconciliation.' USING ERRCODE='55000';
   END IF;
+  IF EXISTS (SELECT 1 FROM public.cockpit_request_type_versions v
+    WHERE jsonb_typeof(v."row") IS DISTINCT FROM 'object'
+       OR v."row"->>'key' IS DISTINCT FROM v.key
+       OR v."row"->>'version' IS DISTINCT FROM v.version::text
+       OR v."row" ?| ARRAY['retained_context_policy','retained_context_ever_enabled','legacy_snapshot_cutoff']) THEN
+    RAISE EXCEPTION 'Preflight request type snapshot content needs reconciliation.' USING ERRCODE='55000';
+  END IF;
   IF to_regprocedure('public.cockpit_request_v1_ready_locked()') IS NOT NULL
      OR to_regprocedure('public.cockpit_request_preview_v1(text,text,jsonb,integer)') IS NOT NULL
      OR to_regprocedure('public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)') IS NOT NULL
