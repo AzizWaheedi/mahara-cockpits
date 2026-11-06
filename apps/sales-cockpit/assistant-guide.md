@@ -293,6 +293,7 @@ Buttons and actions:
 - "Save link": saves a changed link.
 - "Deck", "Forms", "Calculators", "Proof", "Library", "Scripts" and "Other": the groups.
 - "the simple SOP" and "Raise a ticket": open the guides.
+- "The setter's day in the dialer": the setter's SOP and its narrated video, in one card under the demo. The video plays in place.
 
 How to:
 - Add a link: a manager presses "Add a link", fills the name, the address, the kind and the note, then presses "Add link".
@@ -338,6 +339,25 @@ How to:
 ## How to use this cockpit
 
 "How to use this cockpit" at the foot of the left menu opens the sales SOP in a new tab. It holds the day step by step, the in-depth guide and the ticket guide.
+
+## The setter's day in the dialer
+
+The setter works one queue in the Dialer all day, from the top down. The setter works from it instead of the four Slack channels: new leads and texts, call confirmations, follow-up and email opened. Those channels still post, but nobody works from them.
+
+The SOP "The setter's day in the dialer" is a Google Doc with a picture of every step. It sits on the Links page with its narrated video, about eleven minutes long. The search box finds both. For any setter question about the Dialer, point to that SOP and the step that answers it.
+
+The day in short:
+- Open the Dialer, press "Turn on alerts", and keep the tab open all day.
+- Take the item at the top. "Your intro, now" is always first, from 5 minutes before its start.
+- A new lead: press "Call" within minutes. If nobody picks up, the missed call saves itself.
+- After a missed call, the card "Voice note from your phone" opens. Read the script, press "Open WhatsApp", record the note on your own WhatsApp, then press "I sent the voice note".
+- "Second try now" brings the lead back 2 minutes later. Call once more.
+- Confirm every intro: "Confirm, 2.5 h before", then the later confirmation calls if needed.
+- After the intro, save how it went under "How did the intro go?". If it was not saved, "Mark the intro" asks for "Showed", "Didn't happen" or "Disqualify".
+- After a held intro, pick what comes next, such as "Book the demo". Rate the lead from 1 to 10, and say why when no demo was booked.
+- Before the end of day: every intro marked and rated, and nobody left under "Oldest waiting".
+
+For the systems manager: how the dialer works and how to change it is in the repo at docs/setter-queue/HANDBOOK.md.
 
 ## The chat assistant
 

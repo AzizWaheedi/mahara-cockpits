@@ -5,6 +5,7 @@ import { COCKPIT_SOP } from "../lib/cockpits";
 import { useLeadSearch } from "../lib/data";
 import { PAGES } from "../lib/pages";
 import { portalUrl } from "../lib/portal";
+import { SALES_GUIDE_GROUPS } from "../lib/salesGuides";
 import { matchScore, onOpenSearch } from "../lib/search";
 import { Dialog } from "./ui/dialog";
 
@@ -19,14 +20,14 @@ import { Dialog } from "./ui/dialog";
  * leaving, so a box over it would end the pitch.
  */
 
-type Kind = "Lead" | "Page";
+type Kind = "Lead" | "Page" | "Link";
 type Hit = {
   key: string;
   label: string;
   sub?: string;
   kind: Kind;
   href: string;
-  /** Opens in a new tab: the SOP lives in ClickUp. */
+  /** Opens in a new tab: the SOP lives in ClickUp, a guide in Google. */
   external?: boolean;
   /** Opens in this tab, in the portal (another app on the same origin). */
   portal?: boolean;
@@ -61,6 +62,25 @@ const ASK: Hit & { text: string } = {
   portal: true,
   text: "ask a team request ticket ask tech creative call centre portal",
 };
+
+/**
+ * Each job's guides from the Links page (salesGuides.ts), such as the
+ * setter's day in the dialer: the SOP and the video, each opening in a new
+ * tab. Found once something is typed, as the client success search finds
+ * its key links.
+ */
+export const GUIDE_HITS: (Hit & { text: string })[] =
+  SALES_GUIDE_GROUPS.flatMap(g =>
+    g.rows.map(r => ({
+      key: `guide:${r.url}`,
+      label: r.label,
+      sub: r.note ?? r.video?.note ?? g.title,
+      kind: "Link" as const,
+      href: r.url,
+      external: true,
+      text: `${r.label} ${r.note ?? ""} ${g.title} ${g.blurb} guide sop video how to`,
+    })),
+  );
 
 export function SearchBox({ isManager }: { isManager: boolean }) {
   const [open, setOpen] = useState(false);
@@ -142,7 +162,7 @@ function Results({
             href: `/lead/${l.contact_id}`,
           }))
         : [];
-    const pageHits = pages
+    const pageHits = [...pages, ...GUIDE_HITS]
       .map(p => ({ p, s: matchScore(p.text, q) }))
       .filter(x => x.s > 0)
       .sort((a, b) => b.s - a.s)

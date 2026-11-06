@@ -16,6 +16,7 @@ import { SopVideo } from "../components/SopVideo";
 import { api } from "../lib/api";
 import { COCKPIT_GUIDES, SOP_VIDEOS, TEAM_GUIDES } from "../lib/cockpits";
 import { useLinks } from "../lib/data";
+import { type GuideGroup, SALES_GUIDE_GROUPS } from "../lib/salesGuides";
 import { toast } from "../lib/toast";
 import type { Me, SalesLink } from "../lib/types";
 
@@ -102,13 +103,17 @@ function draftOf(l: SalesLink): Draft {
   };
 }
 
+/** The cards a link may land on: the assets, and each job's guides. */
+const ANCHORS = ["assets", ...SALES_GUIDE_GROUPS.map(g => g.id)];
+
 export default function LinksPage({ me }: { me: Me }) {
-  // "The whole library" from a lead lands here on the assets.
+  // "The whole library" from a lead lands here on the assets, and
+  // /links#setter-day on the setter's guides.
   useEffect(() => {
-    if (window.location.hash !== "#assets") return;
+    const target = window.location.hash.slice(1);
+    if (!ANCHORS.includes(target)) return;
     const t = window.setTimeout(
-      () =>
-        document.getElementById("assets")?.scrollIntoView({ block: "start" }),
+      () => document.getElementById(target)?.scrollIntoView({ block: "start" }),
       300,
     );
     return () => window.clearTimeout(t);
@@ -263,6 +268,10 @@ export default function LinksPage({ me }: { me: Me }) {
       <SopVideo video={SOP_VIDEOS.sales.demo} />
       <SopVideo video={SOP_VIDEOS.team.ticket} />
 
+      {SALES_GUIDE_GROUPS.map(g => (
+        <GuideCard key={g.id} group={g} />
+      ))}
+
       {manager && adding ? (
         <SectionCard title="Add a link">
           <LinkForm
@@ -301,6 +310,52 @@ export default function LinksPage({ me }: { me: Me }) {
         <ReferenceList manager={Boolean(manager)} />
       </SectionCard>
     </main>
+  );
+}
+
+/**
+ * One job's guides, the way client success shows its logging SOP and videos:
+ * a line on what the job is, the SOP as a link, and each video playing in
+ * place.
+ */
+function GuideCard({ group: g }: { group: GuideGroup }) {
+  return (
+    <SectionCard id={g.id} title={g.title} flush>
+      <p className="muted border-b hairline px-4 py-3 text-sm leading-relaxed sm:px-6">
+        {g.blurb}
+      </p>
+      <ul className="divide-y hairline">
+        {g.rows.map(r => (
+          <li key={r.url}>
+            {r.video ? (
+              <SopVideo video={r.video} flat className="px-4 py-3 sm:px-6" />
+            ) : (
+              <a
+                href={r.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-w-0 flex-col gap-0.5 px-4 py-3 hover:bg-[color:var(--secondary)] sm:px-6"
+              >
+                <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                  <span className="truncate">{r.label}</span>
+                  <ArrowUpRight
+                    className="muted size-3.5 shrink-0"
+                    aria-hidden
+                  />
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </span>
+                {r.note ? (
+                  <span className="muted text-xs leading-relaxed">
+                    {r.note}
+                  </span>
+                ) : null}
+                <span className="muted truncate text-xs">{host(r.url)}</span>
+              </a>
+            )}
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
   );
 }
 
