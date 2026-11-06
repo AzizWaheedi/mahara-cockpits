@@ -1122,6 +1122,24 @@ describe("the request form", () => {
     } finally { db.rpc = previousRpc; }
   });
 
+  test("a pending routed submission cannot call back after the parent clears its ticket", async () => {
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void;
+    let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => name === "cockpit_request_submit"
+      ? await new Promise<Answer>(resolve => { release = resolve; }) : previousRpc(name, args));
+    try {
+      await render({ presetType: "general_tech", presetDetails: "Fictional ticket", replacesTaskId: "fictionalold1", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(release).toBeDefined();
+      await render({ presetType: "general_tech", presetDetails: "A new request" });
+      release({ data: { id: "fictional", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(field("details").value).toBe("A new request");
+    } finally { db.rpc = previousRpc; }
+  });
+
   test("a result released during the next ticket commit cannot call the old form", async () => {
     const previousRpc = db.rpc;
     let release!: (result: Answer) => void;
