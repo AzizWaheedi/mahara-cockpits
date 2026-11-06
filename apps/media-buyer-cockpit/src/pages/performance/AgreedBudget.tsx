@@ -23,6 +23,32 @@ const AgreedSchema = z
   })
   .passthrough();
 export type AgreedNote = z.output<typeof AgreedSchema>;
+const metaScope =
+  "Based on available Meta data. Other accounts or platforms may be missing.";
+
+/** An empty available snapshot is not evidence that all client ads are off. */
+export function budgetEmptyWords(budgets: {
+  asOf?: string | null;
+  note?: string | null;
+}) {
+  if (!budgets.asOf) {
+    return {
+      title: "The budgets have not been read yet",
+      text:
+        budgets.note ??
+        "Meta budgets are read every hour. Check again after the next read.",
+    };
+  }
+  return {
+    title: "No switched-on campaigns found in the available Meta data",
+    text: [
+      "Check data freshness and all relevant accounts and platforms before relying on this.",
+      budgets.note,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
 
 /** The cell's agreed note, or null before 20261103e or on another shape. */
 export function agreedOf(cell: Cell | null | undefined): AgreedNote | null {
@@ -35,7 +61,9 @@ export function agreedOf(cell: Cell | null | undefined): AgreedNote | null {
 /** The help line: the words, then why any source is not the default. */
 export function agreedHelp(cell: Cell | null | undefined): string | null {
   const a = agreedOf(cell);
-  return a ? [a.words, ...(a.notes ?? [])].join(" ") : null;
+  return a
+    ? [a.words, ...(a.now ? [metaScope] : []), ...(a.notes ?? [])].join(" ")
+    : null;
 }
 
 /** Under "Daily budget now" in Numbers against targets: the agreed figure alone. */
@@ -68,6 +96,9 @@ export function AgreedAgainstNow({ cell }: { cell: Cell | null | undefined }) {
           <span className="text-muted-foreground"> {a.now}</span>
         ) : null}
       </p>
+      {a.now ? (
+        <p className="text-xs text-muted-foreground">{metaScope}</p>
+      ) : null}
       {a.notes?.length ? (
         <p className="text-xs text-muted-foreground">{a.notes.join(" ")}</p>
       ) : null}

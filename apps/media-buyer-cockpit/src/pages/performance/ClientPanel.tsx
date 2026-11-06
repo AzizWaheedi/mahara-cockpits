@@ -54,7 +54,12 @@ import {
   targetUnit,
 } from "@/lib/boardColumns";
 import { cn } from "@/lib/utils";
-import { AgreedAgainstNow, AgreedSubline, agreedHelp } from "./AgreedBudget";
+import {
+  AgreedAgainstNow,
+  AgreedSubline,
+  agreedHelp,
+  budgetEmptyWords,
+} from "./AgreedBudget";
 import { clientTarget, FirstBreakLine } from "./BoardGrid";
 import {
   BoardDot,
@@ -457,6 +462,7 @@ function BudgetPart({
   const lifetime = budgets.campaigns.filter(isLifetime);
   const paused = budgets.paused;
   const off = statusOf(row?.values.budgetUsed) === "off";
+  const empty = budgetEmptyWords(budgets);
   return (
     <div className="space-y-4">
       <AgreedAgainstNow cell={row?.values.dailyBudget} />
@@ -471,17 +477,8 @@ function BudgetPart({
         <EmptyState
           compact
           icon={CircleDashed}
-          title={
-            budgets.asOf
-              ? "No campaign is switched on now"
-              : "The budgets have not been read yet"
-          }
-          text={
-            budgets.asOf
-              ? "Nothing is set to spend on the linked ad accounts. Switch a campaign on in Ads Manager to see its budget here."
-              : (budgets.note ??
-                "Meta budgets are read every hour. Check again after the next read.")
-          }
+          title={empty.title}
+          text={empty.text}
         />
       ) : null}
       {daily.length ? (
