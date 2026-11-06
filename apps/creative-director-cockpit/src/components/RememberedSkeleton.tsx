@@ -88,6 +88,7 @@ function ReplayItem({ item, off }: { item: LayoutItem; off: Offset }) {
 export function rememberedSkeleton<P extends object>(
   name: string,
   Static: ComponentType<P>,
+  options?: { className?: string },
 ): ComponentType<P> {
   function Remembered(props: P) {
     const [layout] = useState<RememberedLayout | null>(() =>
@@ -143,6 +144,7 @@ export function rememberedSkeleton<P extends object>(
         data-page-skeleton={name}
         data-remembered=""
         aria-hidden="true"
+        className={options?.className}
         style={{ position: "relative", width: "100%", height }}
       >
         {offset
