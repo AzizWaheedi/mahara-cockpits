@@ -12,7 +12,10 @@ import {
   StatusChip,
 } from "../components/bits";
 import { ReportIssue } from "../components/ReportIssue";
-import { JobsGroupsSkeleton } from "../components/skeletons/JobsSkeleton";
+import {
+  JobsGroupsSkeleton,
+  JobsTallySkeleton,
+} from "../components/skeletons/JobsSkeleton";
 import { YourTasks } from "../components/tasks/YourTasks";
 import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
@@ -265,6 +268,8 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
               : ""}
           </p>
         </div>
+      ) : !jobs && !error ? (
+        <JobsTallySkeleton />
       ) : null}
 
       {/* Your tasks (PLAN.md D19): your other open ClickUp tasks, five at

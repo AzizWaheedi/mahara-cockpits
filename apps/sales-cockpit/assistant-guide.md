@@ -182,17 +182,18 @@ How to:
 ## Invoices (address /invoices)
 
 What it shows:
-Invoices makes the deposit and payment invoices the same way the client success cockpit does. A closer picks the client, the type and the amount, and sees the page the client gets as it is typed. The invoice is numbered, filed in the client's Drive folder and given an Ecom or Whop link. The list below shows the invoices the person may see, with their status and payment state.
+Invoices makes the deposit and payment invoices the same way the client success cockpit does. A closer picks the client, the type and the amount, and sees the page the client gets as it is typed. The invoice is numbered, filed in the client's Drive folder and given a payment link: Ecom is the main one, and Whop and Tap are the backups when Ecom does not work for the client. The list below shows the invoices the person may see, with their status and payment state.
 
 Buttons and actions:
 - "Invoice type": "Pay online", "Paid" or "Card on file".
-- The payment link choices: "Ecom link", "Whop link" or "Paste a link".
+- The payment link choices: "Ecom link", "Whop link", "Tap link" or "Paste a link". "Tap link" asks for the "Client email", which Tap shows on its payment page. Tap sends the client nothing.
 - "Amount (USD)" and "Description": the amount and what it is for.
 - "Due date": the day the payment is due.
 - "More on the invoice": opens the location, the tax number, the period and the note.
 - "Make the invoice": checks the form, then asks "Make this invoice?".
 - "PDF", "PDF link" and "Payment link": open or copy what the client needs.
-- "Use a Whop link instead" and "Same invoice with Whop": make the same invoice with a Whop link.
+- "Use an Ecom link instead", "Use a Whop link instead" and "Use a Tap link instead": send a failed invoice out with another link, while no link was made for it. A link already used for the same charge is not offered again. "Tap needs the client's email" asks for the email first when the invoice has none.
+- "Same invoice with Ecom", "Same invoice with Whop" and "Same invoice with Tap": fill the form with the same invoice and another link, when the client cannot pay the one they have. The old link stays payable until it expires.
 - "Try again" and "Cancel": retry or cancel an invoice that failed.
 - "Read again": reads the list again.
 

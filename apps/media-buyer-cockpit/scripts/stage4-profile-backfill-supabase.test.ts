@@ -953,6 +953,9 @@ describe("apply", () => {
     const contract = readFileSync(new URL("../../../docs/forms/WAVE56-CONTRACT.md", import.meta.url), "utf8");
     const row = runbook.split("\n").find(l => l.startsWith("| The Client Profile backfill (`20261103c`"));
     expect(row).toBeDefined();
+    expect(row).toContain("Illustrative placeholders only");
+    expect(contract).toContain("labels below are deliberately invalid placeholders for historical records");
+    await expect(backfill("apply", ["<CARD_A>"])).rejects.toThrow("Name the cards");
     // The question lives in the repo (no session scratchpad), word for word in the RUNBOOK and the contract.
     expect(row).not.toContain("next-design/");
     expect(contract).not.toContain("backfill.md` section 8");
@@ -971,7 +974,7 @@ describe("apply", () => {
     expect(row!.indexOf("**(3)**")).toBeLessThan(row!.indexOf("**(4)**"));
     expect(contract).toMatch(/\| D-PB \|[^\n]*\*\*stop gate:\*\* the CEO is asked the RUNBOOK row's step \(2\) question[^\n]*only after he answers yes to the three/);
     // The actor records the re-confirmation, not only the 2026-11-02 Sure.
-    const actorAt = row!.match(/'apply', array\['86exnk0v4'\], '([^']+)'/);
+    const actorAt = row!.match(/'apply', array\['<CARD_A>'\], '([^']+)'/);
     expect(actorAt).not.toBeNull();
     const template = actorAt![1];
     expect(template).toBe("CEO-2 approved 2026-11-02 (Sure); scope re-confirmed by the CEO on <YYYY-MM-DD>; D-PB");

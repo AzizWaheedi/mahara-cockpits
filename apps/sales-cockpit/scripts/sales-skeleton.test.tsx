@@ -24,6 +24,10 @@ const page = readFileSync(
   "utf8",
 );
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const skeletonSource = readFileSync(
+  new URL("../src/components/skeletons/TodaySkeleton.tsx", import.meta.url),
+  "utf8",
+);
 
 const SECTIONS = [
   "header",
@@ -87,6 +91,15 @@ describe("TodaySkeleton", () => {
     expect(today).toContain("lg:col-span-5");
   });
 
+  test("replays a remembered layout only when this device has one", () => {
+    expect(today).toContain('data-page-skeleton="today"');
+    expect(today).not.toContain("data-remembered");
+  });
+
+  test("gives the replay root the same page box as the page", () => {
+    expect(skeletonSource).toContain("className: page");
+  });
+
   test("the page keeps the same section names and draws this skeleton", () => {
     for (const name of SECTIONS) {
       expect(page).toContain(`data-section="${name}"`);
@@ -114,5 +127,17 @@ describe("ShellSkeleton", () => {
   test("App.tsx opens with the shell and the same label", () => {
     expect(app).toContain("<ShellSkeleton");
     expect(app).toContain("Opening the sales cockpit");
+  });
+
+  test("App.tsx gives the status wrapper the screen's full height", () => {
+    expect(app).toMatch(
+      /role="status"[\s\S]{0,120}className="h-full"[\s\S]{0,400}<ShellSkeleton/,
+    );
+  });
+});
+
+describe("remembered layout", () => {
+  test("the signed-in layout records each page's settled shape", () => {
+    expect(app).toContain("<LayoutRecorder");
   });
 });

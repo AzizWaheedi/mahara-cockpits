@@ -3,8 +3,10 @@
 The steps, each recorded on the row as it lands so a retry reads back instead
 of repeating it:
   1. number    INV-<year>-### above every number on the register and in the table
-  1b. link     "Pay online" with "Create a Whop link": the invoice's own hidden
-               one-time Whop plan, found again by its invoice id before any create
+  1b. link     "Pay online" with a made link: Ecom (the main one, KWD), or the
+               backups Whop (the invoice's own hidden one-time plan, USD) and
+               Tap (through the invoice-tap Edge Function, KWD), each found
+               again by its invoice id before any second create
   2. folder    the client's Drive folder (saved, or one exact name match)
   3. render    the template, filled, printed by Chrome, one page, fonts embedded
   4. upload    a new file, or the same file replaced (unlock, replace, lock)
@@ -22,12 +24,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 
-from . import build, ecom, http, render, whop
+from . import build, ecom, http, render, tap, whop
 from .config import Config
 from .google import FOLDER, Google
 from .supa import Supa
 
-VERSION = "invoice-desk 2026-10-22-ecom"
+VERSION = "invoice-desk 2026-11-05-ecom-guards"
 
 
 class Problem(Exception):
@@ -62,6 +64,7 @@ class Desk:
     log: Callable[[str], None] = print
     whop_api: Optional[whop.Whop] = None
     ecom_api: Optional[ecom.Ecom] = None
+    tap_api: Optional[tap.Tap] = None
 
     # 1 ---------------------------------------------------------------------
     def number(self, inv: dict[str, Any]) -> str:
@@ -81,9 +84,11 @@ class Desk:
 
     # 1b --------------------------------------------------------------------
     def link(self, inv: dict[str, Any], number: str) -> None:
-        """Make sure a Whop invoice has its own payment link before it is printed."""
+        """Make sure an invoice with a made link has it before it is printed."""
         if inv["kind"] == "checkout" and inv.get("checkout_source") == "ecom":
             return self.ecom_link(inv, number)
+        if inv["kind"] == "checkout" and inv.get("checkout_source") == "tap":
+            return self.tap_link(inv, number)
         if inv["kind"] != "checkout" or inv.get("checkout_source") != "whop":
             return
         if inv.get("whop_plan_id") and inv.get("checkout_url"):
@@ -113,19 +118,26 @@ class Desk:
         inv["whop_plan_id"], inv["checkout_url"] = plan["id"], url
 
     def ecom_link(self, inv: dict[str, Any], number: str) -> None:
-        if inv.get("ecom_invoice_id") and inv.get("checkout_url"):
-            return
         if self.ecom_api is None:
             raise Problem("Ecom credentials are missing on the invoice worker. Tell Muhammed; do not issue this link elsewhere.")
+        if inv.get("ecom_invoice_id") and inv.get("checkout_url"):
+            return self.ecom_recorded(inv)
+        earlier = None
         try:
-            # A fresh rate is mandatory even after a failed attempt. If the rate moved
-            # and an earlier invoice exists, check refuses it instead of duplicating it.
+            # A fresh rate every time, even after a failed attempt. An Ecom invoice
+            # an earlier try made is kept when only the day's rate moved; check
+            # refuses anything else instead of making a second link.
             rate, rate_at = self.ecom_api.quote()
             amount = ecom.kwd(inv["amount_usd"], rate)
-            found = self.ecom_api.find(inv["id"], number) if inv.get("ecom_started_at") else None
-            if found is None:
+            earlier = self.ecom_api.find(inv["id"], number) if inv.get("ecom_started_at") else None
+            if earlier is None:
                 self.supa.progress(inv["id"], {"ecomStarted": True})
                 found = self.ecom_api.create(inv, number, amount)
+            else:
+                found = earlier
+                moved = ecom.kept(found, inv["amount_usd"], amount)
+                if moved is not None:
+                    amount, rate = moved
             url = self.ecom_api.check(found, amount)
             patch = {"ecomInvoiceId": found["id"], "checkoutUrl": url,
                      "amountKwd": f"{amount:.3f}", "kwdRate": f"{rate:.6f}", "kwdRateAt": rate_at}
@@ -135,12 +147,87 @@ class Desk:
         except ecom.EcomRefused as exc:
             if "quote" in str(exc):
                 raise Passing(str(exc)) from None
+            if earlier is not None:
+                # Ecom already holds a link for this invoice: switching would leave it open.
+                raise Problem(f"Ecom already holds a link for this invoice that the cockpit cannot use ({exc}) "
+                              "Tell Muhammed before trying again or switching.") from None
             raise Problem(f"{exc} Tell Muhammed; do not make a second payment link.") from None
         except http.HttpError as exc:
             if exc.status in (401, 403):
                 raise Problem("The Ecom credentials cannot create payment links. Tell Muhammed.") from None
             if 400 <= exc.status < 500 and exc.status not in http.RETRY_STATUSES:
                 raise Problem(f"Ecom refused the link ({http.scrub(exc)[:160]}). Tell Muhammed.") from None
+            raise
+
+    def ecom_recorded(self, inv: dict[str, Any]) -> None:
+        """A link recorded on an earlier try (the invoice failed at a later step,
+        such as the Drive folder): print it only while Ecom can still take the
+        payment. Ecom expires a link after its date and an admin can delete one."""
+        try:
+            why = ecom.closed(self.ecom_api.get(inv["ecom_invoice_id"]), inv["ecom_invoice_id"])
+        except ecom.EcomRefused as exc:
+            raise Problem(f"Ecom did not confirm this invoice's link ({exc}) Tell Muhammed.") from None
+        except http.HttpError as exc:
+            if exc.status in (401, 403):
+                raise Problem("The Ecom credentials cannot read payment links. Tell Muhammed.") from None
+            if 400 <= exc.status < 500 and exc.status not in http.RETRY_STATUSES:
+                raise Problem(f"Ecom did not confirm this invoice's link ({http.scrub(exc)[:160]}). Tell Muhammed.") from None
+            raise
+        if why:
+            raise Problem(f"This invoice's Ecom link is {why}, so the invoice cannot go out with it. "
+                          "Cancel this invoice and make a new one.")
+
+    def tap_link(self, inv: dict[str, Any], number: str) -> None:
+        switch = "On the invoices page press Use an Ecom link instead or Use a Whop link instead"
+        if self.tap_api is None:
+            raise Problem(f"The invoice worker cannot reach the Tap link maker. {switch}, or tell Muhammed.")
+        if inv.get("tap_invoice_id") and inv.get("checkout_url"):
+            # Recorded on an earlier try (the invoice failed at a later step):
+            # print it only while Tap can still take the payment.
+            try:
+                live = self.tap_api.get(inv["tap_invoice_id"], inv["id"]) or {}
+            except tap.TapRefused as exc:
+                raise Problem(f"Tap did not confirm this invoice's link ({exc}). Tell Muhammed.") from None
+            status = str(live.get("status") or "")
+            if status in ("CANCELLED", "EXPIRED"):
+                raise Problem(f"This invoice's Tap link is {status.lower()}, so the invoice cannot go out with it. "
+                              "Cancel this invoice and make a new one.")
+            return
+        if not inv.get("client_email"):
+            raise Problem(f"Tap needs the client's email. {switch}, or cancel it and make it again with the email.")
+        earlier = None
+        try:
+            # A fresh rate every time, as for Ecom. A Tap invoice an earlier try
+            # made is kept when only the day's rate moved; check refuses anything else.
+            rate, rate_at = self.tap_api.quote()
+            amount = tap.kwd(inv["amount_usd"], rate)
+            earlier = self.tap_api.find(inv["id"]) if inv.get("tap_started_at") else None
+            if earlier is None:
+                self.supa.progress(inv["id"], {"tapStarted": True})
+                found = self.tap_api.create(inv, number, amount)
+            else:
+                found = earlier
+                moved = tap.kept(found, inv["amount_usd"], amount)
+                if moved is not None:
+                    amount, rate = moved
+            url = self.tap_api.check(found, inv["id"], amount)
+            patch = {"tapInvoiceId": found["id"], "checkoutUrl": url,
+                     "amountKwd": f"{amount:.3f}", "kwdRate": f"{rate:.6f}", "kwdRateAt": rate_at}
+            self.supa.progress(inv["id"], patch)
+            inv.update(tap_invoice_id=found["id"], checkout_url=url, amount_kwd=patch["amountKwd"],
+                       kwd_rate=patch["kwdRate"], kwd_rate_at=rate_at)
+        except ecom.EcomRefused as exc:
+            # The USD/KWD quote: a passing fault, tried again on the next run.
+            raise Passing(str(exc).replace("no Ecom link was created", "no Tap link was made")) from None
+        except tap.TapRefused as exc:
+            if earlier is not None:
+                # Tap already holds a link for this invoice: switching would leave it open.
+                raise Problem(f"Tap already holds a link for this invoice that the cockpit cannot use ({exc}). "
+                              "Tell Muhammed before trying again or switching.") from None
+            raise Problem(f"Tap did not make the link: {exc} {switch}, or tell Muhammed.") from None
+        except http.HttpError as exc:
+            if exc.status in (401, 403):
+                raise Problem(f"The invoice worker may not use the Tap link maker. {switch}, or tell Muhammed.") from None
             raise
 
     # 2 ---------------------------------------------------------------------
@@ -250,6 +337,8 @@ class Ledger:
             provider = "ecom"
         elif host == "api.whop.com":
             provider = "whop"
+        elif host.endswith(".supabase.co") and parts.path.startswith("/functions/v1/invoice-tap"):
+            provider = "invoice-tap"
         elif "googleapis.com" in host:
             provider = "google_sheets" if host.startswith("sheets.") else "google_drive"
         else:

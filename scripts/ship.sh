@@ -47,6 +47,7 @@ node --test scripts/check-installs.test.mjs >/dev/null \
 "$py_bin" -m unittest discover -s scripts -p test_check_cockpit_auth_config.py
 "$py_bin" -m unittest discover -s scripts -p test_vercel_project_guard.py
 "$py_bin" -m unittest discover -s scripts -p test_ship_preflight.py
+"$py_bin" -m unittest discover -s scripts -p test_vercel_upload_once.py
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-flow.test.ts scripts/cockpit-auth-sql.test.ts)
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-rpc-restore.test.ts scripts/creative-check.test.ts)
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-sdk.test.ts)
@@ -359,21 +360,12 @@ ship() {
     # folder and deploys there; the site keeps the old bundle (2026-10-05, a
     # fresh worktree made client-success-cockpit beside mahara-client-success).
     [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing): copy it from a linked checkout"; exit 1; }
-    # An archived upload avoids the per-file fetch failures observed during
-    # the native branch preview run. It does not change the deployment target.
-    # A network drop during the upload is tried once more after 20 s
-    # (2026-11-04: a media buyer ship passed every check, then lost 28
-    # minutes on "fetch failed"). Any other failure stops the ship as before.
-    local net_drop='fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang up|Bad Gateway|Service Unavailable|Gateway Timeout'
-    if ! out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"} 2>&1); then
-      if printf '%s\n' "$out" | grep -Eq "$net_drop"; then
-        echo "  the upload to Vercel dropped on the network; trying once more in 20 s"
-        sleep 20
-        out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"} 2>&1) \
-          || { echo "$out" | tail -20; echo "vercel deploy failed for $app (second try)"; exit 1; }
-      else
-        echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1
-      fi
+    # A dropped upload can have reached production even when the CLI did not
+    # confirm it. Never start a second upload until the outcome is inspected.
+    # The helper preserves the same deployment target and flags.
+    if ! out=$(cd "$dir" && bash ../../scripts/vercel-upload-once.sh --prod --yes --force --archive tgz ${build_env[@]+"${build_env[@]}"} ${tok[@]+"${tok[@]}"}); then
+      echo "vercel deploy did not confirm an outcome for $app"
+      exit 1
     fi
   else
     # Publication needs the same scoped CLI for ownership reads, promotion

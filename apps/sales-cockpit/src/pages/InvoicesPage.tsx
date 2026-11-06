@@ -39,20 +39,30 @@ import {
 import { day } from "../lib/format";
 import {
   addDays,
-  canSwitchToWhop,
+  aLink,
   cents,
   changeInvoice,
   deskProblem,
+  emailOk,
   fetchInvoices,
+  type InvoiceChange,
   type InvoiceClient,
   type InvoiceRequest,
   type InvoiceRow,
   type InvoiceStatus,
   type InvoicesData,
+  isMadeLink,
   kuwaitToday,
+  LINK_NAME,
+  type LinkMode,
+  type MadeLink,
   type PaymentState,
   paymentWord,
+  redoTargets,
   requestInvoice,
+  SAME_WITH,
+  switchTargets,
+  USE_INSTEAD,
 } from "../lib/invoices";
 import {
   fillInvoice,
@@ -73,9 +83,9 @@ import type { Me } from "../lib/types";
  * It's very professional."). A closer makes the deposit invoice here and sees
  * the page the client gets as it is typed; the invoice worker numbers it,
  * makes the link, prints the PDF and files it in the client's Drive folder.
+ * Tap joined Whop as a backup on 2026-11-05 ("Ecom is the main one, but I
+ * need to have WHOP and Tap as backups").
  */
-
-type LinkMode = "ecom" | "whop" | "paste";
 
 const KINDS: { key: InvoiceKind; label: string; hint: string }[] = [
   {
@@ -107,6 +117,11 @@ const LINKS: { key: LinkMode; label: string; hint: string }[] = [
     hint: "Cards and Apple Pay, charged in USD. Use it when Ecom does not work for the client.",
   },
   {
+    key: "tap",
+    label: "Tap link",
+    hint: "KNET and cards, charged in KWD at today's rate. Another backup when Ecom does not work. Tap needs the client's email.",
+  },
+  {
     key: "paste",
     label: "Paste a link",
     hint: "A link you already made somewhere else.",
@@ -125,9 +140,10 @@ const METHODS = ["Bank transfer", "Card", "Ecom", "Whop", "Tap", "Cash"];
 const MAX_PAYMENTS = 12;
 const TAX_ID = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,39}$/;
 /** What the preview's Pay now button points at until the worker makes the real link. */
-const PREVIEW_LINK: Record<"ecom" | "whop", string> = {
+const PREVIEW_LINK: Record<MadeLink, string> = {
   ecom: "https://invoice.ecom.io/",
   whop: "https://whop.com/checkout/",
+  tap: "https://invoices.tap.company/",
 };
 
 type PayLine = {
@@ -151,6 +167,8 @@ type State = {
   dueDate: string;
   linkMode: LinkMode;
   checkoutUrl: string;
+  /** Tap only: Tap will not make a link without the client's email. */
+  clientEmail: string;
   payments: PayLine[];
 };
 
@@ -176,6 +194,7 @@ const fresh = (today: string): State => ({
   dueDate: addDays(today, 3),
   linkMode: "ecom",
   checkoutUrl: "",
+  clientEmail: "",
   payments: [blankPayment(today)],
 });
 
@@ -198,6 +217,8 @@ function problemOf(s: State, today: string): string | null {
     !/^https:\/\/[^\s<>"']+$/.test(s.checkoutUrl.trim())
   )
     return "Paste the full payment link, starting with https://.";
+  if (s.kind === "checkout" && s.linkMode === "tap" && !emailOk(s.clientEmail))
+    return "Type the client's email for Tap, for example name@company.com.";
   if (s.kind !== "paid" && !s.dueDate)
     return "Pick the date the payment is due.";
   if (s.kind !== "paid" && s.dueDate < today)
@@ -242,6 +263,10 @@ function requestOf(s: State): InvoiceRequest {
       s.kind === "checkout" && s.linkMode !== "paste" ? true : undefined,
     provider:
       s.kind === "checkout" && s.linkMode !== "paste" ? s.linkMode : undefined,
+    clientEmail:
+      s.kind === "checkout" && s.linkMode === "tap"
+        ? s.clientEmail.trim().toLowerCase()
+        : undefined,
     payments:
       s.kind === "paid"
         ? s.payments.map(p => ({
@@ -338,6 +363,14 @@ export default function InvoicesPage({ me }: { me: Me }) {
         out[i.clickup_task_id] = i.client_tax_id;
     return out;
   }, [data]);
+  // Each client's email from their newest invoice that had one (Tap links need it).
+  const emails = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const i of data?.invoices ?? [])
+      if (i.client_email && !(i.clickup_task_id in out))
+        out[i.clickup_task_id] = i.client_email;
+    return out;
+  }, [data]);
 
   const total = cents(s.amount);
   const draft = useMemo<InvoiceDraft>(() => {
@@ -355,12 +388,12 @@ export default function InvoicesPage({ me }: { me: Me }) {
       pay_note: s.payNote.trim() || null,
       issue_date: today,
       due_date: s.kind === "paid" ? null : s.dueDate || today,
-      checkout_source: made ? (s.linkMode as "ecom" | "whop") : "pasted",
+      checkout_source: made ? (s.linkMode as MadeLink) : "pasted",
       checkout_url:
         s.kind !== "checkout"
           ? null
           : made
-            ? PREVIEW_LINK[s.linkMode as "ecom" | "whop"]
+            ? PREVIEW_LINK[s.linkMode as MadeLink]
             : s.checkoutUrl.trim(),
       payments:
         s.kind === "paid"
@@ -396,6 +429,7 @@ export default function InvoicesPage({ me }: { me: Me }) {
       taskId: c?.taskId ?? "",
       clientDetail: c?.country ?? "",
       taxId: c ? (taxIds[c.taskId] ?? "") : "",
+      clientEmail: c ? (emails[c.taskId] ?? "") : "",
     }));
 
   const [asking, setAsking] = useState(false);
@@ -414,6 +448,7 @@ export default function InvoicesPage({ me }: { me: Me }) {
         taskId: prev.taskId,
         clientDetail: prev.clientDetail,
         taxId: prev.taxId,
+        clientEmail: prev.clientEmail,
       }));
       setAsking(false);
       await load();
@@ -424,8 +459,8 @@ export default function InvoicesPage({ me }: { me: Me }) {
     }
   };
 
-  /** The same invoice again as a Whop link, in the form, for the rep to check and make. */
-  const againWithWhop = (i: InvoiceRow) => {
+  /** The same invoice again with another link, in the form, for the rep to check and make. */
+  const againWith = (i: InvoiceRow, mode: MadeLink) => {
     setS({
       ...fresh(today),
       taskId: i.clickup_task_id,
@@ -439,11 +474,12 @@ export default function InvoicesPage({ me }: { me: Me }) {
       payNote: i.pay_note ?? "",
       dueDate:
         i.due_date && i.due_date >= today ? i.due_date : addDays(today, 3),
-      linkMode: "whop",
+      linkMode: mode,
+      clientEmail: i.client_email ?? emails[i.clickup_task_id] ?? "",
     });
     formTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     toast.success(
-      "The form has the same invoice with a Whop link. Check it, then make it.",
+      `The form has the same invoice with ${aLink(mode)}. Check it${mode === "tap" ? " and the client's email" : ""}, then make it.`,
     );
   };
 
@@ -461,7 +497,7 @@ export default function InvoicesPage({ me }: { me: Me }) {
         <p className="muted text-sm">
           Deposits and payments, made the same way client success makes them:
           numbered, filed in the client's Drive folder and on the invoice
-          register, with an Ecom or Whop link to pay.
+          register, with an Ecom link to pay, or a Whop or Tap link as a backup.
         </p>
       </header>
       {error ? (
@@ -544,7 +580,7 @@ export default function InvoicesPage({ me }: { me: Me }) {
                 <div
                   role="radiogroup"
                   aria-label="Payment link"
-                  className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
                 >
                   {LINKS.map(l => (
                     <button
@@ -572,6 +608,24 @@ export default function InvoicesPage({ me }: { me: Me }) {
                     aria-label="Payment link"
                     className={field}
                   />
+                ) : s.linkMode === "tap" ? (
+                  <Field label="Client email" id="inv-email">
+                    <input
+                      id="inv-email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="off"
+                      maxLength={254}
+                      value={s.clientEmail}
+                      onChange={e => set({ clientEmail: e.target.value })}
+                      placeholder="name@company.com"
+                      className={field}
+                    />
+                    <p className="muted mt-1 text-xs">
+                      Shown on Tap's payment page. Tap sends the client nothing;
+                      you send the invoice.
+                    </p>
+                  </Field>
                 ) : null}
               </div>
             ) : null}
@@ -809,8 +863,9 @@ export default function InvoicesPage({ me }: { me: Me }) {
                 key={i.id}
                 i={i}
                 paid={data?.paid[i.id]}
+                all={data?.invoices ?? []}
                 onChanged={load}
-                onWhop={againWithWhop}
+                onRedo={againWith}
               />
             ))}
           </ul>
@@ -834,7 +889,7 @@ export default function InvoicesPage({ me }: { me: Me }) {
               {s.kind === "checkout"
                 ? s.linkMode === "paste"
                   ? "It carries the link you pasted."
-                  : `The worker makes ${s.linkMode === "whop" ? "a Whop" : "an Ecom"} link for it.`
+                  : `The worker makes ${aLink(s.linkMode)} for it.`
                 : s.kind === "paid"
                   ? "It is marked paid in full."
                   : "The card on file is charged on the due date."}{" "}
@@ -1000,40 +1055,61 @@ const STATUS: Record<InvoiceStatus, { label: string; tone: Tone }> = {
 const SOURCE_WORD: Record<string, string> = {
   ecom: "Ecom link",
   whop: "Whop link",
+  tap: "Tap link",
   pasted: "Pasted link",
 };
 
 function InvoiceItem({
   i,
   paid,
+  all,
   onChanged,
-  onWhop,
+  onRedo,
 }: {
   i: InvoiceRow;
   paid: PaymentState | undefined;
+  /** Every invoice on the page, so a row offers only the links not yet tried. */
+  all: InvoiceRow[];
   onChanged: () => Promise<void>;
-  onWhop: (i: InvoiceRow) => void;
+  onRedo: (i: InvoiceRow, mode: MadeLink) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  /** Switching to Tap waits for the client's email when the invoice has none. */
+  const [askEmail, setAskEmail] = useState(false);
+  const [email, setEmail] = useState("");
   const status = STATUS[i.status];
   const pay = paymentWord(i, paid);
-  const act = async (change: "cancel" | "retry" | "whop") => {
+  const switches = switchTargets(i, all);
+  const redo = redoTargets(i, paid, all);
+  const from = isMadeLink(i.checkout_source)
+    ? LINK_NAME[i.checkout_source]
+    : "The";
+  const act = async (change: InvoiceChange, withEmail?: string) => {
     setBusy(change);
     try {
-      await changeInvoice(i.id, change);
+      await changeInvoice(i.id, change, withEmail);
       toast.success(
         change === "cancel"
           ? "Cancelled."
-          : change === "whop"
-            ? "Going out again with a Whop link."
+          : isMadeLink(change)
+            ? `Going out again with ${aLink(change)}.`
             : "Trying again.",
       );
+      setAskEmail(false);
       await onChanged();
     } catch (e) {
       toast.error(message(e));
     } finally {
       setBusy(null);
     }
+  };
+  const switchTo = (m: MadeLink) => {
+    if (m === "tap" && !i.client_email) {
+      setEmail("");
+      setAskEmail(true);
+      return;
+    }
+    void act(m);
   };
   const copy = async (text: string, what: string) => {
     try {
@@ -1044,8 +1120,8 @@ function InvoiceItem({
     }
   };
   return (
-    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
-      <div className="min-w-0 flex-1">
+    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
+      <div className="min-w-0 flex-1 sm:min-w-[18rem]">
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
           <span className="font-mono font-medium">{i.invoice_no ?? "—"}</span>
           <span className="truncate font-medium" dir="auto">
@@ -1080,7 +1156,7 @@ function InvoiceItem({
           </p>
         ) : null}
       </div>
-      <div className="flex shrink-0 flex-wrap gap-1.5">
+      <div className="flex shrink-0 flex-wrap gap-1.5 max-w-full sm:ml-auto sm:justify-end">
         {i.drive_url ? (
           <>
             <a
@@ -1109,29 +1185,30 @@ function InvoiceItem({
             <Copy className="size-3.5" aria-hidden /> Payment link
           </button>
         ) : null}
-        {canSwitchToWhop(i) ? (
+        {askEmail
+          ? null
+          : switches.map(m => (
+              <button
+                key={m}
+                type="button"
+                disabled={busy !== null}
+                onClick={() => switchTo(m)}
+                className={`${m === switches[0] ? buttonPrimary : button} h-8 px-3 text-xs`}
+              >
+                {busy === m ? "Switching…" : USE_INSTEAD[m]}
+              </button>
+            ))}
+        {redo.map(m => (
           <button
+            key={m}
             type="button"
-            disabled={busy !== null}
-            onClick={() => void act("whop")}
-            className={`${buttonPrimary} h-8 px-3 text-xs`}
-          >
-            {busy === "whop" ? "Switching…" : "Use a Whop link instead"}
-          </button>
-        ) : null}
-        {i.kind === "checkout" &&
-        i.checkout_source === "ecom" &&
-        i.status === "issued" &&
-        pay?.text !== "Paid" ? (
-          <button
-            type="button"
-            onClick={() => onWhop(i)}
-            title="Ecom does not work for this client: make the same invoice with a Whop link"
+            onClick={() => onRedo(i, m)}
+            title={`${from} link does not work for this client: make the same invoice with ${aLink(m)}`}
             className={`${button} h-8 px-3 text-xs`}
           >
-            Same invoice with Whop
+            {SAME_WITH[m]}
           </button>
-        ) : null}
+        ))}
         {i.status === "failed" ? (
           <button
             type="button"
@@ -1153,6 +1230,45 @@ function InvoiceItem({
           </button>
         ) : null}
       </div>
+      {askEmail ? (
+        <form
+          className="flex w-full flex-wrap items-center gap-2 sm:basis-full"
+          onSubmit={e => {
+            e.preventDefault();
+            if (emailOk(email)) void act("tap", email);
+          }}
+        >
+          <label htmlFor={`tap-email-${i.id}`} className="muted text-xs">
+            Tap needs the client's email
+          </label>
+          <input
+            id={`tap-email-${i.id}`}
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            maxLength={254}
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="name@company.com"
+            className={`${field} h-8 w-56 max-w-full text-xs`}
+          />
+          <button
+            type="submit"
+            disabled={busy !== null || !emailOk(email)}
+            className={`${buttonPrimary} h-8 px-3 text-xs`}
+          >
+            {busy === "tap" ? "Switching…" : "Use the Tap link"}
+          </button>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => setAskEmail(false)}
+            className={`${button} h-8 px-3 text-xs`}
+          >
+            Back
+          </button>
+        </form>
+      ) : null}
     </li>
   );
 }

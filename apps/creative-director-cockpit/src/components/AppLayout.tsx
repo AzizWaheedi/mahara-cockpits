@@ -8,6 +8,7 @@ import { openSearch } from "@/lib/search";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
+import { LayoutRecorder } from "./RememberedSkeleton";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { AlertsBell } from "./tasks/AlertsBell";
 import { TaskFocusHost } from "./tasks/TaskFocus";
@@ -140,6 +141,7 @@ function LayoutContent() {
       <CommandPalette />
       {/* One task, in place, wherever the address has ?focus=. */}
       <TaskFocusHost />
+      <LayoutRecorder pathname={location.pathname} />
     </>
   );
 }

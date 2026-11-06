@@ -397,6 +397,13 @@ same readBeforeLate "$MB/src/lib/readBeforeLate.ts" "$CD/src/lib/readBeforeLate.
 same readBeforeLate "$MB/src/lib/readBeforeLate.ts" "$SA/src/lib/readBeforeLate.ts"
 same readBeforeLate "$MB/src/lib/readBeforeLate.ts" "$CS/src/lib/readBeforeLate.ts"
 
+# The remembered page layout: one recorder and replay in all five apps.
+for f in lib/rememberedLayout.ts components/RememberedSkeleton.tsx; do
+  for app in "$CS" "$CD" "$ED" "$SA"; do
+    same "$f" "$MB/src/$f" "$app/src/$f"
+  done
+done
+
 if [ "$fails" -ne 0 ]; then
   echo
   echo "$fails shared file(s) have drifted. Copy the good one over the others:"

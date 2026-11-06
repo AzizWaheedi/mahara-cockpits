@@ -1893,8 +1893,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   // CEO items 6 and 7 (WAVE56-CONTRACT.md 4.19, 4.20, 5.16): the sale tie and
   // the kickoff items, each saying one line until its functions are applied.
   const itemsApi = useMemo(
-    () => (auth.client ? kickoffItemsApi(auth.client) : null),
-    [auth.client],
+    () =>
+      auth.client && auth.session?.user?.id
+        ? kickoffItemsApi(auth.client)
+        : null,
+    [auth.client, auth.session?.user?.id],
   );
   const saleApi = useMemo(
     () => (auth.client ? saleTieApi(auth.client) : null),

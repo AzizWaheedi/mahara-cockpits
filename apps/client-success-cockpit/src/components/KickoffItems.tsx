@@ -53,7 +53,11 @@ import {
   typeOffWords,
   yesLabel,
 } from "@/lib/kickoffItems";
-import { itemsMissing, type KickoffItemsApi } from "@/lib/kickoffItemsClient";
+import {
+  itemsMissing,
+  type KickoffItemsApi,
+  type RaiseAnswer,
+} from "@/lib/kickoffItemsClient";
 import { errorWords, newRequestId, plainNote } from "@/lib/requestsClient";
 import type { SubmitResult } from "@/lib/requestsCore";
 import "@/forms/staff/formSheet.css";
@@ -88,14 +92,7 @@ type Load =
  * refuses (42501: an admin seat without the csm role) sees nothing, as on
  * Today's band.
  */
-export function KickoffItems({
-  api,
-  taskId,
-  clientName,
-  variant,
-  onTicket,
-  reloadKey = 0,
-}: {
+type KickoffItemsProps = {
   api: KickoffItemsApi | null;
   taskId: string;
   clientName: string;
@@ -103,30 +100,98 @@ export function KickoffItems({
   onTicket?: (t: ItemTicket) => void;
   /** A change here reads the items again (a kickoff sent from the page). */
   reloadKey?: number;
-}) {
-  const [load, setLoad] = useState<Load>({ kind: "loading" });
-  const read = useCallback(async () => {
-    if (!api) return;
-    try {
-      setLoad({ kind: "ready", read: await api.read(taskId) });
-    } catch (e) {
-      setLoad(
-        itemsMissing(e)
-          ? { kind: "missing" }
-          : (e as { code?: string })?.code === "42501"
-            ? { kind: "hidden" }
-            : { kind: "error", text: errorWords(e) },
-      );
-    }
-  }, [api, taskId]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey asks for a fresh read
-  useEffect(() => {
-    void read();
-  }, [read, reloadKey]);
+};
 
-  if (!api || load.kind === "hidden") return null;
+export function KickoffItems(props: KickoffItemsProps) {
+  // A new client or explicit reload gets a fresh reader instance, even when
+  // the user returns to the previous client before the next read finishes.
+  if (!props.api) return null;
+  return (
+    <KickoffItemsReader
+      key={JSON.stringify([props.taskId, props.reloadKey ?? 0])}
+      {...props}
+      api={props.api}
+    />
+  );
+}
+
+function KickoffItemsReader({
+  api,
+  taskId,
+  clientName,
+  variant,
+  onTicket,
+  reloadKey = 0,
+}: KickoffItemsProps & { api: KickoffItemsApi }) {
+  const [attempt, setAttempt] = useState(0);
+  const focusItem = useRef<string | null>(null);
+  // A non-null API replacement also starts a new generation. Comparing only
+  // the API object would allow an A → B → A switch to resurrect A's old read.
+  const [source, setSource] = useState({ api, generation: 0 });
+  const generation =
+    source.api === api ? source.generation : source.generation + 1;
+  if (source.api !== api) setSource({ api, generation });
+  const [loaded, setLoaded] = useState<{
+    api: KickoffItemsApi | null;
+    taskId: string;
+    reloadKey: number;
+    attempt: number;
+    generation: number;
+    value: Load;
+  }>({
+    api,
+    taskId,
+    reloadKey,
+    attempt,
+    generation,
+    value: { kind: "loading" },
+  });
+  // A result belongs to the exact client, API and read that produced it. Hide
+  // the old rows immediately on a client change, before the effect runs.
+  const load: Load =
+    loaded.api === api &&
+    loaded.taskId === taskId &&
+    loaded.reloadKey === reloadKey &&
+    loaded.attempt === attempt &&
+    loaded.generation === generation
+      ? loaded.value
+      : { kind: "loading" };
+  useEffect(() => {
+    let live = true;
+    const finish = (value: Load) => {
+      if (live)
+        setLoaded({ api, taskId, reloadKey, attempt, generation, value });
+    };
+    Promise.resolve()
+      .then(() => api.read(taskId))
+      .then(
+        read => finish({ kind: "ready", read }),
+        e =>
+          finish(
+            itemsMissing(e)
+              ? { kind: "missing" }
+              : (e as { code?: string })?.code === "42501"
+                ? { kind: "hidden" }
+                : { kind: "error", text: errorWords(e) },
+          ),
+      );
+    return () => {
+      live = false;
+    };
+  }, [api, taskId, reloadKey, attempt, generation]);
+  useEffect(
+    () =>
+      listenForTaskRaises(api, taskId, out => {
+        if (out.raised && out.item && focusItem.current === out.item.item)
+          toast.success(TOAST.raised(out.item));
+        setAttempt(n => n + 1);
+      }),
+    [api, taskId],
+  );
+
+  if (load.kind === "hidden") return null;
   if (load.kind === "loading")
-    return variant === "sheet" ? (
+    return (
       <div data-kickoff-items="loading">
         <LoadingSkeleton
           variant="list"
@@ -134,7 +199,7 @@ export function KickoffItems({
           rows={3}
         />
       </div>
-    ) : null;
+    );
   if (load.kind === "missing")
     return (
       <p className="ki-note" data-kickoff-items="missing">
@@ -143,9 +208,16 @@ export function KickoffItems({
     );
   if (load.kind === "error")
     return (
-      <p className="ki-note ki-fail" role="alert" data-kickoff-items="error">
-        Kickoff items could not be read: {load.text}
-      </p>
+      <div className="ki-note ki-fail" data-kickoff-items="error">
+        <p role="alert">Kickoff items could not be read: {load.text}</p>
+        <button
+          type="button"
+          className="fs-link"
+          onClick={() => setAttempt(n => n + 1)}
+        >
+          Try again
+        </button>
+      </div>
     );
   const r = load.read;
   if (!r.items.length) {
@@ -173,6 +245,7 @@ export function KickoffItems({
       clientName={clientName}
       variant={variant}
       rows={r.items}
+      focusItem={focusItem}
       onTicket={variant === "sheet" ? undefined : onTicket}
     />
   );
@@ -301,6 +374,118 @@ export function KickoffItemsBand({
   );
 }
 
+// Request identities survive a component unmount during an uncertain send.
+// They contain only the card/item keys and opaque IDs, while the same API
+// instance is alive. A hard reload or a new API cannot preserve an unknown outcome.
+type PendingRaise = { id: string; operation?: Promise<RaiseAnswer> };
+const pendingRaises = new WeakMap<KickoffItemsApi, Map<string, PendingRaise>>();
+const raiseListeners = new WeakMap<
+  KickoffItemsApi,
+  Map<string, Set<(out: RaiseAnswer) => void>>
+>();
+const taskRaiseListeners = new WeakMap<
+  KickoffItemsApi,
+  Map<string, Set<(out: RaiseAnswer) => void>>
+>();
+function listenForTaskRaises(
+  api: KickoffItemsApi,
+  taskId: string,
+  listener: (out: RaiseAnswer) => void,
+) {
+  let byTask = taskRaiseListeners.get(api);
+  if (!byTask) {
+    byTask = new Map();
+    taskRaiseListeners.set(api, byTask);
+  }
+  let listeners = byTask.get(taskId);
+  if (!listeners) {
+    listeners = new Set();
+    byTask.set(taskId, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners?.delete(listener);
+    if (!listeners?.size) byTask?.delete(taskId);
+  };
+}
+
+function listenForRaise(
+  api: KickoffItemsApi,
+  taskId: string,
+  item: string,
+  listener: (out: RaiseAnswer) => void,
+) {
+  const key = JSON.stringify([taskId, item]);
+  let byItem = raiseListeners.get(api);
+  if (!byItem) {
+    byItem = new Map();
+    raiseListeners.set(api, byItem);
+  }
+  let listeners = byItem.get(key);
+  if (!listeners) {
+    listeners = new Set();
+    byItem.set(key, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners?.delete(listener);
+    if (!listeners?.size) byItem?.delete(key);
+  };
+}
+
+function raiseOnce(
+  api: KickoffItemsApi,
+  taskId: string,
+  item: string,
+): Promise<RaiseAnswer> {
+  const key = JSON.stringify([taskId, item]);
+  let pending = pendingRaises.get(api);
+  if (!pending) {
+    pending = new Map();
+    pendingRaises.set(api, pending);
+  }
+  let entry = pending.get(key);
+  if (!entry) {
+    entry = { id: newRequestId() };
+    pending.set(key, entry);
+  }
+  if (entry.operation) return entry.operation;
+  const current = entry;
+  const operation = Promise.resolve()
+    .then(() => api.raise(taskId, item, current.id))
+    .then(
+      out => {
+        if (pending?.get(key) === current) {
+          current.operation = undefined;
+          if (!out.alreadyOpen) pending.delete(key);
+        }
+        for (const listener of taskRaiseListeners.get(api)?.get(taskId) ?? []) {
+          try {
+            listener(out);
+          } catch {
+            /* A view cannot turn success into failure. */
+          }
+        }
+        // Every mounted view of this exact API, client and item receives the
+        // confirmed outcome, even if it remounted before the request finished.
+        for (const listener of raiseListeners.get(api)?.get(key) ?? []) {
+          try {
+            listener(out);
+          } catch {
+            /* One view cannot turn success into a failed send. */
+          }
+        }
+        return out;
+      },
+      error => {
+        if (pending?.get(key) === current) current.operation = undefined;
+        throw error;
+      },
+    );
+  current.operation = operation;
+  return operation;
+}
+
 /** The list itself: it keeps its rows and replaces one with the server's answer after each press. */
 function ItemList({
   api,
@@ -309,6 +494,7 @@ function ItemList({
   variant,
   rows: first,
   onTicket,
+  focusItem,
 }: {
   api: KickoffItemsApi;
   taskId: string;
@@ -316,11 +502,17 @@ function ItemList({
   variant: KickoffItemsVariant;
   rows: ItemRow[];
   onTicket?: (t: ItemTicket) => void;
+  focusItem?: { current: string | null };
 }) {
   const [rows, setRows] = useState(first);
   useEffect(() => setRows(first), [first]);
-  // One request id per item's Yes, kept across retries until the server answers.
-  const pending = useRef<Record<string, string>>({});
+  const readGeneration = useRef(0);
+  useEffect(
+    () => () => {
+      readGeneration.current++;
+    },
+    [api, taskId],
+  );
   const put = useCallback(
     (row: ItemRow) =>
       setRows(rs =>
@@ -331,8 +523,13 @@ function ItemList({
     [],
   );
   const reload = useCallback(async () => {
-    const read = await api.read(taskId);
-    setRows(read.items);
+    const generation = ++readGeneration.current;
+    try {
+      const read = await api.read(taskId);
+      if (generation === readGeneration.current) setRows(read.items);
+    } catch (e) {
+      if (generation === readGeneration.current) throw e;
+    }
   }, [api, taskId]);
   const n = toDecide(rows);
   const ordered = orderItems(rows);
@@ -357,7 +554,8 @@ function ItemList({
             api={api}
             taskId={taskId}
             clientName={clientName}
-            pending={pending.current}
+            variant={variant}
+            focusItem={focusItem}
             onRow={put}
             reload={reload}
             onTicket={onTicket}
@@ -376,7 +574,8 @@ function ItemLine({
   api,
   taskId,
   clientName,
-  pending,
+  variant,
+  focusItem,
   onRow,
   reload,
   onTicket,
@@ -386,7 +585,8 @@ function ItemLine({
   api: KickoffItemsApi;
   taskId: string;
   clientName: string;
-  pending: Record<string, string>;
+  variant: KickoffItemsVariant;
+  focusItem?: { current: string | null };
   onRow: (r: ItemRow) => void;
   reload: () => Promise<void>;
   onTicket?: (t: ItemTicket) => void;
@@ -396,6 +596,28 @@ function ItemLine({
   const [late, setLate] = useState(false);
   const receipt = useRef<HTMLParagraphElement | null>(null);
   const focusNext = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (variant !== "band") return;
+    return listenForRaise(
+      api,
+      taskId,
+      r.item,
+      () =>
+        void reload().catch(() => {
+          if (mounted.current)
+            setError(
+              "Saved, but the latest status could not be read. Reload the page.",
+            );
+        }),
+    );
+  }, [api, taskId, r.item, reload, variant]);
   const { tone, mark } = itemTone(r);
   const Icon = RING_ICON[mark];
   const decided = r.state === "raised" || r.state === "declined";
@@ -404,11 +626,15 @@ function ItemLine({
   // on `decided`: "Raise it after all" turns declined into raised, both
   // decided, and its button unmounts under the keyboard.
   useEffect(() => {
-    if (focusNext.current && (r.state === "raised" || r.state === "declined")) {
+    if (
+      (focusNext.current || focusItem?.current === r.item) &&
+      (r.state === "raised" || r.state === "declined")
+    ) {
       focusNext.current = false;
+      if (focusItem?.current === r.item) focusItem.current = null;
       receipt.current?.focus();
     }
-  }, [r.state]);
+  }, [r.state, r.item, focusItem]);
 
   // A raised request still on its way is read again every 5 s for a minute.
   const sending = stillSending(r);
@@ -440,23 +666,29 @@ function ItemLine({
     if (busy) return;
     setBusy("yes");
     setError(null);
-    pending[r.item] ??= newRequestId();
+    if (focusItem) focusItem.current = r.item;
     try {
-      const out = await api.raise(taskId, r.item, pending[r.item]);
+      const out = await raiseOnce(api, taskId, r.item);
+      if (!mounted.current) return;
       if (out.alreadyOpen) {
         // Nothing was written: the row now offers "Count it".
-        if (out.item) onRow(out.item);
+        if (variant !== "band" && out.item) onRow(out.item);
         return;
       }
-      delete pending[r.item];
       focusNext.current = true;
-      if (out.item) onRow(out.item);
-      else await reload();
-      toast.success(TOAST.raised(out.item ?? r));
+      // The band's server read may include a newer teammate decision than
+      // the response to this press, so it does not merge that response.
+      if (variant !== "band") {
+        if (out.item) onRow(out.item);
+        else await reload();
+      }
+      if (mounted.current && variant === "band")
+        toast.success(TOAST.raised(out.item ?? r));
     } catch (e) {
-      setError(errorWords(e));
+      if (focusItem?.current === r.item) focusItem.current = null;
+      if (mounted.current) setError(errorWords(e));
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   };
   const no = async () => {
@@ -465,14 +697,15 @@ function ItemLine({
     setError(null);
     try {
       const out = await api.decline(taskId, r.item);
+      if (!mounted.current) return;
       focusNext.current = true;
       if (out.item) onRow(out.item);
       else await reload();
-      toast.success(TOAST.declined);
+      if (mounted.current) toast.success(TOAST.declined);
     } catch (e) {
-      setError(errorWords(e));
+      if (mounted.current) setError(errorWords(e));
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   };
   const count = async (requestId: string) => {
@@ -480,14 +713,15 @@ function ItemLine({
     setError(null);
     try {
       const out = await api.link(taskId, r.item, requestId);
+      if (!mounted.current) return;
       focusNext.current = true;
       if (out.item) onRow(out.item);
       else await reload();
-      toast.success(TOAST.counted(out.item ?? r));
+      if (mounted.current) toast.success(TOAST.counted(out.item ?? r));
     } catch (e) {
-      setError(errorWords(e));
+      if (mounted.current) setError(errorWords(e));
     } finally {
-      setBusy(null);
+      if (mounted.current) setBusy(null);
     }
   };
   const withForm = onTicket
