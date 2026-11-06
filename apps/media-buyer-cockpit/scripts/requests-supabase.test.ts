@@ -3852,6 +3852,72 @@ describe("the old form's tickets in All Tasks", () => {
     } finally { await db.exec("ROLLBACK"); await asOwner(); }
   });
 
+  test("held migration rehearses forward and rollback on a synthetic baseline and rejects drift", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec(`CREATE TABLE public.cockpit_settings(key text PRIMARY KEY,value jsonb NOT NULL,updated_by text NOT NULL);
+        ALTER TABLE public.cockpit_settings ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON public.cockpit_settings FROM PUBLIC,anon,authenticated,service_role;
+        GRANT ALL ON public.cockpit_settings TO service_role;
+        CREATE FUNCTION public.cockpit_kickoff_item_raise(text,text,uuid) RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path='' AS $$ SELECT '{}'::jsonb $$;
+        REVOKE ALL ON FUNCTION public.cockpit_kickoff_item_raise(text,text,uuid) FROM PUBLIC,anon,authenticated,service_role;
+        GRANT EXECUTE ON FUNCTION public.cockpit_kickoff_item_raise(text,text,uuid) TO authenticated;
+        CREATE TABLE public.cockpit_kickoff_item_answers(task_id text,item text,request_id uuid,decided_at timestamptz,decided_by_label text);`);
+      const sql = await Bun.file(new URL("../../../docs/requests/drafts/held-migrations/20261106131757_requests_versioned_retained_context.sql", import.meta.url)).text();
+      let guard = sql.match(/DO \$guard\$[\s\S]*?END \$guard\$;/)![0];
+      // This fixture has synthetic dependencies and different schema hashes from production.
+      // Substitute its observed fingerprints only in memory to exercise the same guard logic.
+      const functions = [...guard.matchAll(/\('([^']+\([^']*\))','([0-9a-f]{32})','([sv])','([^']+)'\)/g)];
+      expect(functions.length).toBe(11);
+      for (const m of functions) {
+        const f = (await q("SELECT md5(pg_get_functiondef(p.oid)) AS hash,p.proacl::text AS acl FROM pg_proc p WHERE p.oid=to_regprocedure('public.' || $1)",[m[1]]))[0];
+        expect(f).toBeDefined();
+        guard=guard.replace(m[0],`('${m[1]}','${f.hash}','${m[3]}','${f.acl}')`);
+      }
+      const tables = [...guard.matchAll(/\('(cockpit_[^']+)','([0-9a-f]{32})','(\{[^']+\})'\)/g)];
+      expect(tables.length).toBe(5);
+      for (const m of tables) {
+        const t = (await q("SELECT md5(coalesce(string_agg(a.attname || ':' || format_type(a.atttypid,a.atttypmod) || ':' || a.attnotnull::text, ',' ORDER BY a.attnum),'')) AS hash,c.relacl::text AS acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE n.nspname='public' AND c.relname=$1 GROUP BY c.oid",[m[1]]))[0];
+        expect(t).toBeDefined();
+        guard=guard.replace(m[0],`('${m[1]}','${t.hash}','${t.acl}')`);
+      }
+      const triggers = [...guard.matchAll(/\('(cockpit_[^']+)','(cockpit_[^']+)','([0-9a-f]{32})'\)/g)];
+      expect(triggers.length).toBe(5);
+      for (const m of triggers) {
+        const t=(await q("SELECT md5(pg_get_triggerdef(oid)) AS hash FROM pg_trigger WHERE tgrelid=to_regclass('public.' || $1) AND tgname=$2",[m[1],m[2]]))[0];
+        expect(t).toBeDefined();
+        guard=guard.replace(m[0],`('${m[1]}','${m[2]}','${t.hash}')`);
+      }
+      await db.exec(guard);
+      await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) TO authenticated");
+      await db.exec("SAVEPOINT drift");
+      await expect(db.exec(guard)).rejects.toThrow("Preflight function drift: cockpit_request_plan");
+      await db.exec("ROLLBACK TO SAVEPOINT drift");
+      await db.exec("REVOKE EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) FROM authenticated");
+      await db.exec(guard);
+      const before = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash, (SELECT count(*) FROM public.cockpit_request_type_versions)::int AS versions");
+      const originalGuard = sql.match(/DO \$guard\$[\s\S]*?END \$guard\$;/)![0];
+      // The test's outer transaction and savepoint own rollback. The production file retains its explicit transaction.
+      const forward=sql.replace(/^BEGIN;\s*/m,"").replace(/\nCOMMIT;\s*$/,"").replace(originalGuard,guard);
+      await db.exec("SAVEPOINT forward");
+      await db.exec(forward);
+      const state=(await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column, (SELECT count(*)::int FROM public.cockpit_request_types WHERE retained_context_policy <> 'legacy') AS enabled, (SELECT count(*)::int FROM public.cockpit_settings WHERE key='requests.retained_context_v1_ready') AS ready_rows, has_function_privilege('anon','public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)','EXECUTE') AS anon_can_submit"))[0];
+      expect(state).toEqual({policy_column:true,enabled:0,ready_rows:0,anon_can_submit:false});
+      const sent=await submit(SM,{type:'card_missing',client:ACME,answers:{}});
+      expect(sent.id).toBeDefined();
+      await db.exec("ROLLBACK TO SAVEPOINT forward"); await asOwner();
+      const after=await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash, (SELECT count(*) FROM public.cockpit_request_type_versions)::int AS versions");
+      expect(after).toEqual(before);
+      const restored=(await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column, to_regprocedure('public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)') IS NOT NULL AS v1_submit"))[0];
+      expect(restored).toEqual({policy_column:false,v1_submit:false});
+      await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) TO authenticated");
+      await db.exec("SAVEPOINT bad_forward");
+      await expect(db.exec(forward)).rejects.toThrow("Preflight function drift: cockpit_request_plan");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_forward");
+      expect((await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column"))[0].policy_column).toBe(false);
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
   test("policy column experiment keeps real type snapshots distinct and exposes missing-version fallback", async () => {
     await asOwner(); await db.exec("BEGIN");
     try {

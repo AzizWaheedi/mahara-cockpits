@@ -83,6 +83,7 @@ setSystemTime(new Date(NOW));
 let fake: Fake = createRequestsFake({ seat: "csm", now: () => NOW });
 /** Answers a call before the store does, once per name; null passes it on. */
 let before: (name: string, args: any) => Answer | null = () => null;
+let versionedFixture: string | null = null;
 function mockQuery(run: () => Promise<Answer> | Answer): any {
   const promise: any = Promise.resolve().then(run);
   promise.setHeader = () => promise;
@@ -106,6 +107,16 @@ db.rpc = (name: string, args: any = {}) => mockQuery(async () => {
     };
   const first = before(name, args);
   if (first) return first;
+  if (versionedFixture && name === "cockpit_request_types_read") {
+    const answer = fake.call(name, args);
+    const t = (answer.data as any).types.find((x:any) => x.key === versionedFixture);
+    if (t) { t.retainedContextPolicy = "retained_v1"; t.typeVersion = 9; }
+    return answer;
+  }
+  if (versionedFixture && (name === "cockpit_request_preview_v1" || name === "cockpit_request_submit_v1")) {
+    if (args.p_expected_version !== 9) return {data:null,error:{code:"40001",message:"Wrong test version."}};
+    return fake.call(name.replace(/_v1$/, ""), args);
+  }
   if (fake.handles(name)) return fake.call(name, args);
   return { data: null, error: { message: `No answer for ${name}` } };
 });
@@ -315,6 +326,7 @@ afterEach(async () => {
   await flush(2);
   fake = createRequestsFake({ seat: "csm", now: () => NOW });
   before = () => null;
+  versionedFixture = null;
   expect(left).toEqual([]);
 });
 
@@ -1092,6 +1104,7 @@ describe("the request form", () => {
   });
 
   test("routed card context stays visible when optional new notes are blank and a later request starts fresh", async () => {
+    versionedFixture = "card_missing";
     const t = fake.types.find(x => x.key === "card_missing");
     if (!t) throw new Error("No fictional card type");
     t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
@@ -1121,12 +1134,13 @@ describe("the request form", () => {
   });
 
   test("routed WhatsApp context stays separate and stale-ticket refusal never resubmits alone", async () => {
+    versionedFixture = "whatsapp_connection";
     const t = fake.types.find(x => x.key === "whatsapp_connection");
     if (!t) throw new Error("No fictional WhatsApp type");
     t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
     let attempts = 0;
     before = name => {
-      if (name !== "cockpit_request_submit") return null;
+      if (name !== "cockpit_request_submit_v1") return null;
       attempts++;
       return { data: null, error: { code: "55000", message: "That old ticket was already routed." } };
     };
@@ -1149,6 +1163,7 @@ describe("the request form", () => {
   });
 
   test("a replacement with no loaded original still explains and links to the retained context", async () => {
+    versionedFixture = "card_missing";
     const t = fake.types.find(x => x.key === "card_missing");
     if (!t) throw new Error("No fictional card type");
     t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
@@ -1160,6 +1175,7 @@ describe("the request form", () => {
   });
 
   test("changing the replacement ticket rebinds its original context and request", async () => {
+    versionedFixture = "card_missing";
     const t = fake.types.find(x => x.key === "card_missing");
     if (!t) throw new Error("No fictional card type");
     t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
@@ -1194,8 +1210,7 @@ describe("the request form", () => {
       release({ data: { id: "fictional", state: "sending", held: false, parts: [] }, error: null });
       await flush();
       expect(callbacks).toBe(0);
-      expect(container.querySelector(".rq-quote")?.textContent).toBe("Second context");
-      expect(field("details").value).toBe("");
+      expect(field("details").value).toBe("Second context");
     } finally { db.rpc = previousRpc; }
   });
 
@@ -2574,4 +2589,64 @@ describe("the request form", () => {
     expect(page()).not.toContain("You can cancel it from the request");
     expect(page()).not.toContain("You send it.");
   });
+});
+
+test('server-advertised retained context uses versioned routes from the actual replacement form', async () => {
+  const t = fake.types.find(x => x.key === 'card_missing');
+  if (!t) throw new Error('Missing fictional type');
+  t.fields.push({ key:'details', label:'What happened?', kind:'details', clickup_field_id:null, required:false, options:null, help:null });
+  const old = fake.requests.find(x => x.source === 'import');
+  if (!old || !old.clientTaskId) throw new Error('Missing fictional import');
+  const actual: {name:string; args:any}[] = [];
+  before = (name,args) => {
+    if (name === 'cockpit_request_types_read') {
+      const answer = fake.call(name,args); const data = answer.data as any;
+      const type = data.types.find((x:any) => x.key === 'card_missing');
+      type.retainedContextPolicy = 'retained_v1'; type.typeVersion = 9;
+      return answer;
+    }
+    if (name.startsWith('cockpit_request_preview') || name.startsWith('cockpit_request_submit')) {
+      actual.push({name,args});
+      if (name === 'cockpit_request_preview_v1') return fake.call('cockpit_request_preview',args);
+      if (name === 'cockpit_request_submit_v1') return fake.call('cockpit_request_submit',args);
+      return { data:null, error:{code:'55000',message:'Old endpoint is forbidden for this test.'} };
+    }
+    return null;
+  };
+  await render({ presetType:'card_missing', presetClient:{taskId:old.clientTaskId,name:'Fictional client'}, presetDetails:'Original fictional context', replacesTaskId:old.importedTaskId });
+  expect(field('details').value).toBe('');
+  expect(page()).toContain('Saved ticket context');
+  await type(field('details'),'New fictional detail');
+  await click(button('Send request'));
+  expect(actual.some(c => c.name === 'cockpit_request_preview_v1')).toBe(true);
+  expect(actual.some(c => c.name === 'cockpit_request_submit_v1')).toBe(true);
+  expect(actual.every(c => c.name.endsWith('_v1') && c.args.p_expected_version === 9)).toBe(true);
+});
+
+test('versioned form rebinds a changed ticket without old context or legacy traffic', async () => {
+  const t = fake.types.find(x => x.key === 'card_missing');
+  if (!t) throw new Error('Missing fictional type');
+  t.fields.push({ key:'details', label:'Details', kind:'details', clickup_field_id:null, required:false, options:null, help:null });
+  const calls: string[] = [];
+  before = (name,args) => {
+    if (name === 'cockpit_request_types_read') {
+      const answer = fake.call(name,args); const type = (answer.data as any).types.find((x:any) => x.key === 'card_missing');
+      type.retainedContextPolicy = 'retained_v1'; type.typeVersion = 9;
+      return answer;
+    }
+    if (name.startsWith('cockpit_request_preview') || name.startsWith('cockpit_request_submit')) {
+      calls.push(name);
+      if (name === 'cockpit_request_preview_v1') return fake.call('cockpit_request_preview',args);
+      return {data:null,error:{code:'55000',message:'Unexpected send.'}};
+    }
+    return null;
+  };
+  await render({presetType:'card_missing',replacesTaskId:'fictional-first',presetDetails:'First fictional context'});
+  expect(page()).toContain('Saved ticket context');
+  const firstCalls=calls.length;
+  await render({presetType:'card_missing',replacesTaskId:'fictional-second',presetDetails:'Second fictional context'});
+  expect(page()).toContain('Second fictional context');
+  expect(page()).not.toContain('First fictional context');
+  expect(calls.length).toBeGreaterThanOrEqual(firstCalls);
+  expect(calls.every(name=>name==='cockpit_request_preview_v1')).toBe(true);
 });

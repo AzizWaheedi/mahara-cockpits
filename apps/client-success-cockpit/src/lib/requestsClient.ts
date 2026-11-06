@@ -183,6 +183,24 @@ export function partFacts(part: TypePartView): TypePartView {
   return out;
 }
 
+/** Validate a server-advertised policy. Unknown or partial markers fail closed. */
+export function retainedContextVersion(value: unknown): number | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new RequestError("The request type could not be read. Reload the form.", null, "not_sent");
+  const t = value as Record<string, unknown>;
+  const hasPolicy = Object.prototype.hasOwnProperty.call(t, "retainedContextPolicy");
+  const hasVersion = Object.prototype.hasOwnProperty.call(t, "typeVersion");
+  if (!hasPolicy && !hasVersion) return undefined;
+  const fields = Array.isArray(t.fields) ? t.fields : [];
+  const details = fields.filter((f: unknown) => f && typeof f === "object" && !Array.isArray(f) && (f as Record<string, unknown>).kind === "details") as Record<string, unknown>[];
+  const d = details[0];
+  if ((t.key !== "card_missing" && t.key !== "whatsapp_connection") || t.retainedContextPolicy !== "retained_v1" ||
+      !Number.isSafeInteger(t.typeVersion) || (t.typeVersion as number) < 1 || details.length !== 1 ||
+      d.required !== false || typeof d.key !== "string" || !d.key.trim() || typeof d.label !== "string" || !d.label.trim())
+    throw new RequestError("The request type changed. Reload the form before continuing.", null, "not_sent");
+  return t.typeVersion as number;
+}
+
 /** The types this seat may ask for, the seat and whether the writer is on. */
 export async function readRequestTypes(
   client: SupabaseClient,
@@ -191,6 +209,7 @@ export async function readRequestTypes(
     client,
     "cockpit_request_types_read",
   );
+  for (const t of read.types ?? []) retainedContextVersion(t);
   return {
     ...read,
     types: (read.types ?? []).map(t => ({
@@ -211,31 +230,35 @@ export const readRequestClients = (
     p_include_stopped: includeStopped,
   });
 
+/** The version is attached only for a server-advertised v1 type. */
+function versionedRpc(base: string, version: number | undefined) {
+  if (version === undefined) return { name: base, extra: {} };
+  if (!Number.isSafeInteger(version) || version < 1)
+    throw new RequestError("The request type changed. Reload the form before continuing.", null, "not_sent");
+  return { name: `${base}_v1`, extra: { p_expected_version: version } };
+}
+
 /** Where a request would go, without writing anything. */
 export const previewRequest = (
-  client: SupabaseClient,
-  typeKey: string,
-  clientTaskId: string | null,
-  answers: Record<string, string | number>,
-) =>
-  callRequests<RoutePreview>(client, "cockpit_request_preview", {
-    p_type_key: typeKey,
-    p_client_task_id: clientTaskId,
-    p_answers: answers,
+  client: SupabaseClient, typeKey: string, clientTaskId: string | null,
+  answers: Record<string, string | number>, retainedVersion?: number,
+) => {
+  const route = versionedRpc("cockpit_request_preview", retainedVersion);
+  return callRequests<RoutePreview>(client, route.name, {
+    p_type_key: typeKey, p_client_task_id: clientTaskId, p_answers: answers, ...route.extra,
   });
+};
 
+function submitArgs(input: SubmitInput) {
+  return { p_request_id: input.requestId, p_type_key: input.typeKey,
+    p_client_task_id: input.clientTaskId, p_answers: input.answers, p_due_on: input.dueOn,
+    p_priority: input.priority, p_source: input.source, p_replaces_task_id: input.replacesTaskId ?? null };
+}
 /** Sends a request. The same requestId and answers return the first send. */
-export const submitRequest = (client: SupabaseClient, input: SubmitInput) =>
-  callRequests<SubmitResult>(client, "cockpit_request_submit", {
-    p_request_id: input.requestId,
-    p_type_key: input.typeKey,
-    p_client_task_id: input.clientTaskId,
-    p_answers: input.answers,
-    p_due_on: input.dueOn,
-    p_priority: input.priority,
-    p_source: input.source,
-    p_replaces_task_id: input.replacesTaskId ?? null,
-  });
+export const submitRequest = (client: SupabaseClient, input: SubmitInput) => {
+  const route = versionedRpc("cockpit_request_submit", input.retainedContextVersion);
+  return callRequests<SubmitResult>(client, route.name, { ...submitArgs(input), ...route.extra });
+};
 
 /** Bind a replacement to the authenticated seat shown when Send was pressed.
  * An auth change may finish an already-sent request, but it cannot make the
@@ -269,12 +292,9 @@ export async function submitReplacementForSeat(
         current.data.session.access_token !== session.access_token || changed || !stillMounted())
       throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
     dispatched = true;
-    const result = await callRequests<SubmitResult>(client, "cockpit_request_submit", {
-      p_request_id: input.requestId, p_type_key: input.typeKey,
-      p_client_task_id: input.clientTaskId, p_answers: input.answers,
-      p_due_on: input.dueOn, p_priority: input.priority, p_source: input.source,
-      p_replaces_task_id: input.replacesTaskId ?? null,
-    }, session.access_token);
+    const route = versionedRpc("cockpit_request_submit", input.retainedContextVersion);
+    const result = await callRequests<SubmitResult>(client, route.name,
+      { ...submitArgs(input), ...route.extra }, session.access_token);
     // A response may arrive after sign-out, even when the same user signs
     // back in before React unmounts the old view. Keep its outcome unknown
     // to this view so it checks the original request rather than showing it.

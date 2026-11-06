@@ -73,6 +73,7 @@ import {
   readRequestClients,
   readRequests,
   readRequestTypes,
+  retainedContextVersion,
   RequestError,
   submitReplacementForSeat,
   submitRequest,
@@ -247,7 +248,7 @@ export function submitReplacementOnce(
     typeKey: snapshot.typeKey, clientTaskId: snapshot.clientTaskId,
     answers: Object.keys(snapshot.answers).sort().map(k => [k, snapshot.answers[k]]),
     dueOn: snapshot.dueOn, priority: snapshot.priority, source: snapshot.source,
-    replacesTaskId: snapshot.replacesTaskId,
+    replacesTaskId: snapshot.replacesTaskId, retainedContextVersion: snapshot.retainedContextVersion,
   });
   let op = operations.get(body.replacesTaskId);
   if (op && op.signature !== signature) return Promise.reject(new ReplacementBusy());
@@ -366,8 +367,6 @@ function Seal({
  * the five cockpits; it reads the seat through each app's own taskSeat.ts.
  */
 export function RequestForm(props: RequestFormProps) {
-  // A different replacement ticket must start with that ticket's own context
-  // and request id, rather than retaining edits from the previous ticket or account.
   const { seatId } = useTaskSeat();
   return <RequestFormInner key={JSON.stringify([seatId, props.replacesTaskId ?? null])} {...props} />;
 }
@@ -387,6 +386,11 @@ function RequestFormInner({
 }: RequestFormProps) {
   const seat = useTaskSeat();
   const client = seat.client;
+  const readContext = useRef<{ seatId: string | null; replacesTaskId: string | null } | null>(null);
+  const latestContext = useRef({ seatId: seat.seatId, replacesTaskId: replacesTaskId ?? null });
+  latestContext.current = { seatId: seat.seatId, replacesTaskId: replacesTaskId ?? null };
+  const contextCurrent = () => readContext.current !== null && readContext.current.seatId === latestContext.current.seatId &&
+    readContext.current.replacesTaskId === latestContext.current.replacesTaskId;
   const [types, setTypes] = useState<Load<TypesRead>>({ status: "loading" });
   const [typeKey, setTypeKey] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Answers>({});
@@ -474,8 +478,11 @@ function RequestFormInner({
   const loadTypes = useCallback(async () => {
     if (!client) return;
     setTypes({ status: "loading" });
+    const started = { ...latestContext.current };
     try {
-      setTypes({ status: "ready", data: await readRequestTypes(client) });
+      const data = await readRequestTypes(client);
+      readContext.current = started;
+      setTypes({ status: "ready", data });
     } catch (e) {
       setTypes({ status: "error", error: errorWords(e) });
     }
@@ -546,9 +553,7 @@ function RequestFormInner({
       setPriority(
         PRIORITIES.find(p => p.key === kept.priority)?.key ?? next.priority,
       );
-      const separateOriginal = Boolean(activeReplacement &&
-        ["card_missing", "whatsapp_connection"].includes(next.key) &&
-        next.fields.some(f => f.kind === "details"));
+      const separateOriginal = Boolean(activeReplacement && retainedContextVersion(next) !== undefined);
       setAnswers(startAnswers(next, separateOriginal ? undefined : kept.details, kept.answers));
       setPresetOff(null);
     },
@@ -625,6 +630,10 @@ function RequestFormInner({
   useEffect(() => {
     if (!client || !type) return;
     const seq = ++previewSeq.current;
+    if (retainedContextVersion(type) !== undefined && !contextCurrent()) {
+      setPreview({ status: "error", error: "The account or ticket changed. Reopen the request before continuing." });
+      return;
+    }
     const choices = JSON.parse(choiceKey) as Record<string, string>;
     // The one deciding question still unanswered, when the database says
     // which tasks it decides: each of its answers is read too, so the lanes
@@ -636,15 +645,16 @@ function RequestFormInner({
     setPreview(p => (p?.status === "ready" ? p : { status: "loading" }));
     setPreviewBusy(true);
     const timer = setTimeout(async () => {
+      if (retainedContextVersion(type) !== undefined && !contextCurrent()) return;
       const clientId = chosenId;
       try {
         const [data, ...each] = await Promise.all([
-          previewRequest(client, type.key, clientId, choices),
+          previewRequest(client, type.key, clientId, choices, retainedContextVersion(type)),
           ...(ask?.options ?? []).map(o =>
             previewRequest(client, type.key, clientId, {
               ...choices,
               [ask?.key ?? ""]: o.id,
-            }).catch(() => null),
+            }, retainedContextVersion(type)).catch(() => null),
           ),
         ]);
         if (seq !== previewSeq.current) return;
@@ -665,7 +675,9 @@ function RequestFormInner({
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [client, type, chosenId, choiceKey]);
+  }, [client, type, chosenId, choiceKey,
+    type && retainedContextVersion(type) !== undefined ? seat.seatId : null,
+    type && retainedContextVersion(type) !== undefined ? replacesTaskId : null]);
 
   const writer =
     preview?.status === "ready"
@@ -813,23 +825,33 @@ function RequestFormInner({
         priority,
         source,
         replacesTaskId: activeReplacement,
+        retainedContextVersion: retainedContextVersion(type),
       };
       let alone = false;
       let result: SubmitResult;
+      const submittedContext = { ...latestContext.current };
+      const requestCurrent = () => contextCurrent() && submittedContext.seatId === latestContext.current.seatId &&
+        submittedContext.replacesTaskId === latestContext.current.replacesTaskId;
+      if (body.retainedContextVersion !== undefined && !requestCurrent()) {
+        setFormError("The account or ticket changed. Reopen the request before continuing.");
+        return;
+      }
       const guardedReplacement = Boolean(activeReplacement &&
         ["card_missing", "whatsapp_connection"].includes(type.key) &&
         type.fields.some(f => f.kind === "details"));
       try {
-        if (guardedReplacement && !seat.seatId) {
+        if ((guardedReplacement || body.retainedContextVersion !== undefined) && !seat.seatId) {
           setFormError("Check your sign-in before sending this request.");
           return;
         }
         result = guardedReplacement
           ? await submitReplacementOnce(client, seat.seatId!, body, value =>
-              submitReplacementForSeat(client, seat.seatId!, value, () => mounted.current))
-          : await submitRequest(client, body);
+              submitReplacementForSeat(client, seat.seatId!, value, () => mounted.current && requestCurrent()))
+          : body.retainedContextVersion !== undefined
+            ? await submitReplacementForSeat(client, seat.seatId!, body, () => mounted.current && requestCurrent())
+            : await submitRequest(client, body);
       } catch (e) {
-        if (!mounted.current) return;
+        if (!mounted.current || (body.retainedContextVersion !== undefined && !requestCurrent())) return;
         if (e instanceof ReplacementBusy) {
           setFormError("This ticket has another request in progress or awaiting confirmation. Check the original request before changing these details.");
           return;
@@ -842,16 +864,14 @@ function RequestFormInner({
           errorWords(e) !== REQUEST_SENTENCES.oldTicketRouted
         )
           throw e;
-        if (activeReplacement &&
-            ["card_missing", "whatsapp_connection"].includes(type.key) &&
-            type.fields.some(f => f.kind === "details")) {
+        if (guardedReplacement) {
           setFormError("That old ticket was already routed. Review the original ticket before sending another request.");
           return;
         }
         alone = true;
         result = await submitRequest(client, { ...body, replacesTaskId: null });
       }
-      if (!mounted.current) return;
+      if (!mounted.current || (body.retainedContextVersion !== undefined && !requestCurrent())) return;
       if (result.state === "duplicate") {
         focusNext.current = "dup";
         setDuplicate(result);
@@ -885,7 +905,7 @@ function RequestFormInner({
     focusNext.current = "search";
     // Something else: nothing of the request this form started from.
     carried.current = {};
-    setReplacementTaskId(null);
+    if (type && retainedContextVersion(type) !== undefined) setReplacementTaskId(null);
     setSent(null);
     setDuplicate(null);
     setSentAlone(false);
@@ -895,6 +915,9 @@ function RequestFormInner({
   }
 
   const root = `rq-form${compact ? " rq-compact" : ""}`;
+
+  if (type && retainedContextVersion(type) !== undefined && !contextCurrent())
+    return <div className={root} role="alert">The account or ticket changed. Reopen the request before continuing.</div>;
 
   if (!seat.ready)
     return (
@@ -1036,9 +1059,7 @@ function RequestFormInner({
     type && !type.fields.some(f => f.kind === "details")
       ? (carried.current.details ?? null)
       : null;
-  const separateOriginal = Boolean(type && activeReplacement &&
-    ["card_missing", "whatsapp_connection"].includes(type.key) &&
-    type.fields.some(f => f.kind === "details"));
+  const separateOriginal = Boolean(type && activeReplacement && retainedContextVersion(type) !== undefined);
   // The answers given so far, kept on screen when requests stop being open
   // to the seat partway through (review BT-7): a client the person picked
   // and every question with an answer.
