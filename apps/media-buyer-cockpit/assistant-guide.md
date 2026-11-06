@@ -148,7 +148,7 @@ How to:
 - /team/:id: one meeting's page. You reach it by opening a meeting in Team meetings.
 - /admin: the admin page, for admins only. You reach it from "Admin" in the menu.
 - /data: the leads and appointments view, for admins only. You reach it from "Data" in the menu or from the admin page.
-- /ceo: the CEO cockpit, for the CEO seat only. You reach it from "CEO" in the menu.
+- /ceo: the CEO cockpit, for the CEO seat only. You reach it from "CEO" in the menu. On its Ads tab, "Sales demos held" counts the Sales calendar appointments for the selected days and shows disqualified demos separately. The ad funnel follows leads created in those days.
 
 ## While a page loads
 
