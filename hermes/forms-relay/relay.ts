@@ -61,6 +61,8 @@ export const SAY = {
     "The relay outbox could not be counted, so it is not reported as empty.",
   config: (problems: string[]) =>
     `The relay is not set up: ${problems.join(" ")} Nothing was claimed.`,
+  missingCredential:
+    "The relay has no GitHub dispatch credential. Nothing was claimed. Run the relay doctor.",
   notDispatch:
     "This row is not the market intel dispatch, so the relay sent nothing for it. Check why it was queued.",
   canaryDispatch: "Canary on the test card: market intel is not dispatched.",
@@ -121,6 +123,8 @@ export type Deps = {
   apply: boolean;
   config: Config | null;
   configProblems: string[];
+  /** Presence only; this does not establish that GitHub will authorize a dispatch. */
+  dispatchCredentialPresent: boolean;
   db: {
     rpc: <T = any>(name: string, args?: Row) => Promise<T>;
     health: (h: {
@@ -186,6 +190,11 @@ export async function runOnce(deps: Deps): Promise<Report> {
     return finish(true, SAY.dry(waiting, keys), { waiting });
   }
   if (!deps.config) return finish(false, SAY.config(deps.configProblems));
+  // Do not consume queue attempts when we already know no dispatch can leave.
+  // This is only a presence check: a revoked, expired or under-scoped token
+  // may still be refused after a claim, and unknown outcomes remain unknown.
+  if (deps.dispatchCredentialPresent !== true)
+    return finish(false, SAY.missingCredential);
   const config = deps.config;
   const claimed = (
     (await deps.db.rpc("cockpit_form_relay_claim", {

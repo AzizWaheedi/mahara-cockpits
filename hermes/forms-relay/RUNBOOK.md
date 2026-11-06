@@ -25,9 +25,10 @@ repository, event type and payload keys. `CLIENT_DATA_*` lines left in `config.e
 ignored; delete them when you next edit the file.
 
 Keys, by name only: `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from the native runtime file, and
-`GITHUB_DISPATCH_TOKEN` from `~/.forms-relay/keys.env` (mode 600; a fine-grained token with Contents: write on the
-dispatch repository only). The relay needs no Google key. Never paste a key in chat; the systems manager puts it
-there, or the cockpit's paste box does.
+`GITHUB_DISPATCH_TOKEN` from `~/.forms-relay/keys.env` (mode 600). The relay needs no Google key. Never paste a
+key in chat. Repository dispatch requires Contents: write; credential availability and scope must be checked for
+the actual repository owner. GitHub's fine-grained personal token restrictions can prevent an outside collaborator
+from using one for this repository. The separate GitHub App integration is not yet connected to this worker.
 
 ## Install (D-J2)
 
@@ -49,7 +50,9 @@ the Google key) and keep the switch off until the onboarding go-live.
 
 1. Off: counts the outbox and prints `Dry run: N rows wait (dispatch keys ...)` or `Nothing to relay.`. Nothing
    is claimed.
-2. On: `cockpit_form_relay_claim(5)`. The database hands over only rows whose effect the cockpit owns (the owner
+2. On: if the dispatch credential is missing or blank, the relay records an unhealthy status and claims nothing.
+   This presence check does not validate authorization, expiry or permissions; a refused credential can still
+   consume an attempt after claim. Otherwise, `cockpit_form_relay_claim(5)`. The database hands over only rows whose effect the cockpit owns (the owner
    gate); a row Make owns again is skipped there with the gate's sentence. A claim older than 10 minutes is
    turned `unknown` (a run stopped mid-send) and never sent again.
 3. **Market intel dispatch:** the test card `86eywg1cq` is `skipped` (its dispatch would queue real market
