@@ -30,6 +30,9 @@ EXPECTED_JOBS = (
     # 20261029t: the 1-1 notes writer every minute (docs/forms/STAGE2B-CONTRACT.md 4.1). This copy lands at deploy D15,
     # after D5 applied it.
     "mahara-clickup-writeback-forms",
+    # 20261105s: new HighLevel contacts into the setter's queue every minute (sales-mirror, body {"mode":"new_contacts"});
+    # live since 2026-11-06 12:43 UTC. Without it intake falls back to mahara-sales-mirror's three minutes.
+    "mahara-sales-new-contacts",
 )
 
 

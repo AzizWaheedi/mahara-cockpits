@@ -425,8 +425,10 @@ verify_jwt off (pg_cron calls it with `x-cron-secret`) and
 `cockpit-creative-api` with it on, and since Stage 2a
 (`docs/forms/STAGE2-CONTRACT.md`) `cockpit-forms-api` with it on (the 1-1
 notes window's signed-in seats) and `fathom-webhook` with it off (Fathom signs
-each delivery and sends no JWT). `pg-cron-jobs` expects 28 jobs
-(`checks/pg_cron.py`), including `mahara-slack-notices` (20261025n, every
+each delivery and sends no JWT). `pg-cron-jobs` expects 29 jobs
+(`checks/pg_cron.py`; the 29th, since 2026-11-06, is `mahara-sales-new-contacts`
+from 20261105s, every minute: new HighLevel contacts into the setter's queue
+through sales-mirror's `new_contacts` mode), including `mahara-slack-notices` (20261025n, every
 minute) and `mahara-creative-drain` (20261025o, every 2 minutes). Both fail
 until those functions are deployed and those migrations applied, so the
 guardian copy on the VPS is updated after them, not before. The three queue
