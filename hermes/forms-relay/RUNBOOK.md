@@ -66,9 +66,10 @@ the Google key) and keep the switch off until the onboarding go-live.
 
 ## An unknown row
 
-Open the dispatch repository's Actions runs and look for a market intel run for the client. Found: nothing to do.
-Not found: re-run the dispatch from GitHub. The relay never sends an unknown row again; the guardian's `relay`
-check warns on any.
+Open the dispatch repository's Actions runs and look for a market intel run for the client. Finding a run is
+useful evidence, but no matching run is not proof that a delayed dispatch cannot still arrive. Keep the row
+unknown and coordinate reconciliation before any manual retry; do not send it again automatically. The
+guardian's `relay` check warns on unknown rows.
 
 ## Switch off and go back
 
