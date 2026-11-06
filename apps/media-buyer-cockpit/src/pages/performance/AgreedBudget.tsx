@@ -26,6 +26,30 @@ export type AgreedNote = z.output<typeof AgreedSchema>;
 const metaScope =
   "Based on available Meta data. Other accounts or platforms may be missing.";
 
+/** An empty available snapshot is not evidence that all client ads are off. */
+export function budgetEmptyWords(budgets: {
+  asOf?: string | null;
+  note?: string | null;
+}) {
+  if (!budgets.asOf) {
+    return {
+      title: "The budgets have not been read yet",
+      text:
+        budgets.note ??
+        "Meta budgets are read every hour. Check again after the next read.",
+    };
+  }
+  return {
+    title: "No switched-on campaigns found in the available Meta data",
+    text: [
+      "Check data freshness and all relevant accounts and platforms before relying on this.",
+      budgets.note,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
 /** The cell's agreed note, or null before 20261103e or on another shape. */
 export function agreedOf(cell: Cell | null | undefined): AgreedNote | null {
   const parsed = AgreedSchema.safeParse(

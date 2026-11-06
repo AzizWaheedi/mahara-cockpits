@@ -20,6 +20,7 @@ import {
   AgreedSubline,
   agreedHelp,
   agreedOf,
+  budgetEmptyWords,
 } from "../src/pages/performance/AgreedBudget";
 
 const html = (node: React.ReactElement) => renderToStaticMarkup(node);
@@ -212,7 +213,9 @@ test("the client page says the agreed figure against the budget now, not judged"
   expect(h).not.toMatch(/ceo-(warning|critical)|text-red|text-amber/);
   const sub = html(<AgreedSubline cell={cell(note)} />);
   expect(text(sub)).toBe("Agreed $39.99 a day (kickoff, 150 SAR).");
-  expect(agreedHelp(cell(note))).toBe(`${note.words} Based on available Meta data. Other accounts or platforms may be missing.`);
+  expect(agreedHelp(cell(note))).toBe(
+    `${note.words} Based on available Meta data. Other accounts or platforms may be missing.`,
+  );
 });
 
 test("why a source is not the default reaches the help and the line", () => {
@@ -247,4 +250,24 @@ test("an unread note says so; before 20261103e nothing shows", () => {
     expect(html(<AgreedSubline cell={cell(before)} />)).toBe("");
   }
   expect(agreedOf(undefined)).toBeNull();
+});
+
+test("an empty Meta snapshot never claims all client ads are off", () => {
+  const available = budgetEmptyWords({
+    asOf: "2026-11-01T10:00:00Z",
+    note: "One account was not read.",
+  });
+  expect(available.title).toBe(
+    "No switched-on campaigns found in the available Meta data",
+  );
+  expect(available.text).toContain(
+    "data freshness and all relevant accounts and platforms",
+  );
+  expect(available.text).toContain("One account was not read.");
+  const unread = budgetEmptyWords({ asOf: null, note: "The read failed." });
+  expect(unread).toEqual({
+    title: "The budgets have not been read yet",
+    text: "The read failed.",
+  });
+  expect(budgetEmptyWords({}).text).toContain("Check again");
 });
