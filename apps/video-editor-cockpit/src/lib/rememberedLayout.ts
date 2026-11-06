@@ -444,11 +444,31 @@ export function placeLayout(
   return { x: 0, y: 0 };
 }
 
+/**
+ * Keeps items that reach more than 2px below the root top. This keeps a page
+ * title that straddles the root when the skeleton shell sits a few pixels
+ * lower than the real page. An item that starts above the root is clipped to
+ * the root top, so it cannot cover content above the skeleton. Items fully
+ * above the root are dropped.
+ */
 export function visibleItems(
   layout: RememberedLayout,
   off: Offset,
 ): LayoutItem[] {
-  return layout.items.filter(item => item[2] >= off.y - 1);
+  const kept: LayoutItem[] = [];
+  for (const item of layout.items) {
+    const bottom = item[2] + item[4];
+    if (bottom <= off.y + 2) continue;
+    if (item[2] < off.y) {
+      const clipped = [...item] as LayoutItem;
+      clipped[2] = off.y;
+      clipped[4] = bottom - off.y;
+      kept.push(clipped);
+      continue;
+    }
+    kept.push(item);
+  }
+  return kept;
 }
 
 export function contentHeight(layout: RememberedLayout, off: Offset): number {

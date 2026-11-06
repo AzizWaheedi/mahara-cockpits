@@ -410,6 +410,34 @@ describe("visibleItems and contentHeight", () => {
   });
 });
 
+describe("visibleItems across a lower root", () => {
+  const STRADDLE_ITEMS: LayoutItem[] = [
+    [2, 0, 96, 100, 20],
+    [2, 0, 60, 100, 30],
+    [2, 0, 80, 100, 21],
+  ];
+  const layout: RememberedLayout = { ...PLACE_LAYOUT, items: STRADDLE_ITEMS };
+  const off = { x: 0, y: 100 };
+
+  test("clips an item that straddles the root top", () => {
+    const visible = visibleItems(layout, off);
+    expect(visible).toContainEqual([2, 0, 100, 100, 16]);
+    expect(STRADDLE_ITEMS[0]).toEqual([2, 0, 96, 100, 20]);
+  });
+
+  test("drops an item fully above the root", () => {
+    expect(visibleItems(layout, off)).not.toContain(STRADDLE_ITEMS[1]);
+  });
+
+  test("drops an item that ends within 2px of the root top", () => {
+    expect(visibleItems(layout, off)).not.toContain(STRADDLE_ITEMS[2]);
+  });
+
+  test("measures the lowest edge from the straddling item", () => {
+    expect(contentHeight(layout, off)).toBe(16);
+  });
+});
+
 describe("rememberedSkeleton", () => {
   test("a first visit renders the static skeleton", () => {
     const Static = () => <div data-static="today" />;
