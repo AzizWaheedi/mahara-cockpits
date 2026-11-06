@@ -3753,6 +3753,23 @@ describe("the old form's tickets in All Tasks", () => {
     } finally { await db.exec("ROLLBACK"); await asOwner(); }
   });
 
+  test("policy column experiment keeps real type snapshots distinct and exposes missing-version fallback", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec("ALTER TABLE public.cockpit_request_types ADD COLUMN retained_context_policy text NOT NULL DEFAULT 'legacy' CHECK (retained_context_policy IN ('legacy','retained_v1'))");
+      const initial = await q("SELECT coalesce((public.cockpit_request_type_at('card_missing',1)).retained_context_policy,'legacy') AS policy");
+      expect(initial[0].policy).toBe("legacy");
+      await q("UPDATE public.cockpit_request_types SET version=2, retained_context_policy='retained_v1' WHERE key='card_missing'");
+      await q("INSERT INTO public.cockpit_request_type_versions(key,version,\"row\",saved_by) SELECT key,version,to_jsonb(t),'fictional' FROM public.cockpit_request_types t WHERE key='card_missing'");
+      await q("UPDATE public.cockpit_request_types SET version=3, retained_context_policy='legacy' WHERE key='card_missing'");
+      const frozen = await q("SELECT (public.cockpit_request_type_at('card_missing',2)).retained_context_policy AS policy");
+      expect(frozen[0].policy).toBe("retained_v1");
+      await q("UPDATE public.cockpit_request_types SET retained_context_policy='retained_v1' WHERE key='card_missing'");
+      const fallback = await q("SELECT (public.cockpit_request_type_at('card_missing',999)).retained_context_policy AS policy");
+      expect(fallback[0].policy).toBe("retained_v1");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
   test("a sweep after the migration rebuilds only missing queued payloads using the saved type version", async () => {
     await asOwner(); await db.exec("BEGIN");
     try {
