@@ -103,6 +103,7 @@ import {
   UnlessHeld,
   useSwitches,
 } from "./adsSwitch";
+import { demoAttendanceForDays } from "./demoAttendance";
 import { isHiringCampaign } from "./hiringRoles";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
@@ -1253,6 +1254,16 @@ export function AdsTab({ sections, now }: CeoTabProps) {
     );
 
   const a = p.account[win];
+  const salesAttendance = shown.bounds
+    ? demoAttendanceForDays(
+        sections.growth?.payload?.daily,
+        shown.bounds.from,
+        shown.bounds.to,
+      )
+    : null;
+  const salesUpdated = sections.growth?.lastOkAt
+    ? new Date(sections.growth.lastOkAt).toLocaleString()
+    : null;
   // Meta refuses every write on an account that is not in good standing
   // (#2490592, verified against the live account on 2026-09-22), so the rows
   // say so rather than letting a brief be written into a wall.
@@ -1378,6 +1389,26 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                 freqHint={frequencyHint(p.windows, win, "lead gen")}
               />
             ) : null}
+            <section
+              className="rounded-lg bg-muted/40 px-4 py-3 text-sm"
+              aria-label="Sales demos by appointment date"
+            >
+              <div className="font-medium">
+                Sales demos held:{" "}
+                {salesAttendance
+                  ? count(salesAttendance.held)
+                  : "Not available"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {salesAttendance
+                  ? `${count(salesAttendance.disqualified)} disqualified. `
+                  : "The complete Sales daily data is unavailable for these dates. "}
+                Same GHL calendar count as Sales, by appointment date. It
+                includes demos without an ad link and excludes webinar leads.
+                The funnel above follows leads created in this period.
+                {salesUpdated ? ` Sales data last successfully updated ${salesUpdated}.` : ""}
+              </div>
+            </section>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{`${count(p.running)} of ${count(p.total)} ads running`}</span>
               {holds ? (
