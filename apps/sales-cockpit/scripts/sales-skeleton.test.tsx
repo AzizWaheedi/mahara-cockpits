@@ -24,6 +24,10 @@ const page = readFileSync(
   "utf8",
 );
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const skeletonSource = readFileSync(
+  new URL("../src/components/skeletons/TodaySkeleton.tsx", import.meta.url),
+  "utf8",
+);
 
 const SECTIONS = [
   "header",
@@ -90,6 +94,10 @@ describe("TodaySkeleton", () => {
   test("replays a remembered layout only when this device has one", () => {
     expect(today).toContain('data-page-skeleton="today"');
     expect(today).not.toContain("data-remembered");
+  });
+
+  test("gives the replay root the same page box as the page", () => {
+    expect(skeletonSource).toContain("className: page");
   });
 
   test("the page keeps the same section names and draws this skeleton", () => {

@@ -254,6 +254,8 @@ function TodaySkeletonStatic() {
   );
 }
 
-export const TodaySkeleton = rememberedSkeleton("today", TodaySkeletonStatic);
+export const TodaySkeleton = rememberedSkeleton("today", TodaySkeletonStatic, {
+  className: page,
+});
 
 export const TODAY_SKELETON_PATHS: string[] = ["/"];

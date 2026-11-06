@@ -445,4 +445,28 @@ describe("rememberedSkeleton", () => {
     const html = renderToStaticMarkup(<Page />);
     expect(html).toContain('data-static="today"');
   });
+
+  test("a replay root carries the option className", () => {
+    const storage = fakeStorage();
+    signIn(storage, "u1");
+    const host = globalThis as unknown as { window?: unknown };
+    const previous = host.window;
+    host.window = {
+      location: { pathname: "/today", search: "" },
+      localStorage: storage,
+    };
+    try {
+      writeLayout(currentPageKey(), sampleLayout(), storage);
+      const Static = () => <div data-static="today" />;
+      const Page = rememberedSkeleton("today", Static, {
+        className: "page-box",
+      });
+      const html = renderToStaticMarkup(<Page />);
+      expect(html).toContain('class="page-box"');
+      expect(html).toContain('data-remembered=""');
+    } finally {
+      if (previous === undefined) delete host.window;
+      else host.window = previous;
+    }
+  });
 });
