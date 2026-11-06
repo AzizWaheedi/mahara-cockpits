@@ -73,8 +73,6 @@ import {
   readRequestClients,
   readRequests,
   readRequestTypes,
-  RequestError,
-  submitReplacementForSeat,
   submitRequest,
 } from "@/lib/requestsClient";
 import {
@@ -125,7 +123,6 @@ import {
   type SentLane,
   type SentModel,
   type SubmitResult,
-  type SubmitInput,
   searchCountWords,
   searchLeads,
   searchTypes,
@@ -218,63 +215,6 @@ export type RequestFormProps = {
   onSent?: (result: SubmitResult) => void;
 };
 
-type PendingReplacement = {
-  signature: string;
-  requestId: string;
-  pending: Promise<SubmitResult> | null;
-  completed: SubmitResult | null;
-  mayHaveCommitted: boolean;
-};
-// In this page session only, keep uncertain replacement IDs per signed-in
-// account and client instance. Never persist their payloads to storage/logs.
-const replacementOperations = new WeakMap<object, Map<string, Map<string, PendingReplacement>>>();
-class ReplacementBusy extends Error {}
-
-/** Hold an earlier submission; an uncertain different edit must be reviewed. */
-export function submitReplacementOnce(
-  client: object,
-  seatId: string,
-  body: SubmitInput,
-  send: (body: SubmitInput) => Promise<SubmitResult>,
-): Promise<SubmitResult> {
-  if (!seatId || !body.replacesTaskId) return Promise.reject(new ReplacementBusy());
-  const snapshot = { ...body, answers: { ...body.answers } };
-  let seats = replacementOperations.get(client);
-  if (!seats) { seats = new Map(); replacementOperations.set(client, seats); }
-  let operations = seats.get(seatId);
-  if (!operations) { operations = new Map(); seats.set(seatId, operations); }
-  const signature = JSON.stringify({
-    typeKey: snapshot.typeKey, clientTaskId: snapshot.clientTaskId,
-    answers: Object.keys(snapshot.answers).sort().map(k => [k, snapshot.answers[k]]),
-    dueOn: snapshot.dueOn, priority: snapshot.priority, source: snapshot.source,
-    replacesTaskId: snapshot.replacesTaskId,
-  });
-  let op = operations.get(body.replacesTaskId);
-  if (op && op.signature !== signature) return Promise.reject(new ReplacementBusy());
-  if (!op) {
-    op = { signature, requestId: body.requestId, pending: null, completed: null, mayHaveCommitted: false };
-    operations.set(body.replacesTaskId, op);
-  }
-  // A later mount may belong to a new session for the same user. Do not
-  // hand it an earlier session's result, even when that user ID matches.
-  if (op.completed || op.pending) return Promise.reject(new ReplacementBusy());
-  const current = op;
-  const pending = Promise.resolve().then(() => send({ ...snapshot, requestId: current.requestId }));
-  current.pending = pending;
-  void pending.then(result => {
-    current.pending = null;
-    if (result.state === "duplicate" && !current.mayHaveCommitted) operations!.delete(body.replacesTaskId!);
-    else current.completed = result;
-  }, error => {
-    current.pending = null;
-    const definitelyNotApplied = error instanceof RequestError &&
-      (error.outcome === "rejected" || error.outcome === "not_sent");
-    if (definitelyNotApplied && !current.mayHaveCommitted) operations!.delete(body.replacesTaskId!);
-    else current.mayHaveCommitted = true;
-  });
-  return pending;
-}
-
 type Load<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }
@@ -366,13 +306,30 @@ function Seal({
  * the five cockpits; it reads the seat through each app's own taskSeat.ts.
  */
 export function RequestForm(props: RequestFormProps) {
-  // A different replacement ticket must start with that ticket's own context
-  // and request id, rather than retaining edits from the previous ticket or account.
-  const { seatId } = useTaskSeat();
-  return <RequestFormInner key={JSON.stringify([seatId, props.replacesTaskId ?? null])} {...props} />;
+  const { client, seatId } = useTaskSeat();
+  const generation = useRef(0);
+  const observedToken = useRef<string | null>(null);
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  useEffect(() => {
+    if (!client) return;
+    const subscription = client.auth.onAuthStateChange((event, session) => {
+      const token = session?.access_token ?? null;
+      if (event === "SIGNED_OUT" || (event === "SIGNED_IN" && (!token || token !== observedToken.current))) {
+        generation.current += 1;
+        setSessionEpoch(generation.current);
+      }
+      if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED" || event === "SIGNED_IN" || event === "SIGNED_OUT") {
+        observedToken.current = token;
+      }
+    });
+    return () => subscription.data.subscription.unsubscribe();
+  }, [client]);
+  return <RequestFormInner key={JSON.stringify([seatId, sessionEpoch, props.replacesTaskId ?? null])}
+    {...props} stillCurrent={() => generation.current === sessionEpoch} />;
 }
 
 function RequestFormInner({
+  stillCurrent,
   source,
   presetClient,
   presetType,
@@ -384,7 +341,7 @@ function RequestFormInner({
   replacesIfOpen = false,
   compact = false,
   onSent,
-}: RequestFormProps) {
+}: RequestFormProps & { stillCurrent: () => boolean }) {
   const seat = useTaskSeat();
   const client = seat.client;
   const [types, setTypes] = useState<Load<TypesRead>>({ status: "loading" });
@@ -809,24 +766,10 @@ function RequestFormInner({
       };
       let alone = false;
       let result: SubmitResult;
-      const guardedReplacement = Boolean(replacesTaskId &&
-        ["card_missing", "whatsapp_connection"].includes(type.key) &&
-        type.fields.some(f => f.kind === "details"));
       try {
-        if (guardedReplacement && !seat.seatId) {
-          setFormError("Check your sign-in before sending this request.");
-          return;
-        }
-        result = guardedReplacement
-          ? await submitReplacementOnce(client, seat.seatId!, body, value =>
-              submitReplacementForSeat(client, seat.seatId!, value, () => mounted.current))
-          : await submitRequest(client, body);
+        result = await submitRequest(client, body);
       } catch (e) {
-        if (!mounted.current) return;
-        if (e instanceof ReplacementBusy) {
-          setFormError("This ticket has another request in progress or awaiting confirmation. Check the original request before changing these details.");
-          return;
-        }
+        if (!mounted.current || !stillCurrent()) return;
         // Filed again, and its old form ticket was routed meanwhile: the
         // server wrote nothing, so the same request id goes on its own.
         if (
@@ -835,16 +778,10 @@ function RequestFormInner({
           errorWords(e) !== REQUEST_SENTENCES.oldTicketRouted
         )
           throw e;
-        if (replacesTaskId &&
-            ["card_missing", "whatsapp_connection"].includes(type.key) &&
-            type.fields.some(f => f.kind === "details")) {
-          setFormError("That old ticket was already routed. Review the original ticket before sending another request.");
-          return;
-        }
         alone = true;
         result = await submitRequest(client, { ...body, replacesTaskId: null });
       }
-      if (!mounted.current) return;
+      if (!mounted.current || !stillCurrent()) return;
       if (result.state === "duplicate") {
         focusNext.current = "dup";
         setDuplicate(result);
@@ -860,7 +797,7 @@ function RequestFormInner({
         onSent?.(result);
       }
     } catch (e) {
-      if (!mounted.current) return;
+      if (!mounted.current || !stillCurrent()) return;
       const words = errorWords(e);
       const key = fieldOfSentence(type, words);
       if (key) {
@@ -869,7 +806,7 @@ function RequestFormInner({
       } else setFormError(words);
     } finally {
       inFlight.current = false;
-      if (mounted.current) setSending(false);
+      if (mounted.current && stillCurrent()) setSending(false);
     }
   }
 
