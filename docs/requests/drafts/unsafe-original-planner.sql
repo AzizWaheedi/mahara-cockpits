@@ -1,3 +1,4 @@
+-- UNSAFE HISTORICAL PROTOTYPE: not a migration. Never deploy.
 -- Guarded against the live function inspected 6 November 2026. No request-type settings change here.
 DO $guard$
 DECLARE f oid := to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)');

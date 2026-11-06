@@ -3690,7 +3690,7 @@ describe("the old form's tickets in All Tasks", () => {
 
   test("offline draft preserves distinct old ticket context for both kickoff request types", async () => {
     // Install the guarded candidate in the synthetic database only.
-    const draft = migration("20261106101734_preserve_routed_ticket_context.sql");
+    const draft = await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text();
     await asOwner(); await db.exec("BEGIN");
     try {
       const liveShape = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
@@ -3728,7 +3728,7 @@ describe("the old form's tickets in All Tasks", () => {
   test("the guarded planner migration rejects a changed function without changing settings", async () => {
     await asOwner(); await db.exec("BEGIN");
     try {
-      const sql = migration("20261106101734_preserve_routed_ticket_context.sql");
+      const sql = await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text();
       const before = await q("SELECT key, fields, version FROM public.cockpit_request_types WHERE key IN ('card_missing','whatsapp_connection') ORDER BY key");
       await db.exec(sql);
       await db.exec("SAVEPOINT changed_function");
@@ -3745,7 +3745,7 @@ describe("the old form's tickets in All Tasks", () => {
     try {
       await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) TO authenticated");
       await db.exec("SAVEPOINT unexpected_grant");
-      await expect(db.exec(migration("20261106101734_preserve_routed_ticket_context.sql")))
+      await expect(db.exec(await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text()))
         .rejects.toThrow("Request planner differs from the reviewed definition");
       await db.exec("ROLLBACK TO SAVEPOINT unexpected_grant");
       const f = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
@@ -3837,6 +3837,21 @@ describe("the old form's tickets in All Tasks", () => {
     } finally { await db.exec("ROLLBACK"); await asOwner(); }
   });
 
+  test("held guarded migration rejects absent live function definitions before changing the schema", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec("CREATE TABLE public.cockpit_settings(key text PRIMARY KEY,value jsonb NOT NULL,updated_by text NOT NULL)");
+      const sql = await Bun.file(new URL("../../../docs/requests/drafts/held-migrations/20261106131757_requests_versioned_retained_context.sql", import.meta.url)).text();
+      const guard = sql.match(/DO \$guard\$[\s\S]*?END \$guard\$;/)?.[0];
+      expect(guard).toBeDefined();
+      await db.exec("SAVEPOINT preflight");
+      await expect(db.exec(guard!)).rejects.toThrow("Preflight function drift");
+      await db.exec("ROLLBACK TO SAVEPOINT preflight");
+      const state = await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column, to_regprocedure('public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)') IS NOT NULL AS v1_submit");
+      expect(state[0]).toEqual({policy_column:false,v1_submit:false});
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
   test("policy column experiment keeps real type snapshots distinct and exposes missing-version fallback", async () => {
     await asOwner(); await db.exec("BEGIN");
     try {
@@ -3872,7 +3887,7 @@ describe("the old form's tickets in All Tasks", () => {
       expect(repairBefore.payload.descriptionMarkdown).not.toContain("A saved fictional excerpt.");
       await q("DELETE FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [repairBefore.id]);
       await q("UPDATE public.cockpit_request_parts SET queue_id=NULL, state='queued' WHERE request_id=$1", [repair.id]);
-      await asOwner(); await db.exec(migration("20261106101734_preserve_routed_ticket_context.sql"));
+      await asOwner(); await db.exec(await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text());
       expect(await svc<number>("SELECT public.cockpit_request_sweep() r")).toBeGreaterThanOrEqual(1);
       expect((await queueOf(kept.id)).payload).toEqual(keepBefore.payload);
       expect((await queueOf(repair.id)).payload.descriptionMarkdown).toContain("Asked on the old ClickUp form:\nA saved fictional excerpt.");

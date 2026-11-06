@@ -835,7 +835,7 @@ describe("Yes: one tap through the unchanged submit", () => {
 
   test("offline draft leaves one-tap kickoff intact for both optional details types", async () => {
     await rolledBack(async () => {
-      await ex(migration("20261106101734_preserve_routed_ticket_context.sql"));
+      await ex(await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text());
       await q(`UPDATE public.cockpit_request_types SET fields = fields || '[{"key":"details","label":"What happened?","kind":"details","clickup_field_id":null,"required":false,"options":null,"help":null}]'::jsonb WHERE key IN ('card_missing','whatsapp_connection')`);
       for (const item of ["funded_card", "whatsapp_sync"]) {
         const id = uid();
