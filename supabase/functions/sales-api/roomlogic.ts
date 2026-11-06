@@ -2867,7 +2867,7 @@ export interface SettleFacts {
 /** Maqsam's states for a call that connected (dialer.ts callSummary), and the dialer's own "answered". */
 const PHONE_ANSWERED = new Set(["answered", "completed", "serviced"]);
 /** A saved dial whose outcome says the rep and the lead spoke. */
-const PHONE_TALKED = new Set(["callback", "booked", "not_interested", "disqualified", "handled", "confirmed", "rescheduled", "cancelled", "showed"]);
+const PHONE_TALKED = new Set(["callback", "booked", "not_interested", "not_ready", "disqualified", "handled", "confirmed", "rescheduled", "cancelled", "showed"]);
 
 /**
  * The lead's phone since a room was asked for (SettleFacts.phone): the

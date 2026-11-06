@@ -107,6 +107,10 @@ export const OUTCOMES = [
   "disqualified",
   "wrong_number",
   "handled",
+  // Qualified but not ready for a valid reason (sold the business, looking in
+  // six months): long-term nurture, with no "not interested" tag and no
+  // disqualification (Aziz's Loom, 2026-11-05).
+  "not_ready",
 ] as const;
 export type Outcome = (typeof OUTCOMES)[number];
 
@@ -118,6 +122,7 @@ export const OUTCOME_WORDS: Record<Outcome, string> = {
   disqualified: "Disqualified",
   wrong_number: "Wrong number",
   handled: "Handled",
+  not_ready: "Not ready yet (nurture)",
 };
 
 /**
@@ -308,6 +313,12 @@ export interface Appt {
   /** The last confirmation try that did not reach them. */
   last_try: number | null;
   /**
+   * The last confirmation call that rang out (a no-answer, never a message
+   * sent): the voice note follows a call nobody picked up, not a text. Not
+   * given: last_try stands for it.
+   */
+  last_miss?: number | null;
+  /**
    * The lead joined a video room carrying this call and the join stands (not
    * taken back): the intro was had on video, so it never comes back as
    * "Intro call now" while its mark catches up (stress2, round 1).
@@ -369,6 +380,48 @@ export interface Candidate {
   inbound_call_at?: number | null;
   /** The lead signed (a deal that is not voided): out of the setter's queue too. */
   signed?: boolean;
+  /** The owner's seat role (setter, closer, both), when the lead has an owner. */
+  owner_role?: string | null;
+  /** The host (HighLevel user) of the lead's latest demo in the window, "" with no host; null: no demo. */
+  demo_rep?: string | null;
+  /**
+   * Whose live call-back it is: the rep who set it in the dialer, or the
+   * working seat whose Callback / Follow Up calendar it is on. Null: anyone's.
+   */
+  callback_owner?: string | null;
+  /**
+   * The lead's own intro booking of the last hour (not one a rep made on
+   * the phone or in the cockpit): the call "Booked an intro, call now"
+   * (Aziz, 2026-11-05: "if anybody books an intro, still call them then and there").
+   */
+  just_booked?: { id: string; start: number; booked: number } | null;
+  /** Tries nobody answered in the last two hours (the dialer's saves and Maqsam's record, one per call). */
+  miss_times?: number[];
+  /** The latest voice note the team recorded sending this lead. */
+  voice_note_at?: number | null;
+  /** The start of the lead's latest intro cancelled in the last seven days (or still ahead). */
+  cancelled_intro_at?: number | null;
+  /** The lead's latest intro or demo past its twenty minutes that nobody has marked (last seven days). */
+  unmarked?: Appt | null;
+  /**
+   * The same, per kind of call: the setter marks their intros and the closer
+   * their demos, so a later call on someone else's calendar never hides one
+   * of theirs. Not given: `unmarked` stands for both.
+   */
+  unmarked_intro?: Appt | null;
+  unmarked_demo?: Appt | null;
+  /**
+   * The lead's first call since it came in, when nobody picked it up (the
+   * dialer's save or Maqsam's record, whichever came first); null when the
+   * first call was answered or there was none. A lead first called hours
+   * after it arrived (overnight, the weekend) still gets the burst from that
+   * call (burstAnchor).
+   */
+  first_try_at?: number | null;
+  /** When the dialer closed the lead (cockpit_sales_queue_state.closed_at). */
+  closed_at?: number | null;
+  /** False when the voice notes could not be read (before 20261105w): no voice-note step is asked for. */
+  voice_known?: boolean;
 }
 
 /** "14:30", Kuwait time. */
@@ -403,6 +456,54 @@ function callbackWords(c: Candidate, now: number): string {
 
 export type ItemKind = "lead" | "intro" | "confirm";
 
+/**
+ * What the item is, for the screen to key on rather than read `why`:
+ * - intro_now: the rep's own intro, five minutes before to twenty after
+ * - new_lead, just_booked, second_try: the "call now, twice" burst
+ * - voice_note: a burst or confirmation call nobody answered, no voice note yet
+ * - confirm, confirm_last, confirm_early: confirmations (2.5 h, 60 min, the day before)
+ * - reply_now, reply_today, reply_booked, reply_waiting: the lead wrote and nobody answered
+ * - callback_now, callback_today, callback_late, missed_call_now, missed_call_today
+ * - hot_due, hot_planned, intro_noshow, intro_cancelled, demo_noshow, demo_cancelled
+ * - mark_call: the rep's own call past its twenty minutes with no mark
+ * - showed_not_signed, new_not_reached, new_never_called, retry, never_called
+ * Items of kind "lead" carry every code but intro_now and the confirmations;
+ * a mark_call item is kind "lead" so an older page shows it as a lead.
+ */
+export type ItemCode =
+  | "intro_now"
+  | "new_lead"
+  | "just_booked"
+  | "second_try"
+  | "voice_note"
+  | "confirm"
+  | "confirm_last"
+  | "confirm_early"
+  | "reply_now"
+  | "reply_today"
+  | "reply_booked"
+  | "reply_waiting"
+  | "callback_now"
+  | "callback_today"
+  | "callback_late"
+  | "missed_call_now"
+  | "missed_call_today"
+  | "hot_due"
+  | "hot_planned"
+  | "intro_noshow"
+  | "intro_cancelled"
+  | "demo_noshow"
+  | "demo_cancelled"
+  | "mark_call"
+  | "showed_not_signed"
+  | "new_not_reached"
+  | "new_never_called"
+  | "retry"
+  | "never_called";
+
+/** The step a voice note follows: a new lead's burst, a just-booked lead's, or a confirmation call. */
+export type VoiceStep = "new" | "booked" | "confirm";
+
 export interface Ranked extends Candidate {
   tier: 0 | 1 | 2 | 3;
   kind: ItemKind;
@@ -410,7 +511,19 @@ export interface Ranked extends Candidate {
   sort: number;
   heat: number;
   hot_reasons: string[];
+  code: ItemCode;
+  /** Order inside the tier before heat: 0 goes first (the intro at its minute; a lead under an hour old). */
+  pin: number;
+  /** When the work became due: the strip's clock starts here. */
+  due_since: number | null;
+  /** A voice note is the next step (a call in this step nobody answered, no voice note since). */
+  voice_step: VoiceStep | null;
+  /** The rep's own call to mark (mark_call), whatever item the lead is on. */
+  mark: Appt | null;
 }
+
+type Item = Omit<Ranked, keyof Candidate | "heat" | "hot_reasons" | "pin" | "due_since" | "voice_step" | "mark"> &
+  Partial<Pick<Ranked, "pin" | "due_since" | "voice_step" | "mark">>;
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -511,47 +624,296 @@ export function introWaiting(a: Appt | null, now: number): boolean {
   return a.last_try !== null && a.last_try >= a.start - 5 * MIN && now - a.last_try < INTRO_RETRY;
 }
 
+/** Every intro and demo nobody has confirmed is called from two and a half hours before it (Aziz, 2026-11-05). */
+export const CONFIRM_FROM = 150 * MIN;
+/** A confirmation call nobody answered comes back sixty minutes before the call. */
+export const CONFIRM_AGAIN = 60 * MIN;
+/** A call booked less than three hours before it starts is a just-booked call, not a confirmation. */
+export const SHORT_NOTICE = 3 * HOUR;
+
 /**
  * Appointment work, before any lead: the intro call itself (intros are phone
- * calls the setter makes at the booked minute), then confirmations of calls
- * booked more than 24 hours ahead (Aziz, 2026-09-26), from the evening
- * before (a morning call) or the morning of the day, and among the "call
- * now" items in its last three hours. A try that reached no one waits two
- * hours (thirty minutes near the call).
+ * calls the setter makes at the booked minute), then confirmations.
+ *
+ * Confirmations (Aziz, 2026-11-05, replacing the 24-hours-ahead rule of
+ * 2026-09-26): every intro (the setter's) and demo (the closer's) nobody has
+ * confirmed is a "call now" item from two and a half hours before it; a try
+ * nobody answered brings it back sixty minutes before; one nobody answered
+ * in the last hour leaves it to the call itself. A call booked less than
+ * three hours before its start gets none (the just-booked call covers it).
+ * A call booked more than a day ahead also keeps the evening-before (a
+ * morning call) or morning-of touch, with two hours between tries.
+ *
+ * Confirmed means the lead's own yes: a confirmation saved in the cockpit,
+ * or the lead in the CONFIRMED stage after the booking (index.ts). Never
+ * HighLevel's "confirmed" status: every calendar confirms on booking.
+ *
+ * Whose: a setter's own intros (and any call with no host); a closer's own
+ * demos. A demo on another rep's calendar is theirs to confirm (Aziz,
+ * 2026-11-05, owner rule); a manager with no HighLevel user sees all.
  */
 export function appointmentWork(
   a: Appt | null,
   now: number,
   as: "setter" | "closer",
   meGhl: string | null,
-): { tier: 0 | 1; kind: ItemKind; why: string; sort: number } | null {
+): (Item & { tier: 0 | 1; pin: number }) | null {
   if (!a || ENDED.has(String(a.status ?? ""))) return null;
   const mine = !meGhl || !a.assigned || a.assigned === meGhl;
   if (as === "setter" && a.type === "intro" && mine && introWindow(a, now)) {
     if (introWaiting(a, now) || a.room_joined === true) return null;
-    return { tier: 0, kind: "intro", why: `Intro call now, booked for ${whenWords(a.start, now).replace(/^today at /, "")}`, sort: a.start };
+    // The intro is the first thing in Call now at its minute, whatever
+    // else is due (an explicit rule: deadline order put new leads and
+    // confirmations above it).
+    return {
+      tier: 0,
+      kind: "intro",
+      code: "intro_now",
+      pin: 0,
+      why: `Intro call now, booked for ${whenWords(a.start, now).replace(/^today at /, "")}`,
+      sort: a.start,
+    };
   }
-  const farAhead = a.booked !== null && a.start - a.booked > DAY;
-  if (a.start <= now || !farAhead || a.confirmed || now < confirmFrom(a.start)) return null;
-  // Setters confirm their own intros and help with every demo; a closer
-  // confirms their own demos (a manager with no HighLevel user sees all).
-  const whose = as === "closer" ? a.type === "demo" && (!meGhl || a.assigned === meGhl) : a.type === "demo" || mine;
+  if (a.start <= now || a.confirmed) return null;
+  const whose = as === "closer" ? a.type === "demo" && (!meGhl || a.assigned === meGhl) : mine;
   if (!whose) return null;
-  const soon = a.start - now <= 3 * HOUR;
-  if (a.last_try !== null && now - a.last_try < (soon ? 30 * MIN : 2 * HOUR)) return null;
+  // Booked at short notice: the just-booked call-now is its confirmation.
+  if (a.booked !== null && a.start - a.booked < SHORT_NOTICE) return null;
   // Never a confirmation call (nor the video link after it) at night where
   // the lead is: 09:00 to 21:00 on each of their clocks (sendrules.ts
   // hoursRefusal, a later message), as followups.py confirm_from keeps the
   // desk's confirmation message.
   // A lead whose country is not known keeps the call centre's Kuwait rule.
-  if (a.country && hoursRefusal({ segment: "confirm", touch: 2, country: a.country, now, followups: {} }) !== null) return null;
+  const night = () =>
+    Boolean(a.country) &&
+    hoursRefusal({ segment: "confirm", touch: 2, country: a.country as string, now, followups: {} }) !== null;
+  const words = `Confirm the ${a.type} ${whenWords(a.start, now)}${theirClock(a.country, now)}`;
+  const from = a.start - CONFIRM_FROM;
+  const again = a.start - CONFIRM_AGAIN;
+  if (now >= from) {
+    const t = a.last_try;
+    const tried = t !== null && t >= from;
+    // Tried in the last hour too: the call itself is next.
+    if (tried && (t as number) >= again) return null;
+    // Tried once in the window: back sixty minutes before.
+    if (tried && now < again) return null;
+    if (night()) return null;
+    return {
+      tier: 0,
+      kind: "confirm",
+      code: now >= again ? "confirm_last" : "confirm",
+      pin: 1,
+      why: tried ? `${words}, second try` : words,
+      sort: a.start,
+    };
+  }
+  // A call booked more than a day ahead: the evening before or that morning.
+  const farAhead = a.booked !== null && a.start - a.booked > DAY;
+  if (!farAhead || now < confirmFrom(a.start)) return null;
+  if (a.last_try !== null && now - a.last_try < 2 * HOUR) return null;
+  if (night()) return null;
+  return { tier: 1, kind: "confirm", code: "confirm_early", pin: 1, why: words, sort: a.start };
+}
+
+/**
+ * The rep's own call past its twenty minutes that nobody has marked: marked
+ * in the dialer, so a call nobody marks does not count as shown (Aziz,
+ * 2026-11-05). A setter marks their intros, a closer their demos; only the
+ * host or a manager may mark (lib.ts refuseMark), so a call with no host is
+ * a manager's.
+ */
+export function markWork(
+  a: Appt | null | undefined,
+  now: number,
+  as: "setter" | "closer",
+  meGhl: string | null,
+): Item | null {
+  if (!a || ENDED.has(String(a.status ?? ""))) return null;
+  if (a.type !== (as === "closer" ? "demo" : "intro")) return null;
+  if (now <= a.start + 20 * MIN || now - a.start > 7 * DAY) return null;
+  if (meGhl !== null && a.assigned !== meGhl) return null;
   return {
-    tier: soon ? 0 : 1,
-    kind: "confirm",
-    why: `Confirm the ${a.type} ${whenWords(a.start, now)}${theirClock(a.country, now)}`,
+    tier: 1,
+    kind: "lead",
+    code: "mark_call",
+    why: `Mark the ${a.type} booked for ${whenWords(a.start, now)}`,
     sort: a.start,
+    mark: a,
   };
 }
+
+/** A fresh lead or a fresh booking is called twice within this long. */
+export const BURST = 60 * MIN;
+/** The quick second try after the first no-answer of a burst. */
+export const SECOND_TRY = 2 * MIN;
+/** A lead's own intro booking is a "call now" item this long, until someone calls. */
+export const JUST_BOOKED = 30 * MIN;
+
+/**
+ * A lead first called within this long of arriving is still a new lead: its
+ * first call starts the burst wherever it falls in the day (2026-11-06
+ * review: 59% of last month's leads came in outside 09:00 to 18:00, and a
+ * lead from the night or the weekend is first called the next working
+ * morning).
+ */
+export const FIRST_CALL_NEW = 3 * DAY;
+
+/**
+ * When the lead's "call now, twice" started (Aziz's Loom: call every new
+ * lead immediately, twice): their arrival, or their own intro booking, in
+ * the last hour; the later of the two. A lead that came in while nobody was
+ * calling (the night, the weekend, up to three days) starts it at its first
+ * call instead, when nobody picked that call up and it was in the last hour
+ * (`first_try_at`): the step is "booked" when they have a call booked ahead.
+ */
+export function burstAnchor(
+  c: Pick<Candidate, "created_at" | "just_booked"> & Partial<Pick<Candidate, "first_try_at" | "booked_at">>,
+  now: number,
+): { at: number; step: "new" | "booked" } | null {
+  const opts: { at: number; step: "new" | "booked" }[] = [];
+  if (c.created_at !== null && c.created_at <= now && now - c.created_at <= BURST) opts.push({ at: c.created_at, step: "new" });
+  const b = c.just_booked;
+  if (b && b.booked <= now && now - b.booked <= BURST) opts.push({ at: b.booked, step: "booked" });
+  const f = c.first_try_at ?? null;
+  if (
+    !opts.length &&
+    f !== null &&
+    c.created_at !== null &&
+    f >= c.created_at &&
+    f - c.created_at <= FIRST_CALL_NEW &&
+    f <= now &&
+    now - f <= BURST
+  )
+    opts.push({ at: f, step: c.booked_at !== null && c.booked_at !== undefined && c.booked_at > now ? "booked" : "new" });
+  return opts.sort((x, y) => y.at - x.at)[0] ?? null;
+}
+
+/**
+ * The lead's first call since it came in, when nobody picked it up: the
+ * earliest of its calls (Maqsam's record or the dialer's save, `miss` when
+ * unanswered), or null when that first call was answered, came before the
+ * lead did, or there was none.
+ */
+export function firstTry(calls: readonly { at: number; miss: boolean }[], created: number | null): number | null {
+  if (created === null) return null;
+  const first = calls.filter(x => x.at >= created).sort((x, y) => x.at - y.at || Number(x.miss) - Number(y.miss))[0];
+  return first?.miss ? first.at : null;
+}
+
+/** The burst's unanswered tries, oldest first. */
+function burstMisses(c: Candidate, at: number): number[] {
+  return (c.miss_times ?? []).filter(t => t >= at).sort((x, y) => x - y);
+}
+
+/**
+ * The burst's second try: after the first no-answer it comes back two
+ * minutes later ("wait" until then), not after the ladder's hour; after the
+ * second it is the ladder's. A call answered, or any other outcome saved,
+ * since the miss ends the burst.
+ */
+export function secondTry(c: Candidate, now: number): { due: number; step: "new" | "booked" } | "wait" | null {
+  const a = burstAnchor(c, now);
+  if (!a) return null;
+  const misses = burstMisses(c, a.at);
+  if (misses.length !== 1) return null;
+  const miss = misses[0] as number;
+  if (c.last_dial_at !== null && c.last_dial_at > miss + MIN) return null;
+  const due = miss + SECOND_TRY;
+  return now < due ? "wait" : { due, step: a.step };
+}
+
+/**
+ * Whether a voice note is the lead's next step (Aziz, 2026-11-05: "we still
+ * send a personalized voice note from the setter's phone"): a burst call
+ * nobody answered with no voice note since its first miss, or a
+ * confirmation call nobody answered (before the call's own window) with no
+ * voice note since.
+ */
+export function voiceNoteDue(c: Candidate, now: number): VoiceStep | null {
+  // The voice notes could not be read (before 20261105w): none is asked
+  // for, since "I sent the voice note" could not be recorded either.
+  if (c.voice_known === false) return null;
+  const sent = c.voice_note_at ?? null;
+  // A call or a saved outcome after the miss (the second try answered, a
+  // call-back agreed, a confirmation saved) means someone spoke to them:
+  // no "tried to call you" note to a lead just spoken to (2026-11-06 review).
+  const spokeSince = (miss: number) => c.last_dial_at !== null && c.last_dial_at > miss + MIN;
+  const a = burstAnchor(c, now);
+  if (a) {
+    const misses = burstMisses(c, a.at);
+    const last = misses.at(-1);
+    if (last !== undefined && !spokeSince(last) && !(sent !== null && sent >= (misses[0] as number))) return a.step;
+  }
+  const ap = c.appt;
+  // Only a confirmation call that rang out: a message sent is a try for the
+  // confirmation ladder, not a call nobody answered.
+  const miss = ap ? (ap.last_miss !== undefined ? ap.last_miss : ap.last_try) : null;
+  if (
+    ap &&
+    !ap.confirmed &&
+    !ENDED.has(String(ap.status ?? "")) &&
+    miss !== null &&
+    miss >= ap.start - CONFIRM_FROM &&
+    miss < ap.start - 5 * MIN &&
+    now < ap.start &&
+    !spokeSince(miss) &&
+    !(sent !== null && sent >= miss)
+  )
+    return "confirm";
+  return null;
+}
+
+/** A dialer save up to this long after a Maqsam call started is that call (the ringing, then a slow save). */
+export const SAME_CALL = 10 * MIN;
+
+/**
+ * Maqsam's calls (start times) that are not one of these dialer saves: each
+ * save, oldest first, is the latest Maqsam call that started before it (five
+ * seconds of clock drift allowed) and in the ten minutes before it, not
+ * already another save's. Ringing and a slow save can pass three minutes,
+ * and one missed call must count once (2026-11-06 review); a second call
+ * started after the first save is never that save's.
+ */
+export function unpairedCalls(saves: readonly number[], maqsam: readonly number[]): number[] {
+  const calls = [...maqsam].sort((x, y) => x - y);
+  const used = new Set<number>();
+  for (const s of [...saves].sort((x, y) => x - y)) {
+    let pick = -1;
+    for (let i = 0; i < calls.length; i++) {
+      const t = calls[i] as number;
+      if (t > s + 5_000) break;
+      if (!used.has(i) && s - t <= SAME_CALL) pick = i;
+    }
+    if (pick >= 0) used.add(pick);
+  }
+  return calls.filter((_, i) => !used.has(i));
+}
+
+/**
+ * Merges the dialer's own no-answer saves with Maqsam's unanswered calls, one
+ * per call (unpairedCalls: a Maqsam call and the dialer save that followed it
+ * are the same call).
+ */
+export function mergeMisses(saves: readonly number[], maqsam: readonly number[]): number[] {
+  return [...saves, ...unpairedCalls(saves, maqsam)].sort((x, y) => x - y);
+}
+
+/**
+ * Whether a no-answer saved now is the burst's first (the lead comes back
+ * two minutes later) rather than a step down the retry ladder: within an
+ * hour of the lead arriving or booking, and no earlier unanswered try since.
+ */
+export function quickRetryDue(
+  anchor: { at: number } | null,
+  earlierMisses: number,
+  now: number,
+): number | null {
+  if (!anchor || now - anchor.at > BURST || earlierMisses > 0) return null;
+  return now + SECOND_TRY;
+}
+
+/** The Kuwait day of a moment (days since the epoch, Kuwait time). */
+const kuwaitDay = (t: number) => Math.floor((t + KUWAIT) / DAY);
 
 /**
  * " (it is 10:05 there)" for a lead whose clock is not Kuwait's, so the
@@ -571,51 +933,318 @@ export function theirClock(country: string | null | undefined, now: number): str
   }
 }
 
-function place(out: Ranked[], c: Candidate, h: { score: number; reasons: string[] }, item: Omit<Ranked, keyof Candidate | "heat" | "hot_reasons">) {
-  out.push({ ...c, ...item, heat: h.score, hot_reasons: h.reasons });
+function place(out: Ranked[], c: Candidate, h: { score: number; reasons: string[] }, item: Item, now: number) {
+  out.push({
+    ...c,
+    pin: 1,
+    due_since: null,
+    mark: null,
+    ...item,
+    voice_step: item.voice_step ?? voiceNoteDue(c, now),
+    heat: h.score,
+    hot_reasons: h.reasons,
+  });
 }
 
 /** A hot lead whose planned follow-up has come, for its owner (or any manager). */
-function hotFollowUp(c: Candidate, me: string, now: number, manager: boolean): Omit<Ranked, keyof Candidate | "heat" | "hot_reasons"> | null {
+function hotFollowUp(c: Candidate, me: string, now: number, manager: boolean): Item | null {
   if (!c.hot || c.hot_next_at === null || c.hot_next_at > now) return null;
   if (!manager && c.hot_owner && c.hot_owner !== me) return null;
   const now10 = now - c.hot_next_at <= 10 * MIN;
   return {
     tier: now10 ? 0 : 1,
     kind: "lead",
+    code: now10 ? "hot_due" : "hot_planned",
     why: now10 ? "Hot lead: the follow-up is due now" : "Hot lead: follow up as planned",
     sort: c.hot_next_at,
+    due_since: c.hot_next_at,
   };
 }
 
 function order(out: Ranked[]): Ranked[] {
-  // Call-now items go by urgency; everything else by heat, then its own order.
+  // The intro at its minute first, then Call now by urgency; in the other
+  // tiers what is pinned first (newest first), then the hottest lead, then
+  // its own order.
   return out.sort(
     (a, b) =>
       a.tier - b.tier ||
-      (a.tier === 0 ? 0 : b.heat - a.heat) ||
+      a.pin - b.pin ||
+      (a.tier === 0 || a.pin === 0 ? 0 : b.heat - a.heat) ||
       a.sort - b.sort ||
       a.contact_id.localeCompare(b.contact_id),
   );
 }
 
+const DEMO_STAGES: readonly StageRole[] = ["demo_booked", "demo_cancelled", "demo_noshow", "deposit", "won"];
+
 /**
- * Which leads a setter should call and in what order. Tier 0 is called
- * first: the intro call that is starting, a lead who arrived or wrote in the
- * last ten minutes, a callback that is due now, and a confirmation in its
- * last three hours. Then today's work (confirmations, fresh leads nobody
- * has reached, replies), then no-shows and retries that are due, then every
- * sales lead of the last 30 days nobody has called. Within a tier the
- * hottest lead goes first.
+ * A stage that only comes after a demo, by its name: "Showed - Didn't Close"
+ * is pinned to the no-progress role, which an intro's "Didn't Convert" shares,
+ * and a demo older than the calendar's sixty-day window leaves no demo host
+ * to go by (2026-11-06 review, campaign lens).
+ */
+const AFTER_DEMO_NAME = /didn.?t\s*close/i;
+
+/** The lead has not reached a demo: none on the calendar and no demo stage. */
+export function introStage(c: Candidate): boolean {
+  return (
+    (c.demo_rep === null || c.demo_rep === undefined) &&
+    !(c.stage_role && DEMO_STAGES.includes(c.stage_role)) &&
+    !(c.stage && AFTER_DEMO_NAME.test(c.stage))
+  );
+}
+
+/**
+ * Whether a lead's lead-level work (a new lead, a reply, a no-show or a
+ * cancelled intro to rebook, a just-booked call, a voice note, the retry
+ * ladder) is on this setter's queue. The owner rule of 2026-09-27, as the
+ * critic of 2026-11-05 corrected it: HighLevel's owner came from intros
+ * booked while the closer hosted them, so a closer's lead still at the intro
+ * stage is the setter's work; a lead past it (a demo) is the closer's. Work
+ * on another rep's own calendar (their call-backs and follow-up calls, their
+ * demos) stays theirs, and another setter's lead stays hidden. A manager
+ * sees every lead.
+ */
+export function setterScope(c: Candidate, me: string, meGhl: string | null, manager: boolean): boolean {
+  if (manager) return true;
+  if (c.callback_owner && c.callback_owner !== me) return false;
+  if (c.demo_rep && c.demo_rep !== meGhl) return false;
+  if (!c.owner || c.owner === me) return true;
+  return c.owner_role === "closer" && introStage(c);
+}
+
+/** "tomorrow at 10:00", "Saturday at 12:00": a call's start after "booked an intro for". */
+const bookedFor = (start: number, now: number) => whenWords(start, now).replace(/^on /, "");
+
+/** The lead's own intro booking still waiting for its first call (at most thirty minutes). */
+export function justBookedNow(c: Candidate, now: number): { id: string; start: number; booked: number } | null {
+  const b = c.just_booked;
+  if (!b || b.booked > now || now - b.booked > JUST_BOOKED || b.start <= now) return null;
+  // Called (or an outcome saved) since the booking: done.
+  if (c.last_dial_at !== null && c.last_dial_at >= b.booked) return null;
+  return b;
+}
+
+/** The voice-note item after a burst or confirmation call nobody answered. */
+function voiceItem(c: Candidate, voice: VoiceStep): Item {
+  return {
+    tier: 1,
+    kind: "lead",
+    code: "voice_note",
+    pin: 0,
+    why: voice === "confirm" ? "No answer to the confirmation: send a voice note" : "No answer: send a voice note",
+    sort: -((c.miss_times ?? []).at(-1) ?? c.appt?.last_miss ?? c.appt?.last_try ?? 0),
+    voice_step: voice,
+  };
+}
+
+/** A confirmation voice note is for the call's host (or a call with none, or a manager with no HighLevel user). */
+function confirmVoiceMine(c: Candidate, host: string | null): boolean {
+  return host === null || !c.appt?.assigned || c.appt.assigned === host;
+}
+
+/** The setter's work on one lead, its lead-level rules in order, or none. */
+function setterLeadWork(c: Candidate, now: number, host: string | null): Item | null {
+  // Closed: nothing, except the voice note after the confirmation call of a
+  // call booked from the dialer (the lead stays closed "booked" while it is
+  // ahead), so that step shows on the queue too (2026-11-06 review).
+  if (c.closed) return c.closed === "booked" && voiceNoteDue(c, now) === "confirm" && confirmVoiceMine(c, host) ? voiceItem(c, "confirm") : null;
+  const unanswered = c.inbound_at !== null && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
+  const replyAge = unanswered ? now - (c.inbound_at as number) : null;
+  const replied = replyAge !== null && replyAge <= 10 * MIN;
+  const fresh = c.created_at !== null && now - c.created_at <= 10 * MIN && !c.last_dial_at;
+  const callbackNow = callbackSoon(c, now);
+  const missed = missedCall(c, now);
+  if (fresh || replied || callbackNow || missed === "now") {
+    const booking = c.just_booked && c.just_booked.start > now ? c.just_booked : null;
+    return {
+      tier: 0,
+      kind: "lead",
+      code: callbackNow ? "callback_now" : missed === "now" ? "missed_call_now" : replied ? "reply_now" : "new_lead",
+      why: callbackNow
+        ? callbackWords(c, now)
+        : missed === "now"
+          ? "Called us, missed it"
+          : replied
+            ? "Wrote back minutes ago"
+            : booking
+              ? `New lead, booked an intro for ${bookedFor(booking.start, now)}, call now`
+              : "New lead, call now",
+      sort: -(c.callback_at ?? c.inbound_call_at ?? c.inbound_at ?? c.created_at ?? 0),
+      due_since: callbackNow
+        ? c.callback_at
+        : missed === "now"
+          ? (c.inbound_call_at ?? null)
+          : replied
+            ? c.inbound_at
+            : c.created_at,
+    };
+  }
+  // Booked an intro, any time ahead: call them then and there (Aziz, 2026-11-05).
+  const booked = justBookedNow(c, now);
+  if (booked)
+    return {
+      tier: 0,
+      kind: "lead",
+      code: "just_booked",
+      why: `Booked an intro for ${bookedFor(booked.start, now)}, call now`,
+      sort: -booked.booked,
+      due_since: booked.booked,
+    };
+  // The burst's second call, two minutes after the first nobody answered.
+  const second = secondTry(c, now);
+  if (second && second !== "wait")
+    return {
+      tier: 0,
+      kind: "lead",
+      code: "second_try",
+      why: second.step === "booked" && c.just_booked ? `Second try now (booked an intro for ${bookedFor(c.just_booked.start, now)})` : "Second try now",
+      sort: -second.due,
+      due_since: second.due,
+    };
+  // They called us today and nobody answered: before any retry timing.
+  if (missed === "today")
+    return { tier: 1, kind: "lead", code: "missed_call_today", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) };
+  // A burst or confirmation call nobody answered: the voice note is next.
+  const due = voiceNoteDue(c, now);
+  const voice = due === "confirm" && !confirmVoiceMine(c, host) ? null : due;
+  if (voice || second === "wait") {
+    if (!voice) return null;
+    return voiceItem(c, voice);
+  }
+  // A reply nobody has answered (a call, a saved outcome or a written reply
+  // clears it), whatever retry or booking is ahead (Aziz, 2026-11-05).
+  if (replyAge !== null && replyAge <= DAY) {
+    const ahead = c.booked_at !== null && c.booked_at > now;
+    if (ahead) {
+      const a = c.appt && c.appt.start === c.booked_at ? c.appt : null;
+      // Their own intro (or one with no host): confirmed in one tap.
+      const confirmable = a !== null && a.type === "intro" && !a.confirmed && (host === null || !a.assigned || a.assigned === host);
+      return {
+        tier: 1,
+        kind: confirmable ? "confirm" : "lead",
+        code: "reply_booked",
+        why: `Wrote back, has ${a ? `an ${a.type}` : "a call"} ${whenWords(c.booked_at as number, now)}`,
+        sort: -(c.inbound_at ?? 0),
+        due_since: c.inbound_at,
+      };
+    }
+    return { tier: 1, kind: "lead", code: "reply_today", why: "Wrote back today", sort: -(c.inbound_at ?? 0), due_since: c.inbound_at };
+  }
+  // Older replies, up to a week, so nothing drops out.
+  if (replyAge !== null && replyAge <= 7 * DAY)
+    return { tier: 2, kind: "lead", code: "reply_waiting", why: "Still waiting on you", sort: -(c.inbound_at ?? 0), due_since: c.inbound_at };
+  if (c.due_at !== null && c.due_at > now) return null;
+  if (c.booked_at && c.booked_at > now) return null;
+  const resting = c.stage_role !== null && RESTING_ROLES.includes(c.stage_role);
+  const callbackLate = c.callback_at !== null && c.callback_at <= now;
+  if (resting && !callbackLate) return null;
+  // Tries from the softphone move the ladder too, when the dialer holds no state.
+  const ladder =
+    c.due_at === null && c.callback_at === null && c.misses > 0 && !c.reached && c.last_dial_at !== null
+      ? nextTry(Math.min(c.misses, 4) - 1, c.last_dial_at)
+      : null;
+  if (ladder && (ladder.unreachable || (ladder.due !== null && ladder.due > now)) && !callbackLate) return null;
+  // A call-back missed today is today's work; an older one is overdue.
+  if (callbackLate) {
+    const today = kuwaitDay(c.callback_at as number) === kuwaitDay(now);
+    return {
+      tier: today ? 1 : 2,
+      kind: "lead",
+      code: today ? "callback_today" : "callback_late",
+      why: today ? `Call back, missed at ${kuwaitClock(c.callback_at as number)} today` : "Callback is overdue",
+      sort: c.callback_at as number,
+      due_since: c.callback_at,
+    };
+  }
+  // An intro no-show: today's work for its first day, then due to day seven.
+  const noShow = c.last_call_type === "intro" && c.last_call_status === "noshow" && c.last_call_at !== null && now - c.last_call_at <= 7 * DAY;
+  if (noShow) {
+    const fresh = now - (c.last_call_at as number) < DAY;
+    return { tier: fresh ? 1 : 2, kind: "lead", code: "intro_noshow", why: "Missed the intro, rebook it", sort: -(c.last_call_at ?? 0) };
+  }
+  // An intro the lead cancelled: rebook it within the week (as the closer's demo rule).
+  const cancelled = c.cancelled_intro_at ?? null;
+  if (cancelled !== null && now - cancelled <= 7 * DAY)
+    return { tier: 2, kind: "lead", code: "intro_cancelled", why: "Cancelled the intro, rebook it", sort: -cancelled };
+  const newish = c.created_at !== null && now - c.created_at <= 2 * DAY && !c.reached;
+  if (newish && (c.sales_lead || c.inbound_at !== null)) {
+    // Under an hour old: before the rest of today's work, newest first.
+    const young = now - (c.created_at as number) < HOUR;
+    return {
+      tier: 1,
+      kind: "lead",
+      code: c.last_dial_at ? "new_not_reached" : "new_never_called",
+      why: c.last_dial_at ? "New lead, not reached yet" : "New lead, never called",
+      sort: -(c.created_at ?? 0),
+      pin: young ? 0 : 1,
+      due_since: c.created_at,
+    };
+  }
+  const retryDue = (c.due_at !== null && c.due_at <= now) || (ladder !== null && !ladder.unreachable);
+  if (retryDue)
+    return {
+      tier: 2,
+      kind: "lead",
+      code: "retry",
+      why: c.due_at === null && c.misses ? `Next try is due (${c.misses} unanswered on Maqsam)` : "Next try is due",
+      sort: c.due_at ?? c.last_dial_at ?? 0,
+    };
+  // The long tail: every sales lead of the last 30 days nobody has called,
+  // tagged by the form or sitting in a sales pipeline (the ROAS tag alone
+  // missed leads booked without the form).
+  const quiet = c.sales_lead && c.created_at !== null && now - c.created_at <= 30 * DAY && !c.reached && !c.last_dial_at;
+  if (quiet) return { tier: 3, kind: "lead", code: "never_called", why: "Never called", sort: -(c.created_at ?? 0) };
+  return null;
+}
+
+/** Outcomes that end the sales talk: a call booked before them is not confirmed or called by the setter. */
+const ENDING_CLOSES: readonly string[] = ["not_ready", "not_interested", "disqualified", "wrong_number"];
+
+/**
+ * The setter closed the lead with an outcome that ends the talk after its
+ * call was booked (a lead he reached at the "call now" and had the intro
+ * with then and there): the booked intro is not confirmed, nor pinned at its
+ * minute. A booking after the close (the lead came back) is worked as usual.
+ */
+export function endedAfterBooking(c: Candidate): boolean {
+  if (!c.closed || !ENDING_CLOSES.includes(c.closed) || !c.appt) return false;
+  const booked = c.appt.booked;
+  // A call whose booking time is not known is worked as before.
+  if (booked === null) return false;
+  const closedAt = c.closed_at ?? null;
+  return closedAt === null || closedAt > booked;
+}
+
+/**
+ * Which leads a setter should call and in what order (Aziz, 2026-11-05: one
+ * queue all day instead of four Slack channels).
+ *
+ * Call now (tier 0): the setter's own intro from five minutes before it to
+ * twenty after, always first; then a call-back due now, a missed call, a
+ * reply, a new lead (ten minutes, never dialed), the lead's own intro
+ * booking (thirty minutes, nobody called since), the burst's second try
+ * (two minutes after the first no-answer, within the hour), a hot lead's
+ * follow-up, and confirmations in their last two and a half hours.
+ *
+ * Today (tier 1): a voice note after a call nobody answered, leads under an
+ * hour old nobody reached (newest first), then by heat: the setter's own
+ * intro to mark, the evening-before confirmation, a missed call, a reply of
+ * the last day (with a booked call too), a call-back missed today, a fresh
+ * intro no-show, the rest of the leads of the last two days nobody reached.
+ *
+ * Due (tier 2): replies of the last week still waiting, intro no-shows and
+ * cancelled intros to rebook, overdue call-backs, retries. Never called
+ * (tier 3): every sales lead of the last 30 days nobody has called.
  *
  * A lead called from the softphone counts: Maqsam's unanswered calls move
  * it down the same retry ladder as the dialer's own No answer.
  *
- * Out: do-not-disturb, a signed client or a won stage (always),
- * closed (booked, unreachable, not interested, disqualified, wrong number,
- * handled), claimed by another rep, and resting stages (disqualified,
- * paused, long-term nurture, lost), unless the lead wrote or a call-back is
- * due.
+ * Out: do-not-disturb, a signed client or a won stage (always), closed
+ * (booked, unreachable, not interested, not ready, disqualified, wrong
+ * number, handled), claimed by another rep, another rep's lead
+ * (setterScope), and resting stages (disqualified, paused, long-term
+ * nurture, lost), unless the lead wrote or a call-back is due.
  */
 export function rankForSetter(
   items: Candidate[],
@@ -625,6 +1254,9 @@ export function rankForSetter(
   manager = false,
 ): Ranked[] {
   const out: Ranked[] = [];
+  // No HighLevel user means every host only for a manager; a rep not linked
+  // yet hosts nothing, so other reps' intros stay off their queue (2026-11-04).
+  const host = meGhl ?? (manager ? null : "__none__");
   for (const c of items) {
     // A signed client, or a lead in a won stage, is client success's (the
     // CEO, 2026-10-11: a signed client stays in Closed on the pipeline and
@@ -636,88 +1268,18 @@ export function rankForSetter(
     // The intro that just rang out waits its five minutes out of sight.
     if (introWaiting(c.appt, now)) continue;
     const h = heat(c, now);
-    // No HighLevel user means every host only for a manager; a rep not linked
-    // yet hosts nothing, so other reps' intros stay off their queue (2026-11-04).
-    const job = appointmentWork(c.appt, now, "setter", meGhl ?? (manager ? null : "__none__")) ?? hotFollowUp(c, me, now, manager);
-    if (job) {
-      place(out, c, h, job);
-      continue;
-    }
-    // Another rep's lead is theirs to work; a manager still sees it.
-    if (c.owner && c.owner !== me && !manager) continue;
-    if (c.closed) continue;
-    const fresh = c.created_at !== null && now - c.created_at <= 10 * MIN && !c.last_dial_at;
-    const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
-    const callbackNow = callbackSoon(c, now);
-    const missed = missedCall(c, now);
-    if (fresh || replied || callbackNow || missed === "now") {
-      place(out, c, h, {
-        tier: 0,
-        kind: "lead",
-        why: callbackNow
-          ? callbackWords(c, now)
-          : missed === "now"
-            ? "Called us, missed it"
-            : replied
-              ? "Wrote back minutes ago"
-              : "New lead, call now",
-        sort: -(c.callback_at ?? c.inbound_call_at ?? c.inbound_at ?? c.created_at ?? 0),
-      });
-      continue;
-    }
-    // They called us today and nobody answered: before any retry timing.
-    if (missed === "today") {
-      place(out, c, h, { tier: 1, kind: "lead", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) });
-      continue;
-    }
-    if (c.due_at !== null && c.due_at > now) continue;
-    if (c.booked_at && c.booked_at > now) continue;
-    const unanswered = c.inbound_at !== null && now - c.inbound_at <= DAY && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
-    if (unanswered) {
-      place(out, c, h, { tier: 1, kind: "lead", why: "Wrote back today", sort: -(c.inbound_at ?? 0) });
-      continue;
-    }
-    const resting = c.stage_role !== null && RESTING_ROLES.includes(c.stage_role);
-    const callbackLate = c.callback_at !== null && c.callback_at <= now;
-    if (resting && !callbackLate) continue;
-    // Tries from the softphone move the ladder too, when the dialer holds no state.
-    const ladder =
-      c.due_at === null && c.callback_at === null && c.misses > 0 && !c.reached && c.last_dial_at !== null
-        ? nextTry(Math.min(c.misses, 4) - 1, c.last_dial_at)
-        : null;
-    if (ladder && (ladder.unreachable || (ladder.due !== null && ladder.due > now)) && !callbackLate) continue;
-    const newish = c.created_at !== null && now - c.created_at <= 2 * DAY && !c.reached;
-    if (newish && (c.sales_lead || c.inbound_at !== null)) {
-      place(out, c, h, {
-        tier: 1,
-        kind: "lead",
-        why: c.last_dial_at ? "New lead, not reached yet" : "New lead, never called",
-        sort: -(c.created_at ?? 0),
-      });
-      continue;
-    }
-    const noShow = c.last_call_type === "intro" && c.last_call_status === "noshow" && c.last_call_at !== null && now - c.last_call_at <= 7 * DAY;
-    const retryDue = (c.due_at !== null && c.due_at <= now) || (ladder !== null && !ladder.unreachable);
-    if (noShow || callbackLate || retryDue) {
-      place(out, c, h, {
-        tier: 2,
-        kind: "lead",
-        why: callbackLate
-          ? "Callback is overdue"
-          : noShow
-            ? "Missed the intro, rebook it"
-            : c.due_at === null && c.misses
-              ? `Next try is due (${c.misses} unanswered on Maqsam)`
-              : "Next try is due",
-        sort: c.callback_at ?? c.due_at ?? c.last_call_at ?? c.last_dial_at ?? 0,
-      });
-      continue;
-    }
-    // The long tail: every sales lead of the last 30 days nobody has called,
-    // tagged by the form or sitting in a sales pipeline (the ROAS tag alone
-    // missed leads booked without the form).
-    const quiet = c.sales_lead && c.created_at !== null && now - c.created_at <= 30 * DAY && !c.reached && !c.last_dial_at;
-    if (quiet) place(out, c, h, { tier: 3, kind: "lead", why: "Never called", sort: -(c.created_at ?? 0) });
+    // Work on the setter's own calendar comes before whose lead it is, but
+    // a lead the setter closed (not ready, not interested, disqualified, a
+    // wrong number) after the call was booked is not confirmed or called at
+    // its minute: he had the intro then and there (2026-11-06 review).
+    const ended = endedAfterBooking(c);
+    const job = (ended ? null : appointmentWork(c.appt, now, "setter", host)) ?? hotFollowUp(c, me, now, manager);
+    const main = job ?? (setterScope(c, me, meGhl, manager) ? setterLeadWork(c, now, host) : null);
+    // Their own intro past its window with no mark: Today's work, unless
+    // the lead has something as urgent (the mark rides on that item).
+    const mark = markWork(c.unmarked_intro !== undefined ? c.unmarked_intro : c.unmarked, now, "setter", host);
+    const item = main && (main.tier <= 1 || !mark) ? main : mark;
+    if (item) place(out, c, h, { ...item, mark: item.mark ?? mark?.mark ?? null }, now);
   }
   return order(out);
 }
@@ -732,11 +1294,11 @@ export interface CloserFacts {
 
 /**
  * A closer's queue: their demo leads. Tier 0 is a demo lead who wrote back
- * minutes ago, a call-back that is due, or a confirmation in its last three
- * hours; tier 1 is a confirmation of a demo booked more than a day ahead,
- * and a lead who showed and has not signed once their follow-up is due;
- * tier 2 a missed or cancelled demo in the last two weeks with nothing
- * rebooked.
+ * minutes ago, a call-back that is due, or a confirmation in its last two
+ * and a half hours; tier 1 is a confirmation of a demo booked more than a
+ * day ahead, their own demo to mark, and a lead who showed and has not
+ * signed once their follow-up is due; tier 2 a missed or cancelled demo in
+ * the last two weeks with nothing rebooked.
  */
 export function rankForCloser(
   items: (Candidate & CloserFacts)[],
@@ -746,50 +1308,50 @@ export function rankForCloser(
   manager = false,
 ): Ranked[] {
   const out: Ranked[] = [];
+  const host = meGhl ?? (manager ? null : "__none__");
   for (const c of items) {
     if (c.dnd || c.signed) continue;
     if (!routePhone(c.phone).ok) continue;
     if (c.claimed_by && c.claimed_by !== me) continue;
     const h = heat(c, now);
-    const job = appointmentWork(c.appt, now, "closer", meGhl ?? (manager ? null : "__none__")) ?? hotFollowUp(c, me, now, manager);
-    if (job) {
-      place(out, c, h, job);
-      continue;
-    }
-    const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
-    const callbackNow = callbackSoon(c, now);
-    const missed = missedCall(c, now);
-    if (replied || callbackNow || missed === "now") {
-      place(out, c, h, {
-        tier: 0,
-        kind: "lead",
-        why: callbackNow ? callbackWords(c, now) : missed === "now" ? "Called us, missed it" : "Wrote back minutes ago",
-        sort: -(c.inbound_call_at ?? c.inbound_at ?? c.callback_at ?? 0),
-      });
-      continue;
-    }
-    if (missed === "today") {
-      place(out, c, h, { tier: 1, kind: "lead", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) });
-      continue;
-    }
-    if (c.closed) continue;
-    if (c.due_at !== null && c.due_at > now) continue;
-    if (c.booked_at && c.booked_at > now) continue;
-    const past = c.demo_at !== null && c.demo_at <= now;
-    if (past && c.demo_status === "showed" && now - (c.demo_at ?? 0) <= 30 * DAY) {
-      place(out, c, h, { tier: 1, kind: "lead", why: "Showed, not signed yet", sort: c.due_at ?? c.demo_at ?? 0 });
-      continue;
-    }
-    if (past && (c.demo_status === "noshow" || c.demo_status === "cancelled") && now - (c.demo_at ?? 0) <= 14 * DAY) {
-      place(out, c, h, {
-        tier: 2,
-        kind: "lead",
-        why: c.demo_status === "noshow" ? "Missed the demo, rebook it" : "Cancelled the demo, rebook it",
-        sort: -(c.demo_at ?? 0),
-      });
-    }
+    const main = appointmentWork(c.appt, now, "closer", host) ?? hotFollowUp(c, me, now, manager) ?? closerLeadWork(c, now);
+    const mark = markWork(c.unmarked_demo !== undefined ? c.unmarked_demo : c.unmarked, now, "closer", host);
+    const item = main && (main.tier <= 1 || !mark) ? main : mark;
+    if (item) place(out, c, h, { ...item, mark: item.mark ?? mark?.mark ?? null }, now);
   }
   return order(out);
+}
+
+function closerLeadWork(c: Candidate & CloserFacts, now: number): Item | null {
+  const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
+  const callbackNow = callbackSoon(c, now);
+  const missed = missedCall(c, now);
+  if (replied || callbackNow || missed === "now")
+    return {
+      tier: 0,
+      kind: "lead",
+      code: callbackNow ? "callback_now" : missed === "now" ? "missed_call_now" : "reply_now",
+      why: callbackNow ? callbackWords(c, now) : missed === "now" ? "Called us, missed it" : "Wrote back minutes ago",
+      sort: -(c.inbound_call_at ?? c.inbound_at ?? c.callback_at ?? 0),
+      due_since: callbackNow ? c.callback_at : missed === "now" ? (c.inbound_call_at ?? null) : c.inbound_at,
+    };
+  if (missed === "today")
+    return { tier: 1, kind: "lead", code: "missed_call_today", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) };
+  if (c.closed) return null;
+  if (c.due_at !== null && c.due_at > now) return null;
+  if (c.booked_at && c.booked_at > now) return null;
+  const past = c.demo_at !== null && c.demo_at <= now;
+  if (past && c.demo_status === "showed" && now - (c.demo_at ?? 0) <= 30 * DAY)
+    return { tier: 1, kind: "lead", why: "Showed, not signed yet", code: "showed_not_signed", sort: c.due_at ?? c.demo_at ?? 0 };
+  if (past && (c.demo_status === "noshow" || c.demo_status === "cancelled") && now - (c.demo_at ?? 0) <= 14 * DAY)
+    return {
+      tier: 2,
+      kind: "lead",
+      code: c.demo_status === "noshow" ? "demo_noshow" : "demo_cancelled",
+      why: c.demo_status === "noshow" ? "Missed the demo, rebook it" : "Cancelled the demo, rebook it",
+      sort: -(c.demo_at ?? 0),
+    };
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1053,6 +1615,9 @@ export function appointmentEffect(kind: ItemKind, outcome: AnyOutcome): Effect |
     if (outcome === "noshow") return { ...none, mark: "noshow" };
     if (outcome === "no_answer") return none;
     if (outcome === "disqualified") return { ...none, mark: "invalid", ladder: true };
+    // Held, qualified, and not ready yet for a valid reason: the intro is
+    // marked held and the lead goes to long-term nurture (Aziz's Loom).
+    if (outcome === "not_ready") return { ...none, mark: "showed", ladder: true };
     return null;
   }
   if (outcome === "confirmed") return { ...none, confirmation: "confirmed" };
@@ -1061,7 +1626,7 @@ export function appointmentEffect(kind: ItemKind, outcome: AnyOutcome): Effect |
   if (outcome === "showed") return { ...none, mark: "showed", confirmation: "confirmed" };
   if (outcome === "no_answer") return { ...none, confirmation: "no_answer" };
   if (outcome === "cancelled") return { ...none, mark: "cancelled", confirmation: "cancelled", rebook: true };
-  if (outcome === "not_interested" || outcome === "disqualified")
+  if (outcome === "not_interested" || outcome === "disqualified" || outcome === "not_ready")
     return { ...none, mark: "cancelled", confirmation: "cancelled", ladder: true };
   return null;
 }
@@ -1102,7 +1667,9 @@ export function targetRoles(
   if (outcome === "cancelled") return call === "demo" ? ["demo_cancelled"] : ["intro_cancelled"];
   if (outcome === "noshow") return [];
   if (outcome === "disqualified") return kind === "intro" ? [] : ["disqualified"];
-  if (outcome === "not_interested") return ["nurture_long"];
+  // Not interested and not ready yet both rest in long-term nurture; only
+  // "not interested" is tagged (tagsFor), and neither disqualifies.
+  if (outcome === "not_interested" || outcome === "not_ready") return ["nurture_long"];
   if (kind === "lead" && outcome === "no_answer" && closed === "unreachable")
     return current === "new" || current === "hot" || current === null ? ["nurture_short"] : ["nurture_long"];
   return [];
@@ -1114,4 +1681,243 @@ export function tagsFor(outcome: AnyOutcome): string[] {
   if (outcome === "disqualified") return ["disqualified"];
   if (outcome === "wrong_number") return ["wrong-number"];
   return [];
+}
+
+// ---------------------------------------------------------------------------
+// The setter's one queue (Aziz, 2026-11-05): who confirmed, the voice note's
+// facts, and today's speed to lead
+// ---------------------------------------------------------------------------
+
+/**
+ * The lead confirmed by their pipeline stage: "Intro Call CONFIRMED" (or the
+ * one-call pipeline's "Call CONFIRMED", pinned to the same role in the
+ * pipeline setting), entered after this call was booked (the opportunity
+ * changed after the booking). The stage confirms the intro; a demo only in
+ * the one-call pipeline, whose stage name does not say intro. HighLevel's
+ * own "confirmed" status never counts: every calendar confirms on booking.
+ */
+export function stageConfirms(
+  role: StageRole | null,
+  stageName: string | null,
+  stageAt: number | null,
+  a: { type: "intro" | "demo"; booked: number | null },
+): boolean {
+  if (role !== "intro_confirmed" || stageAt === null || a.booked === null || stageAt < a.booked) return false;
+  return a.type === "intro" || !/intro/i.test(String(stageName ?? ""));
+}
+
+/** The form's answers and the call, as a voice-note script needs them (nothing is sent). */
+export interface VoiceFacts {
+  step: VoiceStep;
+  first_name: string | null;
+  company: string | null;
+  country: string | null;
+  services: string | null;
+  revenue: string | null;
+  goal: string | null;
+  challenge: string | null;
+  projects_12m: string | null;
+  ready_to_invest: string | null;
+  decision_maker: string | null;
+  /** Their booked intro (or the call being confirmed): Kuwait time, and their own clock when it differs. */
+  call: { type: "intro" | "demo"; start_at: string; kuwait: string; theirs: string | null } | null;
+  /** The language they filled the form in, when it says (ar or en). */
+  language: "ar" | "en" | null;
+  /** The rep sending it, first name in English and Arabic as the seat has them. */
+  rep: { first_name: string | null; first_name_ar: string | null };
+  /** What is not known, in the screen's words. */
+  missing: string[];
+}
+
+const clean = (v: unknown): string | null => {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
+};
+const first = (v: unknown): string | null => clean(String(v ?? "").trim().split(/\s+/)[0]);
+
+/** A country code as its name ("SA" → Saudi Arabia), or the stored text. */
+export function countryName(code: unknown): string | null {
+  const c = clean(code);
+  if (!c) return null;
+  if (!/^[a-z]{2}$/i.test(c)) return c;
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(c.toUpperCase()) ?? c;
+  } catch {
+    return c;
+  }
+}
+
+/** "16:00" on a zone's clock. */
+function zoneClockWords(ms: number, zone: string): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(ms);
+}
+
+/**
+ * The facts for the voice note the setter records on their own phone after
+ * a call nobody answered (Aziz, 2026-11-05: "a personalized voice note ...
+ * a guide with context on what they filled in on their form"). The form no
+ * longer asks for projects signed in the last 12 months, so that one is
+ * said as not known. The form's language is read from its answers.
+ */
+export function voiceFacts(
+  step: VoiceStep,
+  lead: Record<string, unknown>,
+  call: { type: "intro" | "demo"; start: number } | null,
+  rep: { name?: unknown; name_ar?: unknown },
+): VoiceFacts {
+  const services = clean(lead.services);
+  const answers = [lead.challenge, lead.decision_maker, lead.readiness, lead.revenue, lead.revenue_goal].map(v => String(v ?? ""));
+  const arabic = answers.some(a => /[؀-ۿ]/.test(a));
+  const english = answers.some(a => /[a-z]{3,}/i.test(a.replace(/\$?\d[\d,.]*\s*[km]?|less than|more than|under|over|million/gi, "")));
+  const zone = leadZones(lead.country)?.[0] ?? null;
+  let theirs: string | null = null;
+  if (call && zone) {
+    try {
+      const t = zoneClockWords(call.start, zone);
+      theirs = t === zoneClockWords(call.start, "Asia/Kuwait") ? null : `${t} their time`;
+    } catch {
+      theirs = null;
+    }
+  }
+  const facts: VoiceFacts = {
+    step,
+    first_name: first(lead.name),
+    company: clean(lead.company),
+    country: countryName(lead.country),
+    // "Yes" is the form's tick, not what they do.
+    services: services && !/^(yes|no|نعم|لا)$/i.test(services) ? services : null,
+    revenue: clean(lead.revenue),
+    goal: clean(lead.revenue_goal),
+    challenge: clean(lead.challenge),
+    projects_12m: null,
+    ready_to_invest: clean(lead.readiness),
+    decision_maker: clean(lead.decision_maker),
+    call: call ? { type: call.type, start_at: new Date(call.start).toISOString(), kuwait: kuwaitWords(call.start), theirs } : null,
+    language: arabic ? "ar" : english ? "en" : null,
+    rep: { first_name: first(rep.name), first_name_ar: first(rep.name_ar) },
+    missing: [],
+  };
+  const words: [keyof VoiceFacts, string][] = [
+    ["first_name", "their name"],
+    ["company", "company"],
+    ["country", "country"],
+    ["services", "what they do"],
+    ["revenue", "revenue"],
+    ["goal", "revenue goal"],
+    ["projects_12m", "projects signed in the last 12 months (the form does not ask)"],
+    ["ready_to_invest", "ready to invest"],
+    ["decision_maker", "decision maker"],
+    ["language", "language"],
+  ];
+  facts.missing = words.filter(([k]) => facts[k] === null).map(([, w]) => w);
+  return facts;
+}
+
+/** Today's speed to lead, as the setter's strip shows it. */
+export interface SpeedToday {
+  /** Today's new sales leads (ROAS-tagged, qualified or unqualified, created since 00:00 Kuwait). */
+  leads: number;
+  called: number;
+  within5: number;
+  /** Median minutes to the first call, over the leads called. Null with none called. */
+  median_min: number | null;
+  not_called: number;
+  /** The lead waiting longest for a first call, now. */
+  oldest_waiting: { contact_id: string; name: string | null; minutes: number } | null;
+}
+
+/** A Maqsam address as the rule compares it. */
+export function lineAddress(email: unknown): string {
+  return String(email ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Whether a sales seat made this call (2026-11-05), the Numbers page's and
+ * the CEO cockpit's rule: B2B's rep id on it (a rep on B2B's roster), or a
+ * sales seat's Maqsam address (`line`: every cockpit_sales_people and
+ * cockpit_sales_reps maqsam_email), so the setter, who has no roster row,
+ * counts. A copy of apps/sales-cockpit/src/lib/calls.ts salesLineCall:
+ * change both together.
+ */
+export function salesLineCall(c: { sales_rep_id?: unknown; agent_email?: unknown }, line: ReadonlySet<string>): boolean {
+  if (c.sales_rep_id) return true;
+  const a = lineAddress(c.agent_email);
+  return a.includes("@") && line.has(a);
+}
+
+/** A call the strip reads: Maqsam's copy, or one the dialer placed (`seat`: a seat placed it). */
+export interface StripCall {
+  contact_id?: unknown;
+  lead_phone8?: unknown;
+  occurred_at?: unknown;
+  agent_email?: unknown;
+  sales_rep_id?: unknown;
+  seat?: boolean;
+}
+
+/**
+ * Today's speed to lead (Aziz, 2026-11-05): the Numbers page's rule
+ * (lib/calls.ts: ROAS-tagged leads, qualified or unqualified, created in the
+ * window; the first call by a sales seat, either direction, salesLineCall),
+ * plus the dialer's own placed calls, a seat's by definition, which Maqsam's
+ * copy picks up a few minutes later. A call counts for the lead it is linked
+ * to, else for the lead with its last eight digits. The never-called are
+ * counted beside the median, never in it.
+ */
+export function speedToday(
+  leads: readonly { contact_id: string; name?: string | null; phone8?: string | null; lead_created_at?: unknown; lead_class?: unknown }[],
+  calls: readonly StripCall[],
+  now: number,
+  line: ReadonlySet<string> = new Set(),
+): SpeedToday {
+  const dayStart = kuwaitAt(now, 0);
+  const at = (v: unknown) => {
+    const t = v ? Date.parse(String(v)) : Number.NaN;
+    return Number.isFinite(t) ? t : null;
+  };
+  const by = new Map<string, number[]>();
+  for (const c of calls) {
+    if (c.seat !== true && !salesLineCall(c, line)) continue; // never a call-centre agent's
+    const t = at(c.occurred_at);
+    const k = c.contact_id ? `c:${c.contact_id}` : c.lead_phone8 ? `p:${c.lead_phone8}` : "";
+    if (!k || t === null) continue;
+    by.set(k, [...(by.get(k) ?? []), t]);
+  }
+  const mins: number[] = [];
+  let within5 = 0;
+  let notCalled = 0;
+  let oldest: SpeedToday["oldest_waiting"] = null;
+  const seen = new Set<string>();
+  for (const l of leads) {
+    if (seen.has(l.contact_id)) continue;
+    seen.add(l.contact_id);
+    if (l.lead_class !== "qualified" && l.lead_class !== "unqualified") continue;
+    const created = at(l.lead_created_at);
+    if (created === null || created < dayStart || created > now) continue;
+    const firstCall = [...(by.get(`c:${l.contact_id}`) ?? []), ...(l.phone8 ? (by.get(`p:${l.phone8}`) ?? []) : [])]
+      .filter(t => t >= created)
+      .sort((x, y) => x - y)[0];
+    if (firstCall === undefined) {
+      notCalled += 1;
+      const minutes = Math.floor((now - created) / MIN);
+      if (!oldest || minutes > oldest.minutes) oldest = { contact_id: l.contact_id, name: l.name ?? null, minutes };
+      continue;
+    }
+    const m = (firstCall - created) / MIN;
+    mins.push(m);
+    if (m <= 5) within5 += 1;
+  }
+  const sorted = [...mins].sort((x, y) => x - y);
+  const mid = Math.floor(sorted.length / 2);
+  const median = !sorted.length ? null : sorted.length % 2 ? (sorted[mid] as number) : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
+  return {
+    leads: mins.length + notCalled,
+    called: mins.length,
+    within5,
+    median_min: median === null ? null : Math.round(median * 10) / 10,
+    not_called: notCalled,
+    oldest_waiting: oldest,
+  };
 }

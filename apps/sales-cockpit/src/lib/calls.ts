@@ -1,15 +1,16 @@
 /**
  * The setter's rhythm, from Maqsam's calls, with the CEO cockpit's rules
- * (apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md and convex/ceo/
- * adapters/growth.ts, workingHours.ts):
+ * (apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md and
+ * hermes/ceo-refresh/native/adapters/growth.js, workingHours.js):
  *
  * - Speed to lead: for each lead (the ROAS-tagged contacts created in the
  *   window), the time from creation to the first Maqsam call with them by a
- *   sales rep, in either direction and whatever its outcome. A call counts
- *   for the lead it is linked to (by the whole number); a call not linked
- *   yet, for the lead with its last eight digits. The median on the plain
- *   clock and in working minutes, how many within five minutes on each, and
- *   the leads never called counted beside it, never inside it.
+ *   sales seat (`salesLineCall`), in either direction and whatever its
+ *   outcome. A call counts for the lead it is linked to (by the whole
+ *   number); a call not linked yet, for the lead with its last eight digits.
+ *   The median on the plain clock and in working minutes, how many within
+ *   five minutes on each, and the leads never called counted beside it,
+ *   never inside it.
  * - Gap between calls: from the end of one outbound call (ringing and talk)
  *   to the start of the same rep's next one, never below zero, inside the
  *   working window of the same day; any other call in between (an inbound
@@ -90,20 +91,49 @@ export function workingMinutes(from: number, to: number): number {
   return total / 60_000;
 }
 
+/** A Maqsam address as the rule compares it. */
+export function lineAddress(email: string | null | undefined): string {
+  return String(email ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Whether a sales seat made this call (2026-11-05): it carries B2B's rep id
+ * (a rep on B2B's roster), or it was made from a sales seat's Maqsam address
+ * (`line`, the addresses cockpit_sales_line_agents returns: every seat's
+ * Maqsam email and the roster's). The second half counts a seat B2B has no
+ * roster row for, the setter's since 4 November, whose calls the sales desk
+ * copies without a rep id (hermes/sales-desk/desk/maqsam_calls.py rep_ids).
+ * A call-centre agent's call is neither, and never counts. The strip's copy
+ * is sales-api/dialer.ts salesLineCall: change both together.
+ */
+export function salesLineCall(
+  c: Pick<CallRow, "sales_rep_id" | "agent_email">,
+  line: ReadonlySet<string>,
+): boolean {
+  if (c.sales_rep_id) return true;
+  const a = lineAddress(c.agent_email);
+  return a.includes("@") && line.has(a);
+}
+
 /**
  * Speed to lead over these leads. `firstBy`, when given, keeps only leads
  * whose first call was that rep's (the first caller's cohort), and leaves
- * the never-called out, since they are nobody's yet.
+ * the never-called out, since they are nobody's yet. `line` is the sales
+ * seats' Maqsam addresses (salesLineCall); without it only calls with a rep
+ * id count.
  */
 export function speedToLead(
   leads: LeadRow[],
   calls: CallRow[],
   firstBy?: string | null,
+  line: ReadonlySet<string> = new Set(),
 ): SpeedToLead {
   // Keyed apart, so two leads sharing eight digits never share each other's calls.
   const byPhone = new Map<string, { at: number; agent: string }[]>();
   for (const c of calls) {
-    if (c.sales_rep_id === null) continue; // a call-centre agent's call never counts
+    if (!salesLineCall(c, line)) continue; // a call-centre agent's call never counts
     const at = t(c.occurred_at);
     const k = c.contact_id
       ? `c:${c.contact_id}`
@@ -113,7 +143,7 @@ export function speedToLead(
     if (!k || at === null) continue;
     byPhone.set(k, [
       ...(byPhone.get(k) ?? []),
-      { at, agent: String(c.agent_email ?? "").toLowerCase() },
+      { at, agent: lineAddress(c.agent_email) },
     ]);
   }
   const mins: number[] = [];
@@ -136,7 +166,7 @@ export function speedToLead(
       }
       continue;
     }
-    if (firstBy && first.agent !== firstBy.toLowerCase()) continue;
+    if (firstBy && first.agent !== lineAddress(firstBy)) continue;
     counted += 1;
     mins.push((first.at - created) / 60_000);
     working.push(workingMinutes(created, first.at));

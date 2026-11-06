@@ -59,15 +59,125 @@ export const LEAD_SOURCE = {
     assumed: `(not ${HAS_AD} and not ${SAYS_ORGANIC})`,
 };
 /**
- * A Maqsam call made by somebody on the sales roster: a setter, a closer or
- * both (Aziz, 2026-09-21: "never a call-centre agent"). The sync stamps
- * `sales_rep_id` on every call it can tie to the roster.
+ * A Maqsam call in B2B's own copy made by somebody on the sales roster: a
+ * setter, a closer or both (Aziz, 2026-09-21: "never a call-centre agent").
+ * B2B's sync stamps `sales_rep_id` on every call it can tie to the roster.
+ * Speed to lead no longer reads B2B's copy (FIRST_CALLS below): since
+ * 7 October it holds none of the sales team's calls. The webinar's first
+ * contact still does.
  */
-export const BY_SALES_REP = `exists (select 1 from public.sales_reps sr where sr.id = m.sales_rep_id and sr.role in ('setter', 'closer', 'both', 'rep'))`;
+export const BY_SALES_REP =`exists (select 1 from public.sales_reps sr where sr.id = m.sales_rep_id and sr.role in ('setter', 'closer', 'both', 'rep'))`;
 /** The phone digits of a lead, and whether a Maqsam call is with that lead. */
 const LEAD_DIGITS = `regexp_replace(coalesce(l.phone, ''), '[^0-9]', '', 'g')`;
 export const CALL_IS_WITH_LEAD = `(m.contact_id = l.contact_id
         or (length(${LEAD_DIGITS}) >= 8 and (regexp_replace(coalesce(m.lead_phone, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.callee_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.caller_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8))))`;
+/**
+ * Speed to lead's first calls, read from Creative Triage (2026-11-05), with
+ * the sales cockpit's rule (apps/sales-cockpit/src/lib/calls.ts
+ * salesLineCall, speedToLead) so the two cockpits agree:
+ * - the calls: cockpit_sales_dials, the cockpit's copy of every sales Maqsam
+ *   call (B2B's copy, plus the ones the sales desk reads from Maqsam itself:
+ *   the closer's, and the setter's, whom B2B has no roster row for). B2B's
+ *   own maqsam_calls has held only a departed setter's calls since
+ *   7 October, so read from there every lead was never called;
+ * - a sales seat's call: B2B's rep id on it, or made from a sales seat's
+ *   Maqsam address (a seat's or a roster rep's maqsam_email), either
+ *   direction, whatever its outcome; a call-centre agent's call is neither;
+ * - with the lead: a call linked to a contact counts for that contact only;
+ *   one not linked yet, for the lead with the same last eight digits;
+ * - the first such call at or after the lead's creation, per contact
+ *   created on or after `from` (a Riyadh day). B2B's leads are joined to it
+ *   by contact id (`c`, first call `t`), so B2B still says which contacts
+ *   are leads.
+ */
+export function firstCallsSql(from) {
+    const since = `(${day(from)}::timestamp at time zone 'Asia/Riyadh')`;
+    return `with line as (
+  select lower(btrim(p.maqsam_email)) as e from public.cockpit_sales_people as p where position('@' in coalesce(p.maqsam_email, '')) > 0
+  union
+  select lower(btrim(r.maqsam_email)) from public.cockpit_sales_reps as r where position('@' in coalesce(r.maqsam_email, '')) > 0
+),
+seat_calls as (
+  select d.occurred_at, d.contact_id, d.lead_phone8
+    from public.cockpit_sales_dials as d
+   where d.occurred_at >= ${since}
+     and (d.sales_rep_id is not null or lower(btrim(coalesce(d.agent_email, ''))) in (select e from line))
+)
+select l.contact_id as c,
+  to_char(min(sc.occurred_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as t
+  from public.cockpit_sales_leads as l
+  join seat_calls as sc on sc.occurred_at >= l.lead_created_at
+   and ((sc.contact_id is not null and sc.contact_id = l.contact_id)
+     or (sc.contact_id is null and l.phone8 is not null and sc.lead_phone8 = l.phone8))
+ where l.lead_created_at >= ${since}
+ group by l.contact_id`;
+}
+/**
+ * The first calls as a step of a B2B statement: each contact's first call
+ * by a sales seat (firstCallsSql's rows, inlined as the Ecom rows are).
+ * Joined with `left join first_calls fc on ${FIRST_CALL_JOIN}`; a lead with
+ * no row was never called.
+ */
+export function firstCallsStep(rows = [], before = null) {
+    const json = JSON.stringify(rows.map(r => ({ c: String(r.c ?? ""), t: r.t === null || r.t === undefined ? null : String(r.t) })).filter(r => r.c && r.t)).replace(/'/g, "''");
+    if (!before)
+        return `first_calls as (
+  select fcr.c as contact_id, min(fcr.t) as first_call
+    from jsonb_to_recordset('${json}'::jsonb) as fcr(c text, t timestamptz)
+   group by fcr.c
+)`;
+    // Leads from before the sales cockpit's copy of the calls starts (2026-11-06
+    // review): their calls are only in B2B's own copy, which held the roster's
+    // calls until 7 October, so they are read there as before 2026-11-05, and
+    // the earlier of the two counts. Never "never called" for want of a copy.
+    const { from, at } = before;
+    if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(at))
+        throw new Error(`growth: bad calls-copy start ${at}`);
+    return `b2b_first_calls as (
+  select l.contact_id, min(m.occurred_at) as first_call
+    from public.leads l
+    join public.maqsam_calls m on m.occurred_at >= l.lead_created_at
+      and ${BY_SALES_REP}
+      and ${CALL_IS_WITH_LEAD}
+   where l.lead_created_at >= (${day(from)}::timestamp at time zone 'Asia/Riyadh')
+     and l.lead_created_at < '${at}'::timestamptz
+     and l.contact_id is not null
+   group by l.contact_id
+),
+first_calls as (
+  select x.contact_id, min(x.first_call) as first_call
+    from (select fcr.c as contact_id, fcr.t as first_call
+            from jsonb_to_recordset('${json}'::jsonb) as fcr(c text, t timestamptz)
+          union all
+          select b.contact_id, b.first_call from b2b_first_calls b) as x
+   group by x.contact_id
+)`;
+}
+/**
+ * The sales cockpit's copy of the calls (cockpit_sales_dials, Creative
+ * Triage): when it starts, its newest call and when it was last copied, and
+ * how many calls it holds, so the speed numbers say where they come from and
+ * are never read as zero from a copy that stopped.
+ */
+export const CALLS_COPY_SQL = `select
+  to_char(min(d.occurred_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as first_at,
+  to_char(max(d.occurred_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as newest_at,
+  (extract(epoch from max(d.mirrored_at)) * 1000)::bigint as mirrored_ms,
+  count(*) as n
+  from public.cockpit_sales_dials as d`;
+/**
+ * Whether the calls copy's newest call is too old to trust the speed numbers:
+ * over a working day (26 hours), or two days across the Friday off (on a
+ * Friday or a Saturday, Kuwait time).
+ */
+export function callsCopyStale(newestMs, nowMs) {
+    if (!Number.isFinite(newestMs))
+        return true;
+    const weekday = new Date(nowMs + 3 * 3600_000).getUTCDay();
+    const limitH = weekday === 5 || weekday === 6 ? 48 : 26;
+    return nowMs - newestMs > limitH * 3600_000;
+}
+export const FIRST_CALL_JOIN = `fc.contact_id = l.contact_id and fc.first_call >= l.lead_created_at`;
 /**
  * A closer-form deposit confirmed on a rail the database holds: a paid Whop
  * payment tied to the deal by response id or by the payer's email within
@@ -92,10 +202,11 @@ export const DEPOSIT_CONFIRMED = `(exists (
  * is the dashboard's and is never worked out here.
  *
  * Speed to lead (Aziz, 2026-09-21): from the lead's creation to the first
- * Maqsam call with that lead made by a sales rep (the roster: setter, closer
- * or both, never a call-centre agent), matched by the CRM contact id or the
- * last eight digits of the phone. Median over the leads that were called;
- * the never-called are counted beside it.
+ * Maqsam call with that lead made by a sales seat (never a call-centre
+ * agent). The first calls come from Creative Triage (firstCallsSql, the
+ * sales cockpit's rule since 2026-11-05) as `firstCalls`; a lead with none
+ * was never called. Median over the leads that were called; the
+ * never-called are counted beside it.
  *
  * Lead to booked call: leads created in the window with at least one intro
  * or demo booked against their contact, ever, over leads. Per lead, never
@@ -111,7 +222,7 @@ export const DEPOSIT_CONFIRMED = `(exists (
  * the voided deals of each window, dated as the function dates a deal, for
  * toWindow to take off; every direct read of closed_deals leaves them out.
  */
-function windowsSql(ranges, hours, ecomRows = []) {
+export function windowsSql(ranges, hours, ecomRows = [], firstCalls = []) {
     const ecomJson = JSON.stringify(ecomRows).replace(/'/g, "''");
     const confirmed = `(${DEPOSIT_CONFIRMED} or exists (
       select 1 from jsonb_to_recordset('${ecomJson}'::jsonb) as ep(day text,email text,name text)
@@ -127,6 +238,7 @@ function windowsSql(ranges, hours, ecomRows = []) {
   values
     ${values}
 ),
+${firstCallsStep(firstCalls)},
 still_confirmed as (
   select w.k,
     count(*) filter (where c.status = 'confirmed' and c.start_at <= now()) as demos_still_confirmed
@@ -164,12 +276,7 @@ speed as (
   from w
   join public.leads l on ${IS_LEAD} and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
     and not ${webbyNewLead("l")}
-  cross join lateral (
-    select min(m.occurred_at) as first_call from public.maqsam_calls m
-    where m.occurred_at >= l.lead_created_at
-      and ${BY_SALES_REP}
-      and ${CALL_IS_WITH_LEAD}
-  ) fc
+  left join first_calls fc on ${FIRST_CALL_JOIN}
   group by w.k
 ),
 fe as (
@@ -309,9 +416,11 @@ left join vd_signed vd on vd.k = w.k`;
  * booking day, closes by form day. b2b_marketing_daily is not used because it
  * adds retargeting spend and counts demos only.
  */
-export function dailySql(from, to) {
+export function dailySql(from, to, firstCalls = [], callsFrom = null) {
     const f = day(from);
     const t = day(to);
+    // Days before the calls copy starts read B2B's copy too (firstCallsStep).
+    const before = callsFrom && String(callsFrom).slice(0, 10) > from ? { from, at: String(callsFrom) } : null;
     // Every tile on the growth tabs can be rebuilt for any timeframe from these
     // days (Aziz, 2026-09-21: "any number with a time dimension gets the same
     // timeframe control as the charts"): each stage carries its own counts by
@@ -319,6 +428,7 @@ export function dailySql(from, to) {
     return `with days as (
   select generate_series(${f}, ${t}, interval '1 day')::date as d
 ),
+${firstCallsStep(firstCalls, before)},
 meta as (
   select s.date as d,
     sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen' and not ${webbyCampaign("s")}) as spend,
@@ -348,12 +458,7 @@ ld as (
     coalesce(sum(extract(epoch from (fc.first_call - l.lead_created_at)) / 60.0) filter (where ${IS_LEAD} and fc.first_call is not null), 0) as sp_minutes,
     count(*) filter (where ${IS_LEAD} and fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5
   from public.leads l
-  cross join lateral (
-    select min(m.occurred_at) as first_call from public.maqsam_calls m
-    where m.occurred_at >= l.lead_created_at
-      and ${BY_SALES_REP}
-      and ${CALL_IS_WITH_LEAD}
-  ) fc
+  left join first_calls fc on ${FIRST_CALL_JOIN}
   where (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
     and not ${webbyNewLead("l")}
   group by 1
@@ -1210,7 +1315,20 @@ export const growth = {
         const wh = await workingHoursForAdapters();
         // Core read. No fallback: a failure keeps the last good payload.
     const ecomConfirmRows = await sql(TRIAGE, `select to_char(day,'YYYY-MM-DD') as day, nullif(lower(btrim(customer_email)),'') as email, nullif(btrim(customer_name),'') as name from public.cockpit_ecom_invoices where status='PAID' and day >= current_date - 450`);
-        const windowRows = await sql(B2B, windowsSql(ranges, wh.hours, ecomConfirmRows));
+        // Speed to lead's first calls, from Triage with the sales cockpit's
+        // rule (firstCallsSql), for every lead the windows and the 365-day
+        // series can hold. Part of the core read: unread, the speed numbers
+        // would read as never called, so the last good payload stays.
+        const firstCalls = await sql(TRIAGE, firstCallsSql(addDays(today, -364)));
+        // The copy those calls come from: where it starts (days before it read
+        // B2B's own copy too), how fresh it is, and whether it holds any.
+        const [callsCopy] = await sql(TRIAGE, CALLS_COPY_SQL);
+        // Leads came in, yet not one first call in a year: the copy is broken,
+        // not the team idle. A failed core read keeps the last good payload,
+        // so the card never says "0 called" from a copy that stopped.
+        if (!firstCalls.length)
+            throw new Error("growth: the sales calls copy gave no first calls for the last 365 days; the last good payload stays");
+        const windowRows = await sql(B2B, windowsSql(ranges, wh.hours, ecomConfirmRows, firstCalls));
         const byKey = new Map(windowRows.map(r => [String(r.k), r]));
         const rowOf = (k) => {
             const r = byKey.get(k);
@@ -1267,7 +1385,7 @@ export const growth = {
             const n = num(row?.n);
             return n > 0 ? `${Math.round((num(row?.empty) / n) * 100)}%` : "all";
         });
-        const daily = await attempt("The 365-day daily series", notes, [], async () => (await sql(B2B, dailySql(addDays(today, -364), today))).map(r => ({
+        const daily = await attempt("The 365-day daily series", notes, [], async () => (await sql(B2B, dailySql(addDays(today, -364), today, firstCalls, callsCopy?.first_at ?? null))).map(r => ({
             date: String(r.date),
             spend: num(r.spend),
             spendRetargeting: num(r.spend_rt),
@@ -1368,7 +1486,7 @@ export const growth = {
             text: `Where leads come from is judged by the ad id on the contact: with one, ads; without one, organic when the source, a tag or the attribution medium says inbound WhatsApp, Instagram DM, YouTube, referral or organic; otherwise ads, assumed. GoHighLevel's first-touch attribution is empty on ${organicEmptyShare} of this month's leads, so a true first click needs UTMs on the forms and the WhatsApp link, or a "how did you find us" answer.`,
         }, {
             level: "info",
-            text: `Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales rep on the roster (setter, closer or both), never a call-centre agent. The median is over the leads that were called; the never-called are counted beside it. The working-hours figure starts the clock at the later of the lead's creation and the next working window and counts working minutes only (${describeWorkingHours(wh.hours)}${wh.ready ? "" : ", the default"}).`,
+            text: `Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales seat, either direction: a call B2B ties to a rep on its roster, or one made from a sales seat's Maqsam address (so a seat with no B2B rep row counts too), never a call-centre agent. The calls are the sales cockpit's copy, the same the Numbers page reads, so both cockpits agree${callsCopy?.first_at ? `; that copy starts on ${kuwaitDay(Date.parse(String(callsCopy.first_at)))}, and leads from before it are judged by B2B's own Maqsam copy (the roster's calls), the earlier call counting` : ""}. The median is over the leads that were called; the never-called are counted beside it. The working-hours figure starts the clock at the later of the lead's creation and the next working window and counts working minutes only (${describeWorkingHours(wh.hours)}${wh.ready ? "" : ", the default"}).`,
         }, {
             level: "info",
             text: `Contracted comes from the closed-deal form. Front-end cash is money paid: every payment the Money tab credited to a signed deal's closer (from 7 days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing), on Whop, Tap, a bank transfer or logged by hand, counted on the day it arrived, webinar deals left out. It is the last published money attribution, so it can be up to one refresh behind the Money tab. The deposit the closer typed on the form and the Payment Amount the CSM types on the kickoff form (read as USD, from ${KICKOFF_READ_FROM}) are shown beside it as typed, not money, and never added; a typed amount no payment matches is listed as typed, not seen. The deposit's confirmed share is what a Whop payment or a bank transfer on record backs (Tap is not checked for the deposit). A kickoff is confirmed by a Whop, Tap or bank transfer payment the Money tab attributed to the same client card within ${MATCH_DAYS} days and ${Math.round(MATCH_GAP * 100)}% of the amount; a payment only logged by hand does not confirm it.${kickoffRead
@@ -1414,6 +1532,26 @@ export const growth = {
                 note: status === "success" ? newest : `${status}, ${newest}`,
             };
         });
+        {
+            // The calls speed to lead reads (2026-11-06 review): stamped, and a
+            // warning when the newest is over a working day old.
+            const newestMs = callsCopy?.newest_at ? Date.parse(String(callsCopy.newest_at)) : Number.NaN;
+            const stale = callsCopyStale(newestMs, Date.now());
+            const startDay = callsCopy?.first_at ? kuwaitDay(Date.parse(String(callsCopy.first_at))) : null;
+            sources.push({
+                name: "Sales calls (the sales cockpit's Maqsam copy, cockpit_sales_dials)",
+                freshestAt: num(callsCopy?.mirrored_ms) || undefined,
+                ok: !stale,
+                note: Number.isFinite(newestMs)
+                    ? `newest call ${kuwaitDay(newestMs)}, ${num(callsCopy?.n).toLocaleString("en-US")} calls since ${startDay}; ${firstCalls.length.toLocaleString("en-US")} leads with a first call in the last 365 days`
+                    : "no calls",
+            });
+            if (stale)
+                notes.push({
+                    level: "warn",
+                    text: `The sales calls copy's newest call is ${Number.isFinite(newestMs) ? `from ${kuwaitDay(newestMs)}` : "missing"}, over a working day old, so speed to lead may count recent leads as not called yet. Check the sales desk's Maqsam copy on the sales cockpit's Team page.`,
+                });
+        }
         if (ledger?.ready) {
             sources.push({
                 name: "Front-end payments (deal ledger, cockpit_deal_payments)",

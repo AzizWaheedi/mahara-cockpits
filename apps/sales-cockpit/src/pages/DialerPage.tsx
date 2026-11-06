@@ -4,10 +4,12 @@ import {
   CalendarClock,
   CalendarPlus,
   Check,
+  ClipboardCheck,
   Copy,
   ExternalLink,
   Flame,
   ListOrdered,
+  Mic,
   PhoneCall,
   PhoneMissed,
   PhoneOff,
@@ -26,7 +28,6 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
-import { AfterCall } from "../components/AfterCall";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { CallPicker } from "../components/CallPicker";
@@ -35,6 +36,8 @@ import {
   ConversationFailed,
   useConversation,
 } from "../components/Conversation";
+import { DayStrip } from "../components/DayStrip";
+import { HeldNext, MarkStep } from "../components/DialerSteps";
 import { SavedWorkLine } from "../components/DialSavedWork";
 import { HotControl } from "../components/HotList";
 import {
@@ -44,7 +47,6 @@ import {
   Failed,
   FilterChip,
   field,
-  StatTile,
   StatusChip,
   type Tone,
 } from "../components/kit";
@@ -66,6 +68,7 @@ import {
   VideoLinkButton,
   VideoPicker,
 } from "../components/VideoLink";
+import { VoiceNoteCard } from "../components/VoiceNoteCard";
 import { ZoomLinkButton } from "../components/ZoomLink";
 import { heldRow } from "../lib/afterCall";
 import { ApiError, api, uncertain } from "../lib/api";
@@ -91,9 +94,11 @@ import {
   mmss,
   primeSound,
   readDraft,
+  type SpeedToday,
   setAlertsWanted,
   spokeCallbackAt,
   type UrgentEvent,
+  type VoiceNote,
   writeDraft,
 } from "../lib/dialer";
 import {
@@ -126,9 +131,9 @@ import {
   ago,
   classLabel,
   clock,
-  duration,
   isArabic,
   plainStage,
+  statusLabel,
   when,
 } from "../lib/format";
 import {
@@ -159,8 +164,18 @@ import {
   videoJoinedAt,
   workerDownOf,
 } from "../lib/rooms";
+import {
+  alertCrossings,
+  callNowCount,
+  callNowTitle,
+  type ItemWords,
+  itemWords,
+  labelSaysMore,
+  missStepWords,
+  type WaitingMessages,
+} from "../lib/setterDay";
 import { toast } from "../lib/toast";
-import type { CalendarRow, Lead, Me, Note } from "../lib/types";
+import type { CalendarRow, Lead, MarkStatus, Me, Note } from "../lib/types";
 import {
   gateLine,
   introCallInWindow,
@@ -232,8 +247,37 @@ interface Queue {
   undialable?: Undialable;
   /** The rep's saves of the last day whose HighLevel half failed or is still waiting. */
   saved_work?: SavedWork[];
+  /**
+   * Today's speed to lead for the day strip (2026-11-05): null when it could
+   * not be read, absent from a server older than the strip.
+   */
+  speed?: SpeedToday | null;
+  /** Replies waiting that only Messages can answer (DMs, numbers abroad). */
+  messages?: WaitingMessages | null;
   /** When this copy was asked for, in the browser. */
   loadedAt: number;
+}
+
+/** What sales-api says comes next after a save (dial.save, dial.status): the voice note. */
+interface NextStepOut {
+  kind?: string;
+  second_try_at?: string | null;
+  facts?: VoiceNote | null;
+}
+
+/** The voice note the pane offers after a no-answer, from the save's answer. */
+interface VoiceNext {
+  facts: VoiceNote;
+  secondTryAt: string | null;
+}
+
+function voiceNextOf(n: NextStepOut | null | undefined): VoiceNext | null {
+  if (n?.kind !== "voice_note" || !n.facts || typeof n.facts !== "object")
+    return null;
+  return {
+    facts: { ...n.facts, due: true },
+    secondTryAt: n.second_try_at ?? null,
+  };
 }
 
 /**
@@ -332,6 +376,12 @@ const LEAD_OUTCOMES: OutcomeDef[] = [
     hint: "Out of the queue until they write again.",
   },
   {
+    key: "not_ready",
+    label: "Not ready yet (nurture)",
+    needsNote: true,
+    hint: "Qualified, but not now for a real reason (selling the business, back in six months). Goes to the long-term nurture; not a disqualification.",
+  },
+  {
     key: "disqualified",
     label: "Disqualified",
     needsNote: true,
@@ -366,6 +416,12 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
       label: "Not a fit",
       needsNote: true,
       hint: "Marks the intro disqualified and closes the lead.",
+    },
+    {
+      key: "not_ready",
+      label: "Not ready yet (nurture)",
+      needsNote: true,
+      hint: "Held the intro; qualified, but not now for a real reason. Marks it showed and puts them in the long-term nurture, not disqualified.",
     },
     {
       key: "no_answer",
@@ -422,6 +478,12 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
       label: "Not coming",
       needsNote: true,
       hint: "Cancels the call and closes the lead.",
+    },
+    {
+      key: "not_ready",
+      label: "Not ready yet (nurture)",
+      needsNote: true,
+      hint: "Not coming because the timing is wrong, not the fit. Cancels the call and puts them in the long-term nurture.",
     },
   ],
 };
@@ -761,6 +823,39 @@ export default function DialerPage({ me }: { me: Me }) {
     return () => window.removeEventListener("pointerdown", wake);
   }, [alertsOn]);
 
+  // The chime again 30 seconds before a call-now item's time is up, and
+  // when it passes (the call centre's urgent-alerts.js), never during a
+  // call. One look a second; a crossing is chimed by the look that saw it.
+  const realert = useRef({ urgent, open: Boolean(open), on: alertsOn });
+  realert.current = { urgent, open: Boolean(open), on: alertsOn };
+  useEffect(() => {
+    let last = Date.now();
+    const t = window.setInterval(() => {
+      const now = Date.now();
+      const from = last;
+      last = now;
+      const r = realert.current;
+      if (!r.on || r.open) return;
+      if (alertCrossings(r.urgent, from, now).length) chime();
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  // "(N) call now" in the browser tab while call-now leads wait, so the
+  // count shows from any other tab; the page's own title comes back after.
+  const waiting = callNowCount(visible, open?.contact_id);
+  const baseTitle = useRef<string | null>(null);
+  useEffect(() => {
+    baseTitle.current ??= document.title.replace(/^\(\d+\) call now · /, "");
+    document.title = callNowTitle(baseTitle.current, q ? waiting : 0);
+  }, [waiting, q]);
+  useEffect(
+    () => () => {
+      if (baseTitle.current) document.title = baseTitle.current;
+    },
+    [],
+  );
+
   async function toggleAlerts() {
     if (alertsOn) {
       setAlertsOn(false);
@@ -779,7 +874,7 @@ export default function DialerPage({ me }: { me: Me }) {
     setAlertsOn(true);
     setAlertsWanted(true);
     toast.success(
-      "Alerts on: a sound for every new lead to call now, and a desktop notice when this tab is behind another.",
+      "Alerts on: a sound for every lead to call now, again 30 seconds before its time is up and when it passes, and a desktop notice when this tab is behind another.",
     );
   }
 
@@ -922,7 +1017,17 @@ export default function DialerPage({ me }: { me: Me }) {
         </div>
       ) : null}
 
-      <Stats q={q} error={error} />
+      <DayStrip
+        loaded={Boolean(q)}
+        error={error}
+        speed={q?.speed}
+        messages={q?.messages}
+        today={q?.today ?? null}
+        ready={q ? ready : null}
+        loadedAt={q?.loadedAt ?? Date.now()}
+        locked={Boolean(open)}
+        onPick={id => setPicked(id)}
+      />
 
       <SavedWorkLine
         items={savedWork}
@@ -1118,84 +1223,6 @@ function LeadWork({
 // ---------------------------------------------------------------------------
 // The day's numbers and the "call now" strip
 // ---------------------------------------------------------------------------
-
-function Stats({ q, error }: { q: Queue | null; error: string | null }) {
-  const t = q?.today ?? null;
-  const line = t?.line ?? null;
-  const ready = q ? q.counts.reduce((a, b) => a + b, 0) : null;
-  if (!q) {
-    return error ? (
-      <p className="muted text-sm">
-        Today's numbers could not be read: {error}
-      </p>
-    ) : (
-      <LoadingSkeleton
-        variant="tiles"
-        label="Reading today's numbers"
-        rows={4}
-      />
-    );
-  }
-  if (!t) {
-    return (
-      <p className="muted text-sm">Today's numbers are not in this read.</p>
-    );
-  }
-  return (
-    <>
-      {/* The day in one line until the tiles fit beside the three columns, so Call stays near the top. */}
-      <p className="muted text-sm 2xl:hidden">
-        {`Today: ${t.saved} saved A� ${t.answered} of ${t.calls} answered A� ${t.booked} booked A� ${ready} ready`}
-      </p>
-      <div className="hidden grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid">
-        <StatTile
-          label="Saved today"
-          value={t ? String(t.saved) : null}
-          sub={
-            t
-              ? t.auto_no_answer
-                ? `${t.auto_no_answer} no-answer${t.auto_no_answer === 1 ? "" : "s"} saved from Maqsam's record`
-                : "Outcomes saved in the dialer"
-              : undefined
-          }
-          hint="Every outcome saved in the dialer today (Kuwait time), with or without a call through it."
-        />
-        <StatTile
-          label="Answered"
-          value={t ? `${t.answered} of ${t.calls}` : null}
-          sub={
-            t ? (
-              <>
-                {t.calls
-                  ? `${Math.round((t.answered / t.calls) * 100)}% connect rate · ${duration(t.talk_s)} talking`
-                  : "No calls through the dialer yet today"}
-                {line ? (
-                  <span className="block">
-                    Your Maqsam line: {line.calls} call
-                    {line.calls === 1 ? "" : "s"}, softphone included
-                  </span>
-                ) : null}
-              </>
-            ) : undefined
-          }
-          hint="Calls placed through the dialer today and what Maqsam's record says of each; a call whose record has not come back yet is not counted as answered. The line figure is every outbound call on your Maqsam seat as B2B copies it, a few minutes behind."
-        />
-        <StatTile
-          label="Booked today"
-          value={t ? String(t.booked) : null}
-          sub="Intros and demos booked from the dialer"
-        />
-        <StatTile
-          label="Ready in queue"
-          value={ready === null ? null : String(ready)}
-          sub={
-            q ? `${q.counts[0]} to call now · ${q.counts[1]} today` : undefined
-          }
-        />
-      </div>
-    </>
-  );
-}
 
 function UrgentStrip({
   events,
@@ -1452,10 +1479,20 @@ function QueuePane({
                   onClick={() => pick(i.contact_id)}
                   className="flex w-full min-w-0 items-start gap-2 px-3 py-2 text-left hover:bg-[color:var(--secondary)] disabled:opacity-60 aria-[current=true]:bg-[color:var(--secondary)]"
                 >
+                  {/* The rep's own intro at its minute is pinned first: its dot is teal, "now". */}
                   <span
                     className="mt-1.5 size-2 shrink-0 rounded-full"
-                    style={{ background: TIER_DOT[i.tier] }}
-                    title={TIER[i.tier].label}
+                    style={{
+                      background:
+                        i.code === "intro_now"
+                          ? "var(--now)"
+                          : TIER_DOT[i.tier],
+                    }}
+                    title={
+                      i.code === "intro_now"
+                        ? "Your intro, at its minute: first, whatever else is due"
+                        : TIER[i.tier].label
+                    }
                   />
                   <span className="min-w-0 flex-1">
                     <span
@@ -1465,7 +1502,17 @@ function QueuePane({
                       {i.name ?? "Unnamed lead"}
                     </span>
                     <span className="muted block truncate text-xs">
-                      {i.kind === "intro" || i.kind === "confirm" ? (
+                      {i.code === "voice_note" ? (
+                        <Mic
+                          className="me-1 inline size-3 align-[-2px]"
+                          aria-hidden
+                        />
+                      ) : i.code === "mark_call" ? (
+                        <ClipboardCheck
+                          className="me-1 inline size-3 align-[-2px]"
+                          aria-hidden
+                        />
+                      ) : i.kind === "intro" || i.kind === "confirm" ? (
                         <CalendarClock
                           className="me-1 inline size-3 align-[-2px]"
                           aria-hidden
@@ -1525,7 +1572,11 @@ function QueuePane({
  * What it says belongs to that one call: the next call on the same lead
  * starts with no record, never the last call's.
  */
-function useCallStatus(attempt: Attempt | null, onAutoSaved: () => void) {
+function useCallStatus(
+  attempt: Attempt | null,
+  /** Maqsam's record saved it as No answer; what comes next rides with it. */
+  onAutoSaved: (nextStep: NextStepOut | null) => void,
+) {
   const [seen, setSeen] = useState<{
     id: string;
     call: CallInfo | null;
@@ -1547,11 +1598,12 @@ function useCallStatus(attempt: Attempt | null, onAutoSaved: () => void) {
           attempt: Attempt;
           call: CallInfo | null;
           auto_saved: boolean;
+          next_step?: NextStepOut | null;
         }>("dial.status", { attempt_id: id });
         if (!alive) return;
         setSeen({ id, call: r.call, error: null });
         if (r.auto_saved) {
-          done.current();
+          done.current(r.next_step ?? null);
           again = false;
         } else if (r.attempt?.state !== "placed" || r.call?.final) {
           again = false;
@@ -1635,7 +1687,14 @@ function missStep(
 
 const NO_DRAFT: Draft = { outcome: null, note: "", callback: "" };
 
-type PaneMode = "outcomes" | "book" | "move" | "held" | "unanswered";
+type PaneMode =
+  | "outcomes"
+  | "book"
+  | "move"
+  | "held"
+  | "unanswered"
+  /** The rep's own call marked a no-show, cancelled or disqualified here. */
+  | "marked";
 
 const fine = () =>
   typeof window !== "undefined" &&
@@ -1737,6 +1796,38 @@ function CallPane({
   const [kind, setKind] = useState<ItemKind>(item?.kind ?? "lead");
   // What was saved while the lead stays on screen, for the band.
   const [saved, setSaved] = useState<string | null>(null);
+  // The setter's one queue (2026-11-05). What the item is and its one
+  // primary action; kept when the queue lets the item go mid-step.
+  const [wordsSeen, setWordsSeen] = useState<ItemWords | null>(() =>
+    itemWords(item),
+  );
+  const itemCode = item?.code;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the words follow the item's code, not every read
+  useEffect(() => {
+    if (itemCode) setWordsSeen(itemWords(item));
+  }, [itemCode]);
+  const words = item ? (itemWords(item) ?? wordsSeen) : wordsSeen;
+  // The voice note sales-api offered after a no-answer (dial.save or
+  // Maqsam's automatic save), kept while the lead stays on screen.
+  const [voiceNext, setVoiceNext] = useState<VoiceNext | null>(null);
+  // The rep's own call to mark (dial.queue mark_call), kept once the queue
+  // lets the item go, and how it was marked here.
+  const [markRowSeen, setMarkRowSeen] = useState<CalendarRow | null>(
+    (item?.mark_call as CalendarRow | null | undefined) ?? null,
+  );
+  const markId = (item?.mark_call as CalendarRow | null | undefined)
+    ?.appointment_id;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new call to mark, not every read
+  useEffect(() => {
+    if (item?.mark_call)
+      setMarkRowSeen(item.mark_call as unknown as CalendarRow);
+  }, [markId]);
+  const markRow =
+    (item?.mark_call as CalendarRow | null | undefined) ?? markRowSeen;
+  const [markedAs, setMarkedAs] = useState<MarkStatus | null>(null);
+  // After a held intro: one press puts them on the hot list. "on" when
+  // sales-api said they are on it already (a save's hot_offer is null).
+  const [hot, setHot] = useState<"offer" | "on">("offer");
   // A call that may have gone out although no clear answer came back (a
   // server error, or none in time): the band says to check Maqsam first.
   const [doubt, setDoubt] = useState<string | null>(null);
@@ -1799,11 +1890,14 @@ function CallPane({
     panelFeed.otherOk ?? undefined,
     panelFeed.offset,
   );
-  const status = useCallStatus(open, () => {
+  const status = useCallStatus(open, nextStep => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
     // way decides what shows (only one of the two can land); otherwise the
-    // lead stays with Next lead ready for Enter.
+    // lead stays with Next lead ready for Enter, or with the voice note
+    // when sales-api says one is next (a new or just-booked lead's burst,
+    // or a confirmation call).
     if (busyRef.current) return;
+    setVoiceNext(voiceNextOf(nextStep));
     setMissed(
       m =>
         m ?? {
@@ -2111,6 +2205,7 @@ function CallPane({
       // Calling again after a saved call: back to saying how this one went.
       setSaved(null);
       setSaveNote(null);
+      setVoiceNext(null);
       if (mode === "held" || mode === "unanswered") setMode("outcomes");
       toast.success(
         `Calling on the ${out.route.country} line. Pick up in the Maqsam softphone.`,
@@ -2175,6 +2270,10 @@ function CallPane({
       const out = await api<{
         attempt?: { id?: string | null; outcome?: string | null } | null;
         repeated?: boolean;
+        /** The voice note after a burst or confirmation no-answer (2026-11-05). */
+        next_step?: NextStepOut | null;
+        /** One press onto the hot list after a held intro; null: on it already. */
+        hot_offer?: { action?: string; next_at?: string } | null;
       }>("dial.save", {
         ...(attempt
           ? { attempt_id: attempt.id }
@@ -2198,7 +2297,12 @@ function CallPane({
       const outcome = (out.repeated && out.attempt?.outcome) || d.outcome;
       const label = outcomes.find(o => o.key === outcome)?.label ?? outcome;
       const words = `${out.repeated ? "Already saved" : "Saved"}: ${label}`;
-      const next = afterSave(kind, outcome, then === "message");
+      // A no-answer with a voice note next keeps the lead on screen for it
+      // (Aziz, 2026-11-05: no pickup, then the voice note from your phone).
+      const voice = outcome === "no_answer" ? voiceNextOf(out.next_step) : null;
+      const next = voice
+        ? "message"
+        : afterSave(kind, outcome, then === "message");
       if (!mounted.current || next === "next") {
         onFinished(
           contactId,
@@ -2216,9 +2320,12 @@ function CallPane({
         setKind("lead");
         setSaved("Intro marked held");
         setMode("held");
-        toast.success("Marked held. Book the demo, or set a call-back.");
+        // sales-api offers the hot list unless they are on it already.
+        setHot("hot_offer" in out && out.hot_offer === null ? "on" : "offer");
+        toast.success("Marked held. Book the demo, or say what is next.");
         return;
       }
+      setVoiceNext(voice);
       // A no-answer to message: the box opens with the ready message.
       // A call saved by hand (none through the dialer) is tied to the
       // attempt row the save wrote, so its video link is this call's one
@@ -2238,7 +2345,9 @@ function CallPane({
       setSaved(words);
       setMissBy("message");
       setMode("unanswered");
-      if (miss.send) onTalk(miss.send === "whatsapp" ? missMoment : undefined);
+      // With the voice note next, the conversation box waits for a press.
+      if (miss.send && (!voice || then === "message"))
+        onTalk(miss.send === "whatsapp" ? missMoment : undefined);
     } catch (err) {
       if (attempt && refusedWith(err, 409) && /already saved/i.test(msg(err))) {
         // Saved first, by Maqsam's record (nobody picked up) or an earlier
@@ -2332,7 +2441,8 @@ function CallPane({
   };
   const toNextRef = useRef(toNext);
   toNextRef.current = toNext;
-  const showsNext = mode === "held" || mode === "unanswered" || scheduled;
+  const showsNext =
+    mode === "held" || mode === "unanswered" || mode === "marked" || scheduled;
   useEffect(() => {
     if (!showsNext) return;
     const go = () => {
@@ -2378,6 +2488,133 @@ function CallPane({
     video.open || (failedOnScreen && !workerDownOf(video.live?.health));
   const callQuiet = panelLeads || picking || autoAt !== null;
 
+  // The held call the 1 to 10 rating and why-no-demo are about: the call
+  // marked here, else the item's own appointment.
+  const heldAfter: CalendarRow | null =
+    markedAs === "showed" && markRow
+      ? {
+          ...markRow,
+          marked_status: "showed",
+          status: "showed",
+          contact_id: markRow.contact_id ?? l?.contact_id ?? null,
+          contact_name: markRow.contact_name ?? l?.name ?? null,
+        }
+      : appt?.id
+        ? heldRow({
+            ...appt,
+            contact_id: l?.contact_id ?? null,
+            contact_name: l?.name ?? null,
+          })
+        : null;
+
+  // The rep's own call marked from the dialer (Mark the intro): held goes
+  // on to what next; anything else offers to book it again.
+  function markedHere(status: MarkStatus) {
+    if (!mounted.current) return;
+    if (!pinned) onPin(contactId);
+    setMarkedAs(status);
+    if (status === "showed") {
+      setKind("lead");
+      setSaved("Intro marked held");
+      setHot("offer");
+      setMode("held");
+      return;
+    }
+    setSaved(`Marked ${statusLabel(status).toLowerCase()}`);
+    setMode("marked");
+  }
+
+  // Not ready yet, after a held intro: qualified but not now for a real
+  // reason, so the long-term nurture, never a disqualification. A save of
+  // its own (the intro's was saved when it was marked held).
+  const notReadyId = useRef<string | null>(null);
+  async function saveNotReady(note: string) {
+    notReadyId.current ??= crypto.randomUUID();
+    await api("dial.save", {
+      contact_id: contactId,
+      request_id: notReadyId.current,
+      outcome: "not_ready",
+      note,
+      as,
+      item_kind: "lead",
+      appointment_id: null,
+      callback_at: null,
+    });
+    notReadyId.current = null;
+    clearDraft(contactId);
+    onFinished(
+      contactId,
+      "saved",
+      "Saved: Not ready yet. They are in the long-term nurture. Next lead is up.",
+    );
+  }
+
+  // The rep is working on this lead's note or mark: keep it on screen while
+  // they record on their phone or wait out a mark's five seconds.
+  const engage = () => {
+    if (!pinned) onPin(contactId);
+  };
+
+  // The voice note: what it is built from, and whether it leads the pane.
+  // After a no-answer, sales-api's next step; else the item's own facts
+  // when the item is the voice note, or a second try with it still due.
+  const voiceFacts =
+    voiceNext?.facts ??
+    (item?.voice_note &&
+    (item.code === "voice_note" ||
+      (item.code === "second_try" && item.voice_note.due))
+      ? item.voice_note
+      : null);
+  const voiceLeads =
+    Boolean(voiceFacts) &&
+    !open &&
+    (mode === "unanswered" ||
+      (mode === "outcomes" && words?.action === "voice"));
+  const voiceAside =
+    Boolean(voiceFacts) &&
+    mode === "outcomes" &&
+    item?.code === "second_try" &&
+    !voiceNext;
+  const voiceCard = voiceFacts ? (
+    <VoiceNoteCard
+      key={`${contactId}:${voiceFacts.step}`}
+      facts={voiceFacts}
+      lead={l ?? null}
+      contactId={contactId}
+      appointmentId={voiceFacts.step === "confirm" ? (appt?.id ?? null) : null}
+      rep={me.name ?? null}
+      lang={
+        voiceFacts.language ??
+        leadLanguage(
+          convo.thread.filter(m => m.direction === "inbound").map(m => m.body),
+        )
+      }
+      secondTryAt={voiceNext?.secondTryAt ?? null}
+      primary={voiceLeads && !panelLeads}
+      startOpen={!voiceAside}
+      onEngage={engage}
+      onSent={() => {
+        leaveRef.current();
+        onFinished(contactId, "saved");
+      }}
+    />
+  ) : null;
+  // The pane's main step is the mark (the rep's own call past its window,
+  // not marked yet) while no call is open.
+  const markLeads =
+    words?.action === "mark" &&
+    markRow !== null &&
+    markedAs === null &&
+    mode === "outcomes" &&
+    !open;
+  // A call to mark riding on another item (that item was more urgent).
+  const markAside =
+    !markLeads &&
+    words?.action !== "mark" &&
+    markRow !== null &&
+    markedAs === null &&
+    mode === "outcomes";
+
   async function copyNumber() {
     if (!l?.phone) return;
     try {
@@ -2410,6 +2647,7 @@ function CallPane({
             ? () => setPicking(true)
             : null
         }
+        words={words}
       />
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -2417,7 +2655,8 @@ function CallPane({
             type="button"
             onClick={() => void call()}
             disabled={Boolean(busy) || Boolean(open) || dnd || !l}
-            className={`${callQuiet ? button : buttonPrimary} h-10 px-4 text-[15px]`}
+            // The voice note or the mark leads the pane: Call steps back.
+            className={`${callQuiet || voiceLeads || markLeads || mode === "held" || mode === "marked" ? button : buttonPrimary} h-10 px-4 text-[15px]`}
             title="Alt+D"
           >
             <PhoneCall className="size-4" aria-hidden />
@@ -2493,48 +2732,56 @@ function CallPane({
         ) : null}
 
         {mode === "held" ? (
+          // What next after a held intro (Aziz's Loom): the demo in the
+          // closer's soonest slot, the hot list, or the long-term nurture,
+          // with the 1 to 10 rating and why no demo (2026-10-29) under it.
+          <HeldNext
+            contactId={contactId}
+            row={heldAfter}
+            hot={hot}
+            onBookDemo={() => {
+              setBookKind("demo");
+              setMode("book");
+            }}
+            onCallback={() => {
+              setDraft({ outcome: "callback" });
+              setMode("outcomes");
+            }}
+            onNotReady={saveNotReady}
+            next={<NextLeadButton onNext={toNext} />}
+          />
+        ) : mode === "marked" && markedAs ? (
           <NextStep
-            title="The intro is marked held. What next?"
-            text="Book the demo while they are warm, or set when to call them back."
-            after={
-              appt?.id ? (
-                // After the call (2026-10-29): rate the lead here, and say
-                // why when no demo comes of it.
-                <div className="pt-2">
-                  <AfterCall
-                    row={heldRow({
-                      ...appt,
-                      contact_id: l?.contact_id ?? null,
-                      contact_name: l?.name ?? null,
-                    })}
-                    canEdit
-                    whyWords="No demo? Say why"
-                  />
-                </div>
-              ) : null
+            title={
+              markedAs === "invalid"
+                ? "Marked disqualified."
+                : `Marked ${statusLabel(markedAs).toLowerCase()}. Rebook it now?`
+            }
+            text={
+              markedAs === "invalid"
+                ? "Not a fit, so nothing else is owed on this lead."
+                : markedAs === "noshow"
+                  ? "HighLevel's no-show message goes to them. Book a new time now, or move on: they come back to be rebooked."
+                  : "Book a new time now, or move on: they come back to be rebooked."
             }
           >
-            <button
-              type="button"
-              onClick={() => {
-                setBookKind("demo");
-                setMode("book");
-              }}
-              className={buttonPrimary}
-            >
-              <CalendarPlus className="size-3.5" aria-hidden /> Book the demo
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDraft({ outcome: "callback" });
-                setMode("outcomes");
-              }}
-              className={button}
-            >
-              Set a call-back
-            </button>
-            <NextLeadButton onNext={toNext} />
+            {markedAs !== "invalid" && markRow ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAgain(markRow);
+                  setBookKind(kindOf(markRow.call_type));
+                  setMode("book");
+                }}
+                className={buttonPrimary}
+              >
+                <CalendarPlus className="size-3.5" aria-hidden /> Book it again
+              </button>
+            ) : null}
+            <NextLeadButton
+              onNext={toNext}
+              primary={markedAs === "invalid" || !markRow}
+            />
           </NextStep>
         ) : mode === "unanswered" && joinedAt ? (
           <NextStep
@@ -2650,39 +2897,44 @@ function CallPane({
             <NextLeadButton onNext={toNext} />
           </NextStep>
         ) : mode === "unanswered" ? (
-          <AfterMissStep
-            zoom={
-              l && !isClient(l) ? (
-                <ZoomLinkButton
-                  lead={l}
-                  me={me}
-                  kind={as === "closer" ? "demo" : "intro"}
-                  label="Send a Zoom link"
-                />
-              ) : null
-            }
-            step={miss}
-            moment={missMoment}
-            focusNext={missBy === "auto" && !picking}
-            onTalk={onTalk}
-            onSave={() => setMode("outcomes")}
-            onNext={toNext}
-            onCall={!busy && !open && !dnd && l ? () => void call() : null}
-            onVideo={
-              offerVideo && !picking && autoAt === null
-                ? () => setPicking(true)
-                : null
-            }
-            picker={pickerInStep ? picker : null}
-            quietNext={panelLeads}
-            videoUnread={
-              roomsSetup.error && missed !== null && !video.room
-                ? ROOMS_UNREAD
-                : missed !== null && !video.room
-                  ? gateLine(gate.why)
+          <>
+            {/* The voice note first when sales-api says it is next. */}
+            {voiceCard}
+            <AfterMissStep
+              zoom={
+                l && !isClient(l) ? (
+                  <ZoomLinkButton
+                    lead={l}
+                    me={me}
+                    kind={as === "closer" ? "demo" : "intro"}
+                    label="Send a Zoom link"
+                  />
+                ) : null
+              }
+              step={miss}
+              moment={missMoment}
+              focusNext={missBy === "auto" && !picking && !voiceFacts}
+              onTalk={onTalk}
+              onSave={() => setMode("outcomes")}
+              onNext={toNext}
+              onCall={!busy && !open && !dnd && l ? () => void call() : null}
+              onVideo={
+                offerVideo && !picking && autoAt === null
+                  ? () => setPicking(true)
                   : null
-            }
-          />
+              }
+              picker={pickerInStep ? picker : null}
+              quietNext={panelLeads || voiceLeads}
+              voiceFirst={Boolean(voiceFacts)}
+              videoUnread={
+                roomsSetup.error && missed !== null && !video.room
+                  ? ROOMS_UNREAD
+                  : missed !== null && !video.room
+                    ? gateLine(gate.why)
+                    : null
+              }
+            />
+          </>
         ) : mode === "book" || mode === "move" ? (
           <DialerBooking
             me={me}
@@ -2741,6 +2993,20 @@ function CallPane({
           />
         ) : (
           <>
+            {/* The item's own job first: the voice note, or the call to mark. */}
+            {voiceLeads || voiceAside ? voiceCard : null}
+            {(markLeads || markAside) && markRow ? (
+              // A press here keeps the lead on screen through the mark's
+              // five seconds and what comes after it.
+              <div onClickCapture={engage}>
+                <MarkStep
+                  row={markRow}
+                  compact={markAside}
+                  noShowHeld={Boolean(video.open)}
+                  onMarked={markedHere}
+                />
+              </div>
+            ) : null}
             {l && !isClient(l) ? (
               <LeadCallsStrip
                 rows={leadCalls.data ?? []}
@@ -2755,177 +3021,191 @@ function CallPane({
                 }}
               />
             ) : null}
-            <form
-              onSubmit={e => void save(e)}
-              className="space-y-3 border-t hairline pt-4"
-            >
-              <p className="text-sm font-medium">
-                {kind === "intro"
-                  ? "How did the intro go?"
-                  : kind === "confirm"
-                    ? "Are they coming?"
-                    : open
-                      ? "How did it go?"
-                      : "Save what happened"}
-              </p>
-              <div
-                className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-2"
-                role="group"
-                aria-label="Outcome"
+            {/* While the mark leads, the outcomes wait for a call. */}
+            {markLeads ? null : (
+              <form
+                onSubmit={e => void save(e)}
+                className="space-y-3 border-t hairline pt-4"
               >
-                {outcomes.map(o => {
-                  const isBooked = o.key === "booked";
-                  const isSelected = draft.outcome === o.key;
-                  return (
-                    <button
-                      key={o.key}
-                      type="button"
-                      aria-pressed={isSelected}
-                      title={o.hint}
-                      onClick={() => pickOutcome(o)}
-                      className={`rounded-[14px] border px-3 py-2 text-sm font-medium transition-all active:scale-[0.98] ${
-                        isBooked
-                          ? isSelected
-                            ? "col-span-2 sm:col-span-3 xl:col-span-2 border-teal-400 bg-gradient-to-r from-[#2e5bd6] to-[#00cfc8] text-white font-bold shadow-lg shadow-teal-500/25 ring-2 ring-teal-400/40"
-                            : "col-span-2 sm:col-span-3 xl:col-span-2 border-teal-500/40 bg-gradient-to-r from-[#2e5bd6]/85 to-[#00cfc8]/85 text-white font-semibold hover:brightness-110 shadow-md shadow-teal-500/15"
-                          : isSelected
-                            ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--foreground)] font-semibold shadow-sm"
-                            : "border-border bg-foreground/[0.03] hover:bg-foreground/[0.07] hover:border-foreground/20 text-foreground"
-                      }`}
-                    >
-                      {isBooked ? (
-                        <span className="inline-flex items-center justify-center gap-1.5 py-0.5">
-                          <CalendarPlus
-                            className="size-4 text-white"
-                            aria-hidden
-                          />
-                          {o.label}
-                        </span>
-                      ) : (
-                        o.label
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-              {chosen ? <p className="muted text-xs">{chosen.hint}</p> : null}
-              {noShowLine ? (
-                <p className="muted text-xs" aria-live="polite">
-                  {noShowLine}
+                <p className="text-sm font-medium">
+                  {kind === "intro"
+                    ? "How did the intro go?"
+                    : kind === "confirm"
+                      ? "Are they coming?"
+                      : open
+                        ? "How did it go?"
+                        : "Save what happened"}
                 </p>
-              ) : null}
-
-              {draft.outcome === "callback" ? (
-                <div className="space-y-2">
-                  <div className="flex flex-wrap gap-1.5">
-                    {callbackPicks(Date.now()).map(p => (
+                <div
+                  className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-2"
+                  role="group"
+                  aria-label="Outcome"
+                >
+                  {outcomes.map(o => {
+                    const isBooked = o.key === "booked";
+                    const isSelected = draft.outcome === o.key;
+                    return (
                       <button
-                        key={p.label}
+                        key={o.key}
                         type="button"
-                        aria-pressed={draft.callback === localInput(p.at)}
-                        onClick={() => setDraft({ callback: localInput(p.at) })}
-                        className={`rounded-full border px-2.5 py-0.5 text-xs ${
-                          draft.callback === localInput(p.at)
-                            ? "border-[color:var(--primary)] font-semibold"
-                            : "hairline"
+                        aria-pressed={isSelected}
+                        title={o.hint}
+                        onClick={() => pickOutcome(o)}
+                        className={`rounded-[14px] border px-3 py-2 text-sm font-medium transition-all active:scale-[0.98] ${
+                          // Its words need a whole row in the narrow pane.
+                          o.key === "not_ready"
+                            ? "col-span-2 sm:col-span-1 xl:col-span-2 "
+                            : ""
+                        }${
+                          isBooked
+                            ? isSelected
+                              ? "col-span-2 sm:col-span-3 xl:col-span-2 border-teal-400 bg-gradient-to-r from-[#2e5bd6] to-[#00cfc8] text-white font-bold shadow-lg shadow-teal-500/25 ring-2 ring-teal-400/40"
+                              : "col-span-2 sm:col-span-3 xl:col-span-2 border-teal-500/40 bg-gradient-to-r from-[#2e5bd6]/85 to-[#00cfc8]/85 text-white font-semibold hover:brightness-110 shadow-md shadow-teal-500/15"
+                            : isSelected
+                              ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--foreground)] font-semibold shadow-sm"
+                              : "border-border bg-foreground/[0.03] hover:bg-foreground/[0.07] hover:border-foreground/20 text-foreground"
                         }`}
                       >
-                        {p.label}
+                        {isBooked ? (
+                          <span className="inline-flex items-center justify-center gap-1.5 py-0.5">
+                            <CalendarPlus
+                              className="size-4 text-white"
+                              aria-hidden
+                            />
+                            {o.label}
+                          </span>
+                        ) : (
+                          o.label
+                        )}
                       </button>
-                    ))}
-                  </div>
-                  <label className="block max-w-xs space-y-1">
-                    <span className="muted block text-xs">
-                      Or a time of your own (your clock)
-                    </span>
-                    <input
-                      type="datetime-local"
-                      value={draft.callback}
-                      onChange={e => setDraft({ callback: e.target.value })}
-                      className={field}
-                      required
-                    />
-                  </label>
+                    );
+                  })}
                 </div>
-              ) : null}
+                {chosen ? <p className="muted text-xs">{chosen.hint}</p> : null}
+                {noShowLine ? (
+                  <p className="muted text-xs" aria-live="polite">
+                    {noShowLine}
+                  </p>
+                ) : null}
 
-              <label className="block space-y-1">
-                <span className="muted block text-xs">
-                  {chosen?.needsNote
-                    ? "What happened (goes on the lead in HighLevel too)"
-                    : "Notes (optional)"}
-                </span>
-                <textarea
-                  id="dial-note"
-                  ref={noteRef}
-                  value={draft.note}
-                  onChange={e => setDraft({ note: e.target.value })}
-                  onKeyDown={e => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                  rows={3}
-                  dir="auto"
-                  required={Boolean(chosen?.needsNote)}
-                  minLength={chosen?.needsNote ? 3 : undefined}
-                  placeholder={
-                    draft.outcome ? "" : "Pick how it went, then a line on it"
-                  }
-                  className="w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 py-2 text-sm"
-                />
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  ref={saveRef}
-                  type="submit"
-                  disabled={Boolean(busy) || !draft.outcome}
-                  className={buttonPrimary}
-                  title="Ctrl+Enter in the notes"
-                >
-                  {busy === "save"
-                    ? "Saving…"
-                    : draft.outcome === "booked" ||
-                        draft.outcome === "rescheduled"
-                      ? "Pick a time"
-                      : draft.outcome &&
-                          afterSave(kind, draft.outcome, false) === "held"
-                        ? "Save"
-                        : "Save and next"}
-                </button>
-                {draft.outcome === "no_answer" && miss.send ? (
-                  // The missed-call message, as its own choice: saved, and the
-                  // lead stays with the box ready.
-                  <button
-                    type="button"
-                    onClick={() => void save(undefined, "message")}
-                    disabled={Boolean(busy)}
-                    className={button}
-                  >
-                    {miss.send === "whatsapp"
-                      ? "Save and WhatsApp them"
-                      : "Save and email them"}
-                  </button>
+                {draft.outcome === "callback" ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      {callbackPicks(Date.now()).map(p => (
+                        <button
+                          key={p.label}
+                          type="button"
+                          aria-pressed={draft.callback === localInput(p.at)}
+                          onClick={() =>
+                            setDraft({ callback: localInput(p.at) })
+                          }
+                          className={`rounded-full border px-2.5 py-0.5 text-xs ${
+                            draft.callback === localInput(p.at)
+                              ? "border-[color:var(--primary)] font-semibold"
+                              : "hairline"
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="block max-w-xs space-y-1">
+                      <span className="muted block text-xs">
+                        Or a time of your own (your clock)
+                      </span>
+                      <input
+                        type="datetime-local"
+                        value={draft.callback}
+                        onChange={e => setDraft({ callback: e.target.value })}
+                        className={field}
+                        required
+                      />
+                    </label>
+                  </div>
                 ) : null}
-                {!open &&
-                draft.outcome &&
-                draft.outcome !== "booked" &&
-                draft.outcome !== "rescheduled" ? (
-                  <span className="muted text-xs">
-                    No call through the dialer: saved as a call made elsewhere.
+
+                <label className="block space-y-1">
+                  <span className="muted block text-xs">
+                    {chosen?.needsNote
+                      ? "What happened (goes on the lead in HighLevel too)"
+                      : "Notes (optional)"}
                   </span>
+                  <textarea
+                    id="dial-note"
+                    ref={noteRef}
+                    value={draft.note}
+                    onChange={e => setDraft({ note: e.target.value })}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault();
+                        void save();
+                      }
+                    }}
+                    rows={3}
+                    dir="auto"
+                    required={Boolean(chosen?.needsNote)}
+                    minLength={chosen?.needsNote ? 3 : undefined}
+                    placeholder={
+                      draft.outcome ? "" : "Pick how it went, then a line on it"
+                    }
+                    className="w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 py-2 text-sm"
+                  />
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    ref={saveRef}
+                    type="submit"
+                    disabled={Boolean(busy) || !draft.outcome}
+                    className={buttonPrimary}
+                    title="Ctrl+Enter in the notes"
+                  >
+                    {busy === "save"
+                      ? "Saving…"
+                      : draft.outcome === "booked" ||
+                          draft.outcome === "rescheduled"
+                        ? "Pick a time"
+                        : draft.outcome &&
+                            (afterSave(kind, draft.outcome, false) === "held" ||
+                              // A no-answer here brings the voice note next.
+                              (draft.outcome === "no_answer" &&
+                                Boolean(item?.voice_note)))
+                          ? "Save"
+                          : "Save and next"}
+                  </button>
+                  {draft.outcome === "no_answer" && miss.send ? (
+                    // The missed-call message, as its own choice: saved, and the
+                    // lead stays with the box ready.
+                    <button
+                      type="button"
+                      onClick={() => void save(undefined, "message")}
+                      disabled={Boolean(busy)}
+                      className={button}
+                    >
+                      {miss.send === "whatsapp"
+                        ? "Save and WhatsApp them"
+                        : "Save and email them"}
+                    </button>
+                  ) : null}
+                  {!open &&
+                  draft.outcome &&
+                  draft.outcome !== "booked" &&
+                  draft.outcome !== "rescheduled" ? (
+                    <span className="muted text-xs">
+                      No call through the dialer: saved as a call made
+                      elsewhere.
+                    </span>
+                  ) : null}
+                </div>
+                {saveNote ? (
+                  <p
+                    role="status"
+                    className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-xs leading-relaxed"
+                  >
+                    {saveNote}
+                  </p>
                 ) : null}
-              </div>
-              {saveNote ? (
-                <p
-                  role="status"
-                  className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-xs leading-relaxed"
-                >
-                  {saveNote}
-                </p>
-              ) : null}
-            </form>
+              </form>
+            )}
           </>
         )}
       </div>
@@ -3228,9 +3508,12 @@ function AfterMissStep({
   picker = null,
   videoUnread = null,
   quietNext = false,
+  voiceFirst = false,
   zoom = null,
 }: {
   step: AfterMiss;
+  /** The voice note card is above: the WhatsApp is the other way, not a second message. */
+  voiceFirst?: boolean;
   moment: MissMoment;
   /** Call the lead again: the teal button when the lead was at the door a moment ago (step.callNow). */
   onCall?: (() => void) | null;
@@ -3251,10 +3534,11 @@ function AfterMissStep({
   /** The Zoom link button (zoom.link), offered after any miss. */
   zoom?: ReactNode;
 }) {
+  const said = missStepWords(step, voiceFirst);
   return (
     <NextStep
-      title={step.title}
-      text={step.text}
+      title={said.title}
+      text={said.text}
       after={
         picker ??
         (videoUnread ? <p className="muted text-xs">{videoUnread}</p> : null)
@@ -3317,6 +3601,7 @@ function CallBand({
   saved,
   doubt,
   onVideo = null,
+  words = null,
 }: {
   item: DialItem | null;
   open: Attempt | null;
@@ -3329,6 +3614,8 @@ function CallBand({
   doubt: string | null;
   /** "Send a video link" (P1) on the line of a call that did not connect. */
   onVideo?: (() => void) | null;
+  /** The item's label and what to do (setterDay.ts itemWords), when it has a code. */
+  words?: ItemWords | null;
 }) {
   const now = useNow(1000);
   const urgent = useMemo(
@@ -3390,9 +3677,14 @@ function CallBand({
     const late = urgent.deadline <= now;
     color = late ? "var(--destructive)" : "var(--warning)";
     // The queue's own words for booked calls and call-backs ("Call back at
-    // 14:30, as agreed"); the call centre's banner for a missed call.
+    // 14:30, as agreed") and for every item with a code ("Booked an intro
+    // for tomorrow at 15:00, call now"); the call centre's banner for a
+    // missed call from an older server.
     title =
-      item?.kind === "confirm" || item?.kind === "intro" || urgent.callback
+      item?.kind === "confirm" ||
+      item?.kind === "intro" ||
+      urgent.callback ||
+      (words && item?.why)
         ? (item?.why ?? urgent.title)
         : (missed ?? urgent.title);
     // A few words beside the title; the sentence goes on the line below.
@@ -3401,12 +3693,25 @@ function CallBand({
       item?.kind === "intro"
         ? "Intros are phone calls: call them at the booked time, then say how it went."
         : item?.kind === "confirm"
-          ? `${booked}; not confirmed yet.`
-          : lateSentence(urgent, now);
+          ? `${booked}; not confirmed yet.${item.code === "confirm_last" ? " This is the last try before the call." : ""}`
+          : (lateSentence(urgent, now) ?? words?.detail ?? null);
   } else if (item?.kind === "confirm") {
     color = "var(--primary)";
     title = item.why;
     detail = `${booked}; not confirmed yet. Call, or message them on WhatsApp.`;
+  } else if (item && words) {
+    // The setter's one queue (2026-11-05): the voice note, the call to
+    // mark, a reply still waiting, a cancelled intro to rebook.
+    color =
+      words.action === "voice"
+        ? "var(--now)"
+        : words.action === "mark"
+          ? "var(--owed)"
+          : item.tier <= 1
+            ? "var(--warning)"
+            : "var(--primary)";
+    title = item.why;
+    detail = words.detail ?? readyLine({ ...item, why: "" }, now);
   } else if (item && missed) {
     color = "var(--warning)";
     title = missed;
@@ -3432,6 +3737,25 @@ function CallBand({
       }}
     >
       <div className="min-w-0 flex-[1_1_10rem]">
+        {/* The item's label, in the brand's label face (Geist Mono). */}
+        {words &&
+        !dnd &&
+        !saved &&
+        !doubt &&
+        labelSaysMore(words, item?.why) ? (
+          <p
+            className="mb-0.5 font-mono text-[11px] tracking-wide"
+            style={{
+              color:
+                color === "var(--border)"
+                  ? "var(--muted-foreground)"
+                  : // Half ink, so the label reads on the light canvas too.
+                    `color-mix(in oklch, ${color} 55%, var(--foreground))`,
+            }}
+          >
+            {words.label}
+          </p>
+        ) : null}
         <div className="flex items-center gap-2">
           {open ? (
             <span className="relative flex size-2.5">

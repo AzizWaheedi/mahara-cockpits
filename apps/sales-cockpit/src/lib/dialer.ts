@@ -36,6 +36,78 @@ export interface QueueItem {
     assigned_user_id: string | null;
     confirmed: boolean;
   } | null;
+  /**
+   * What the item is (sales-api dialer.ts ItemCode, 2026-11-05): intro_now,
+   * new_lead, just_booked, second_try, voice_note, confirm, confirm_last,
+   * reply_booked, reply_waiting, mark_call, intro_cancelled and the rest.
+   * Absent from a server older than the setter's one queue.
+   */
+  code?: string;
+  /** When the work became due: the strip's clock starts here. */
+  due_since?: string | null;
+  /** A voice note is the next step (new, booked or confirm), or null. */
+  voice_step?: "new" | "booked" | "confirm" | null;
+  /** The facts for the voice-note script, when one may be next. */
+  voice_note?: VoiceNote | null;
+  /** The lead's own intro booking that made this a "call now" item. */
+  just_booked?: {
+    appointment_id: string;
+    start_at: string | null;
+    booked_at: string | null;
+  } | null;
+  /** The rep's own call to mark: its calendar row, as the mark controls read it. */
+  mark_call?: Record<string, unknown> | null;
+}
+
+/** The facts a voice-note script is built from (sales-api dialer.ts voiceFacts). */
+export interface VoiceNote {
+  /** A voice note is due now (a call in this step went unanswered). */
+  due: boolean;
+  /**
+   * Whether the voice notes could be read (false before the 5 November
+   * database update): with false, "not due" says nothing about whether one
+   * went. Absent from an older server.
+   */
+  known?: boolean;
+  step: "new" | "booked" | "confirm";
+  first_name: string | null;
+  company: string | null;
+  country: string | null;
+  services: string | null;
+  revenue: string | null;
+  goal: string | null;
+  challenge: string | null;
+  projects_12m: string | null;
+  ready_to_invest: string | null;
+  decision_maker: string | null;
+  call: {
+    type: "intro" | "demo";
+    start_at: string;
+    kuwait: string;
+    theirs: string | null;
+  } | null;
+  language: "ar" | "en" | null;
+  rep: { first_name: string | null; first_name_ar: string | null };
+  /** What is not known, in the screen's words. */
+  missing: string[];
+}
+
+/** Today's speed to lead, as dial.queue sends it for the strip (null: not known). */
+export interface SpeedToday {
+  leads: number;
+  called: number;
+  within5: number;
+  median_min: number | null;
+  not_called: number;
+  oldest_waiting: {
+    contact_id: string;
+    name: string | null;
+    minutes: number;
+  } | null;
+  /** Newest call in Maqsam's copy. */
+  calls_as_of: string | null;
+  /** Sources that could not be read, in words. */
+  not_known: string[];
 }
 
 export interface UrgentEvent {
@@ -47,6 +119,17 @@ export interface UrgentEvent {
   /** When the call should have happened by. */
   deadline: number;
   callback: boolean;
+  /** The rep's own intro at its minute: first in the strip, whatever else is due (2026-11-05). */
+  pinned?: boolean;
+}
+
+/** The strip's order: the intro at its minute first, then the soonest deadline. */
+export function urgentOrder(a: UrgentEvent, b: UrgentEvent): number {
+  return (
+    Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
+    a.deadline - b.deadline ||
+    a.key.localeCompare(b.key)
+  );
 }
 
 /** The call centre's target: a new lead or a reply is called within two minutes. */
@@ -76,6 +159,26 @@ export function urgentEvents(items: QueueItem[], now: number): UrgentEvent[] {
         // An intro is due at its start; a confirmation half an hour before it.
         deadline: intro ? start : start - 30 * 60_000,
         callback: true,
+        pinned: intro,
+      });
+      continue;
+    }
+    // The lead's own intro booking, and the burst's second try (2026-11-05).
+    const since = t(i.due_since ?? null);
+    if (
+      (i.code === "just_booked" || i.code === "second_try") &&
+      since !== null
+    ) {
+      const second = i.code === "second_try";
+      out.push({
+        key: `${i.contact_id}:${i.code}:${since}`,
+        contact_id: i.contact_id,
+        name: i.name,
+        title: second ? "Second try" : "Booked an intro",
+        at: since,
+        // A booking has the two minutes a new lead has; a second try is due at its time.
+        deadline: second ? since : since + DIAL_WITHIN_MS,
+        callback: second,
       });
       continue;
     }
@@ -108,9 +211,7 @@ export function urgentEvents(items: QueueItem[], now: number): UrgentEvent[] {
       callback: false,
     });
   }
-  return out.sort(
-    (a, b) => a.deadline - b.deadline || a.key.localeCompare(b.key),
-  );
+  return out.sort(urgentOrder);
 }
 
 export function mmss(ms: number): string {

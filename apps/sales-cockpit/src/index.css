@@ -468,6 +468,38 @@ h3 {
   font-family: "IBM Plex Sans Arabic", var(--font-sans);
 }
 
+/* The voice note's cue card (2026-11-05): what came from the lead's form is
+   underlined in a dotted teal line, so the rep sees what is personal; the
+   ruler is thirty ticks, one a second, with the 20 to 30 second band
+   marked underneath and the script's length filled in teal (owed past 30). */
+.cue-fact {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in oklch, var(--now) 80%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.32em;
+  text-decoration-skip-ink: none;
+}
+.cue-ruler {
+  display: grid;
+  grid-template-columns: repeat(30, minmax(0, 1fr));
+  gap: 2px;
+  height: 0.6rem;
+}
+.cue-ruler > span {
+  border-radius: 2px;
+  background: color-mix(in oklch, var(--foreground) 12%, transparent);
+}
+.cue-ruler > span[data-band="true"] {
+  box-shadow: inset 0 -2px 0 color-mix(in oklch, var(--now) 55%, transparent);
+}
+.cue-ruler > span[data-on="true"] {
+  background: var(--now);
+}
+.cue-ruler[data-long="true"] > span[data-on="true"] {
+  background: var(--owed);
+}
+
 /* One scrollbar for every cockpit (2026-10-13): a slim rounded thumb in the
    page's own ink, no track and no arrows, teal while it is dragged. Only on
    a mouse or trackpad: phones keep their own overlay bars, which take no

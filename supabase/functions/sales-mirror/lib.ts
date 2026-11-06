@@ -727,6 +727,128 @@ export function ghlContactRow(c: Record<string, unknown>, at: string): Record<st
   };
 }
 
+/** A contact HighLevel added within this long is read straight from it (older ones B2B has copied). */
+export const NEW_CONTACT_WINDOW_MS = DAY_MS;
+
+/**
+ * The newest contacts of one HighLevel search (dateAdded, newest first), as
+ * lead rows: those added in the last day.
+ */
+export function newContactRows(contacts: unknown, now: number, at: string): Record<string, unknown>[] {
+  const list = Array.isArray(contacts) ? (contacts as Record<string, unknown>[]) : [];
+  return list
+    .filter(c => c?.dateAdded && now - Date.parse(String(c.dateAdded)) <= NEW_CONTACT_WINDOW_MS)
+    .map(c => ghlContactRow(c, at))
+    .filter((r): r is Record<string, unknown> => r !== null);
+}
+
+/**
+ * What a lead row read straight from HighLevel carries, kept in step with
+ * HighLevel on every read while B2B has not copied the contact yet: the tags
+ * and their lead class, the form's answers, who it is and how to reach them.
+ */
+export const DIRECT_FIELDS: readonly string[] = [
+  "name",
+  "email",
+  "phone",
+  "phone8",
+  "company",
+  "country",
+  "source",
+  "tags",
+  "lead_class",
+  "contact_type",
+  "dnd",
+  "assigned_to",
+  "ad_id",
+  ...Object.keys(LEAD_FIELDS),
+];
+
+/** The stored row's side of latePatches: B2B's row has is_lead set; ours (ghlContactRow) has it null. */
+export interface StoredLead {
+  contact_id: string;
+  is_lead?: boolean | null;
+  tags?: unknown;
+  lead_class?: string | null;
+  [k: string]: unknown;
+}
+
+/** One PATCH of cockpit_sales_leads: `guard` is a PostgREST filter that must still hold, so a newer row is never written over. */
+export interface LeadPatch {
+  contact_id: string;
+  guard: string;
+  body: Record<string, unknown>;
+  why: "direct" | "class";
+}
+
+function sameValue(k: string, a: unknown, b: unknown): boolean {
+  if (k === "tags") {
+    const norm = (v: unknown) =>
+      JSON.stringify((Array.isArray(v) ? v.map(x => String(x).toLowerCase()) : []).sort());
+    return norm(a) === norm(b);
+  }
+  const n = (v: unknown) => (v === undefined || v === null || v === "" ? null : String(v));
+  return n(a) === n(b);
+}
+
+/**
+ * The ROAS tag that lands after the first read (critic, 2026-11-05): a lead
+ * read in the seconds after the form made it may have no roas-* tag yet, so
+ * its lead_class stayed empty, and a row the copy inserts once is never read
+ * again from HighLevel; it waited for B2B's own copy, about a quarter of an
+ * hour later, out of speed to lead and with no class for the dialer. Each
+ * read of the newest contacts now compares them with what is stored:
+ * - our own row (is_lead null: B2B has not copied the contact yet) takes
+ *   HighLevel's current tags, class, answers and contact details whenever
+ *   any of them changed, guarded on is_lead still null, so B2B's fuller row,
+ *   if it landed meanwhile, is never written over;
+ * - B2B's row takes only HighLevel's current tags and class, and only when
+ *   HighLevel now gives a ROAS class that differs from the stored one,
+ *   guarded on the stored class. A tag HighLevel took away is left to B2B's
+ *   next copy: a class is never emptied here.
+ * HighLevel's search answer is live, so it is never older than B2B's copy of
+ * the same contact; if B2B's next copy is the older one, the next read puts
+ * the class back within a minute.
+ */
+export function latePatches(
+  fresh: readonly Record<string, unknown>[],
+  stored: readonly StoredLead[],
+  at: string,
+): LeadPatch[] {
+  const byId = new Map(stored.map(s => [String(s.contact_id), s]));
+  const out: LeadPatch[] = [];
+  for (const f of fresh) {
+    const id = String(f.contact_id ?? "");
+    const s = id ? byId.get(id) : undefined;
+    if (!s) continue; // not stored yet: the insert takes it
+    if (s.is_lead === null || s.is_lead === undefined) {
+      if (DIRECT_FIELDS.every(k => sameValue(k, f[k], s[k]))) continue;
+      const body: Record<string, unknown> = {};
+      for (const k of DIRECT_FIELDS) body[k] = f[k] ?? null;
+      body.lead_updated_at = f.lead_updated_at ?? null;
+      body.mirrored_at = at;
+      out.push({ contact_id: id, guard: "is_lead=is.null", body, why: "direct" });
+      continue;
+    }
+    const cls = typeof f.lead_class === "string" && f.lead_class ? f.lead_class : null;
+    const was = typeof s.lead_class === "string" && s.lead_class ? s.lead_class : null;
+    if (!cls || cls === was) continue;
+    out.push({
+      contact_id: id,
+      guard: was ? `lead_class=eq.${encodeURIComponent(was)}` : "lead_class=is.null",
+      body: { tags: Array.isArray(f.tags) ? f.tags : [], lead_class: cls },
+      why: "class",
+    });
+  }
+  return out;
+}
+
+/** The body the minute job (pg_cron mahara-sales-new-contacts) sends: only the new contacts, not the whole copy. */
+export function runMode(body: unknown): "new_contacts" | "full" {
+  const m = body && typeof body === "object" ? (body as Record<string, unknown>).mode : null;
+  return m === "new_contacts" ? "new_contacts" : "full";
+}
+
 // ---------------------------------------------------------------------------
 // A call rescheduled in the cockpit (2026-10-11). A copy of sales-api's
 // reschedule.ts holdStart and meetUrl (an Edge Function cannot import from

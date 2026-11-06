@@ -47,12 +47,16 @@ import {
   DEAL_ANSWER_COLUMNS,
   dealsSql,
   dialsSql,
-  ghlContactRow,
+  DIRECT_FIELDS,
   ghlEventRow,
   inboxRow,
+  latePatches,
   leadRow,
   leadsSql,
   missingDealAnswerColumn,
+  newContactRows,
+  runMode,
+  type StoredLead,
   redact,
   repsSql,
   SALES_LOCATION,
@@ -86,6 +90,10 @@ const DIAL_PAGES_PER_RUN = 10;
 const RUNS_KEPT = 30 * DAY;
 const LOCK = "sales-mirror";
 const LOCK_SECONDS = 300;
+// The minute job's own lock: one HighLevel search and a few writes, so a
+// run that is still going after 55 seconds has died.
+const CONTACTS_LOCK = "sales-mirror-contacts";
+const CONTACTS_LOCK_SECONDS = 55;
 const GHL = "https://services.leadconnectorhq.com";
 // HighLevel sits behind Cloudflare, which refuses a request with no
 // browser-like agent (error 1010).
@@ -535,9 +543,18 @@ async function mirrorInbox(at: string): Promise<{ n: number; skipped?: string }>
 
 /**
  * Leads created in the last day that B2B has not copied yet, straight from
- * HighLevel, so a new lead is on the setter's list within one run.
+ * HighLevel, so a new lead is on the setter's list within one run: one
+ * HighLevel search (the 50 newest contacts). Since 2026-11-05 the same read
+ * also brings late tags in (lib.ts latePatches): a ROAS tag HighLevel added
+ * after the first read now reaches lead_class on the next read, not with
+ * B2B's copy a quarter of an hour later. Run every minute by the minute job
+ * (runContacts) and every three minutes by the full run, which stays the
+ * fallback when the minute job is not scheduled.
  */
-async function mirrorNewContacts(at: string, now: number): Promise<{ n: number; skipped?: string }> {
+async function mirrorNewContacts(
+  at: string,
+  now: number,
+): Promise<{ n: number; patched?: number; classed?: number; skipped?: string }> {
   const token = env("SALES_GHL_TOKEN");
   if (!token) return { n: 0, skipped: "SALES_GHL_TOKEN is not set" };
   const res = await fetch(`${GHL}/contacts/search`, {
@@ -557,10 +574,7 @@ async function mirrorNewContacts(at: string, now: number): Promise<{ n: number; 
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`HighLevel ${res.status} on contacts: ${redact(text)}`);
-  const rows = ((JSON.parse(text)?.contacts ?? []) as Row[])
-    .filter(c => c.dateAdded && now - Date.parse(String(c.dateAdded)) <= DAY)
-    .map(c => ghlContactRow(c, at))
-    .filter((r): r is Row => r !== null);
+  const rows = newContactRows(JSON.parse(text)?.contacts, now, at);
   if (!rows.length) return { n: 0 };
   // Insert only: a lead B2B already has keeps B2B's row.
   await rest("cockpit_sales_leads?on_conflict=contact_id", {
@@ -568,7 +582,24 @@ async function mirrorNewContacts(at: string, now: number): Promise<{ n: number; 
     body: rows,
     prefer: "resolution=ignore-duplicates,return=minimal",
   });
-  return { n: rows.length };
+  // Tags (and, on our own rows, answers) that landed after the row was
+  // first stored. Every patch is guarded, so a newer row is never undone.
+  const ids = rows.map(r => encodeURIComponent(String(r.contact_id)));
+  const stored = JSON.parse(
+    await rest(`cockpit_sales_leads?contact_id=in.(${ids.join(",")})&select=contact_id,is_lead,${DIRECT_FIELDS.join(",")}`),
+  ) as StoredLead[];
+  const patches = latePatches(rows, stored, at);
+  for (const p of patches)
+    await rest(`cockpit_sales_leads?contact_id=eq.${encodeURIComponent(p.contact_id)}&${p.guard}`, {
+      method: "PATCH",
+      body: p.body,
+      prefer: "return=minimal",
+    });
+  return {
+    n: rows.length,
+    patched: patches.length,
+    classed: patches.filter(p => p.why === "class").length,
+  };
 }
 
 async function mirrorDials(state: State, at: string, now: number): Promise<{ n: number; more: boolean }> {
@@ -702,6 +733,12 @@ Deno.serve(async (req: Request) => {
   if (!expected || given !== expected)
     return Response.json({ ok: false, error: "not allowed" }, { status: 401 });
 
+  // {"mode":"new_contacts"}: the minute job, only the newest contacts, under
+  // a lock of its own so the three-minute run never makes it wait.
+  const mode = runMode(await req.json().catch(() => null));
+  const lock = mode === "new_contacts" ? CONTACTS_LOCK : LOCK;
+  const seconds = mode === "new_contacts" ? CONTACTS_LOCK_SECONDS : LOCK_SECONDS;
+
   // One run at a time: the lock lapses by itself if a run dies holding it.
   const holder = crypto.randomUUID();
   let held = false;
@@ -710,7 +747,7 @@ Deno.serve(async (req: Request) => {
       JSON.parse(
         await rest("rpc/cockpit_sales_lock", {
           method: "POST",
-          body: { p_name: LOCK, p_holder: holder, p_seconds: LOCK_SECONDS },
+          body: { p_name: lock, p_holder: holder, p_seconds: seconds },
         }),
       ) === true;
   } catch (e) {
@@ -718,14 +755,50 @@ Deno.serve(async (req: Request) => {
   }
   if (!held) return Response.json({ ok: true, skipped: "the last run is still going" });
   try {
-    return await run();
+    return mode === "new_contacts" ? await runContacts() : await run();
   } finally {
     await rest("rpc/cockpit_sales_unlock", {
       method: "POST",
-      body: { p_name: LOCK, p_holder: holder },
+      body: { p_name: lock, p_holder: holder },
     }).catch(() => {});
   }
 });
+
+/**
+ * The minute job (pg_cron mahara-sales-new-contacts, 2026-11-05): a new lead
+ * reaches the dialer within about a minute instead of three. One HighLevel
+ * search a minute, beside the conversations copy's few: HighLevel allows the
+ * sub-account about 100 requests in 10 seconds, shared with the reps' sends.
+ * It reports in its worker status row (sales-mirror/new_contacts, on the
+ * Team page's Health card), not in cockpit_sales_mirror_runs, so a minute's
+ * row never stands in for the three-minute copy's in "when did the copy last
+ * run". A failed minute (a HighLevel 429 included) is said there, and the
+ * next minute, or the three-minute run, reads again.
+ */
+async function runContacts(): Promise<Response> {
+  const now = Date.now();
+  const at = new Date(now).toISOString();
+  let ok = true;
+  let detail: string;
+  let counts: unknown = null;
+  try {
+    const out = await mirrorNewContacts(at, now);
+    counts = out;
+    if (out.skipped) {
+      ok = false;
+      detail = `Not copying new contacts: ${out.skipped}.`;
+    } else {
+      detail = `Read ${out.n} contact${out.n === 1 ? "" : "s"} added in the last day from HighLevel; ${out.patched ?? 0} brought up to date${out.classed ? `, ${out.classed} with a ROAS tag that came late` : ""}.`;
+    }
+  } catch (e) {
+    ok = false;
+    detail = `New contacts were not copied this minute: ${redact(String((e as Error).message ?? e))}`;
+  }
+  await upsert("cockpit_sales_worker_status", "worker,job", [
+    { worker: "sales-mirror", job: "new_contacts", ok, detail: detail.slice(0, 500), at: new Date().toISOString() },
+  ]).catch(() => {});
+  return Response.json({ ok, counts, detail, ms: Date.now() - now }, { status: ok ? 200 : 207 });
+}
 
 async function run(): Promise<Response> {
   const now = Date.now();

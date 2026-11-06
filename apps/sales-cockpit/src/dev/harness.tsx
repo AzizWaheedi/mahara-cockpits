@@ -33,6 +33,7 @@
  *   resync   ok | done | fail
  *   crm      pending | failed     (what a save's HighLevel half does)
  *   hot      ok | fail       (hot.save refuses every change: a cell's failed state)
+ *   speed    ok | missing    (dial.queue's speed to lead for the strip, or not known)
  *   desk     ok | waiting | late   (the proposal writer's health line)
  *   wait     ms every sales-api answer takes (250)
  *   queueWait  ms dial.queue takes; it reads when asked and answers late,
@@ -123,6 +124,8 @@ const knobs = {
   crm: "pending",
   hot: "ok",
   desk: "ok",
+  /** "missing": dial.queue says today's speed is not known (null). */
+  speed: "ok",
   wait: 250,
   queueWait: 0,
   gap: 12_000,
@@ -231,6 +234,7 @@ const MIN = 60_000;
 const NEEDS_NOTE = [
   "callback",
   "not_interested",
+  "not_ready",
   "disqualified",
   "wrong_number",
   "handled",
@@ -248,6 +252,8 @@ const dial = {
   /** Leads that came in (or came back) while the page is open, first in line. */
   arrivals: new Map<string, Row>(),
   slowUsed: { save: false, book: false },
+  /** Voice notes recorded (dial.touch), by lead: when. */
+  touches: new Map<string, number>(),
   today: {
     saved: 23,
     calls: 19,
@@ -266,9 +272,46 @@ const openCall = () =>
 
 const leadOf = (id: string) => F.LEADS.find(l => l.contact_id === id) ?? null;
 
-/** Where a saved lead goes: most leave the queue; an intro nobody answered stays for its twenty minutes. */
+/** The lead's item as the fixtures rank it, for what follows a save. */
+const itemOf = (id: string): Row | null =>
+  F.dialItems("setter", START).find(i => i.contact_id === id) ??
+  dial.arrivals.get(id) ??
+  null;
+
+/**
+ * Where a saved lead goes: most leave the queue; an intro nobody answered
+ * stays for its twenty minutes; a new lead's or a fresh booking's first
+ * no-answer comes back two minutes later as the second try (2026-11-05).
+ */
 function leave(contactId: string, kind: string, outcome: string) {
   if (kind === "intro" && outcome === "no_answer") return;
+  const item = itemOf(contactId);
+  if (
+    outcome === "no_answer" &&
+    (item?.code === "new_lead" || item?.code === "just_booked")
+  ) {
+    const at = Date.now() + 2 * MIN;
+    dial.gone.set(contactId, at);
+    dial.arrivals.delete(contactId);
+    dial.arrivals.set(contactId, {
+      ...item,
+      tier: 0,
+      code: "second_try",
+      why: "Second try now",
+      last_outcome: "no_answer",
+      last_dial_at: new Date().toISOString(),
+      due_since: new Date(at).toISOString(),
+      voice_step: dial.touches.has(contactId)
+        ? null
+        : item.code === "just_booked"
+          ? "booked"
+          : "new",
+      voice_note: item.voice_note
+        ? { ...(item.voice_note as Row), due: !dial.touches.has(contactId) }
+        : null,
+    });
+    return;
+  }
   dial.gone.set(
     contactId,
     Date.now() +
@@ -300,10 +343,33 @@ function saveAttempt(a: Attempt, b: Row, auto = false) {
       crm_note: "failed",
       error: "HighLevel said 429: too many requests",
     });
+  // What comes next (sales-api nextSteps): the voice note after a burst or
+  // confirmation call nobody answered, the hot list after a held intro.
+  const item = itemOf(a.contact_id);
+  const facts = item?.voice_note as Row | null | undefined;
+  const voice =
+    a.outcome === "no_answer" && facts && !dial.touches.has(a.contact_id);
   return {
     attempt: { ...a, crm_note: auto ? "skipped" : crm },
     state: { contact_id: a.contact_id, last_outcome: a.outcome },
     stage_move: auto || a.outcome === "no_answer" ? null : { state: "pending" },
+    next_step: voice
+      ? {
+          kind: "voice_note",
+          second_try_at:
+            item?.code === "new_lead" || item?.code === "just_booked"
+              ? new Date(Date.now() + 2 * MIN).toISOString()
+              : null,
+          facts: { ...facts, due: true },
+        }
+      : null,
+    hot_offer:
+      a.outcome === "showed" && a.item_kind !== "lead"
+        ? {
+            action: "dial.hot",
+            next_at: new Date(Date.now() + 18 * 60 * MIN).toISOString(),
+          }
+        : null,
   };
 }
 
@@ -350,6 +416,15 @@ function queue(as: "setter" | "closer") {
     as,
     counts,
     undialable: { no_phone: 2, other: 1 },
+    // Today's speed to lead for the strip, and the replies only Messages
+    // can answer (DMs with no phone), as dial.queue sends them (2026-11-05).
+    speed: knobs.speed === "missing" ? null : F.speedToday(),
+    messages: {
+      count: 3,
+      oldest_at: new Date(now - 5 * 60 * MIN).toISOString(),
+      source: "both",
+    },
+    voice_notes_known: true,
     saved_work: dial.savedWork.map(w => ({ ...w })),
     open: open ? { ...open } : null,
     today: {
@@ -657,6 +732,9 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
             words: "No answer",
           },
           auto_saved: true,
+          // The voice note rides on Maqsam's automatic no-answer too
+          // (sales-api dialStatus passes next_step through).
+          next_step: out.next_step,
         };
       }
       if (since < 5000) return { attempt: a, call: null, auto_saved: false };
@@ -739,6 +817,55 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         await sleep(60_000, signal);
       }
       return out;
+    }
+    case "dial.touch": {
+      // The voice note went from the rep's own phone: recorded, nothing sent.
+      const id = String(b.contact_id ?? "");
+      if (!leadOf(id))
+        throw new Refusal("That lead is not in the cockpit.", 404);
+      if (leadOf(id)?.dnd)
+        throw new Refusal(
+          "This lead asked not to be contacted (do not disturb is on in HighLevel).",
+          409,
+        );
+      const last = dial.touches.get(id);
+      const touch = (at: number) => ({
+        id: `touch-${id}-${at}`,
+        contact_id: id,
+        kind: "voice_note",
+        step: b.step ?? null,
+        appointment_id: b.appointment_id ?? null,
+        rep_email: F.ME.email,
+        at: new Date(at).toISOString(),
+      });
+      if (last !== undefined && now - last < 10 * MIN)
+        return { touch: touch(last), repeated: true };
+      dial.touches.set(id, now);
+      const back = dial.arrivals.get(id);
+      if (back)
+        dial.arrivals.set(id, {
+          ...back,
+          voice_step: null,
+          voice_note: back.voice_note
+            ? { ...(back.voice_note as Row), due: false }
+            : null,
+        });
+      return { touch: touch(now) };
+    }
+    case "dial.hot": {
+      // After a held intro: onto the hot list, the follow-up the next morning.
+      const id = String(b.contact_id ?? "");
+      const live = F.HOT.find(h => h.contact_id === id && !h.removed_at);
+      if (live) return { hot: live, repeated: true };
+      return hotSave(
+        {
+          contact_id: id,
+          next_at: new Date(now + 18 * 60 * MIN).toISOString(),
+          next_how: "call",
+          note: "Held the intro, no demo booked yet.",
+        },
+        now,
+      );
     }
     case "dial.release": {
       const a = dial.attempts.get(String(b.attempt_id));
@@ -1272,6 +1399,19 @@ async function main() {
     const path = url.pathname;
     if (path.endsWith("/rpc/cockpit_sales_whoami")) return json(F.ME);
     if (path.endsWith("/rpc/cockpit_sales_funnel")) return json(F.FUNNEL);
+    // The sales seats' Maqsam addresses (20261105s), every seat's and the roster's.
+    if (path.endsWith("/rpc/cockpit_sales_line_agents"))
+      return json([
+        ...new Set(
+          [...F.PEOPLE, ...F.REPS]
+            .map(p =>
+              String(
+                (p as { maqsam_email?: string | null }).maqsam_email ?? "",
+              ).toLowerCase(),
+            )
+            .filter(a => a.includes("@")),
+        ),
+      ]);
     if (path.endsWith("/rpc/cockpit_invoice_payments"))
       return json(
         (await import("./invoiceFake")).payments(

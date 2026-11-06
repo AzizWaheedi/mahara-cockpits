@@ -1,5 +1,6 @@
 // bun test supabase/functions/sales-api
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   afterOutcome,
   appointmentEffect,
@@ -31,6 +32,19 @@ import {
   targetRoles,
   whenWords,
   nextWorkingNine,
+  burstAnchor,
+  CONFIRM_FROM,
+  markWork,
+  mergeMisses,
+  quickRetryDue,
+  secondTry,
+  setterScope,
+  speedToday,
+  salesLineCall,
+  lineAddress,
+  stageConfirms,
+  voiceFacts,
+  voiceNoteDue,
 } from "./dialer.ts";
 
 describe("phone routing", () => {
@@ -195,9 +209,13 @@ describe("the queue order", () => {
     expect(later[0]?.why).toBe("Next try is due (1 unanswered on Maqsam)");
     expect(rankForSetter([lead({ ...tried, misses: 4 })], "me", Date.parse("2026-09-26T14:30:00Z"))).toEqual([]);
   });
-  test("a missed intro comes back to be rebooked", () => {
-    const q = rankForSetter([lead({ contact_id: "ns", reached: true, last_dial_at: NOW - 2 * 86_400_000, last_call_type: "intro", last_call_status: "noshow", last_call_at: NOW - 86_400_000 })], "me", NOW);
-    expect(q[0].tier).toBe(2);
+  test("a missed intro comes back to be rebooked: today's work for its first day, then due to day seven", () => {
+    const ns = (ago: number) =>
+      rankForSetter([lead({ contact_id: "ns", reached: true, last_dial_at: NOW - 9 * 86_400_000, last_call_type: "intro", last_call_status: "noshow", last_call_at: NOW - ago })], "me", NOW);
+    expect(ns(3 * 3_600_000)[0]).toMatchObject({ tier: 1, code: "intro_noshow", why: "Missed the intro, rebook it" });
+    expect(ns(86_400_000)[0]).toMatchObject({ tier: 2, code: "intro_noshow" });
+    expect(ns(6 * 86_400_000)[0]?.tier).toBe(2);
+    expect(ns(8 * 86_400_000)).toEqual([]);
   });
 });
 
@@ -410,18 +428,21 @@ describe("appointment work", () => {
   test("a call booked more than a day ahead is confirmed the evening before (morning calls) or that morning", () => {
     const eve = Date.parse("2026-09-24T15:30:00Z"); // Thursday 18:30 Kuwait
     // Saturday 10:00 Kuwait, booked three days before: due from Friday 18:00.
+    // The closer confirms their own demo (2026-11-05: a demo on the
+    // closer's calendar is no longer the setter's to confirm).
     const demo: Appt = { ...base, type: "demo", start: Date.parse("2026-09-26T07:00:00Z"), booked: eve - 2 * 86_400_000, assigned: "ghl-ahmed" };
-    expect(appointmentWork(demo, eve, "setter", "ghl-tahrir")).toBeNull();
+    expect(appointmentWork(demo, eve, "closer", "ghl-ahmed")).toBeNull();
     const friEve = Date.parse("2026-09-25T15:10:00Z"); // Friday 18:10
-    expect(appointmentWork(demo, friEve, "setter", "ghl-tahrir")).toMatchObject({ tier: 1, kind: "confirm", why: "Confirm the demo tomorrow at 10:00" });
-    expect(appointmentWork(demo, demo.start - 2 * 3_600_000, "setter", "ghl-tahrir")).toMatchObject({ tier: 0 });
+    expect(appointmentWork(demo, friEve, "closer", "ghl-ahmed")).toMatchObject({ tier: 1, kind: "confirm", code: "confirm_early", why: "Confirm the demo tomorrow at 10:00" });
+    expect(appointmentWork(demo, friEve, "setter", "ghl-tahrir")).toBeNull();
+    expect(appointmentWork(demo, demo.start - 2 * 3_600_000, "closer", "ghl-ahmed")).toMatchObject({ tier: 0 });
     // A 16:00 call is confirmed from 09:00 that day.
     const pm: Appt = { ...demo, start: Date.parse("2026-09-26T13:00:00Z") };
-    expect(appointmentWork(pm, Date.parse("2026-09-26T05:30:00Z"), "setter", "ghl-tahrir")).toBeNull();
-    expect(appointmentWork(pm, Date.parse("2026-09-26T06:30:00Z"), "setter", "ghl-tahrir")).toMatchObject({ kind: "confirm" });
-    expect(appointmentWork({ ...demo, booked: demo.start - 3 * 3_600_000 }, friEve, "setter", "ghl-tahrir")).toBeNull();
-    expect(appointmentWork({ ...demo, confirmed: true }, friEve, "setter", "ghl-tahrir")).toBeNull();
-    expect(appointmentWork({ ...demo, last_try: friEve - 3_600_000 }, friEve, "setter", "ghl-tahrir")).toBeNull();
+    expect(appointmentWork(pm, Date.parse("2026-09-26T05:30:00Z"), "closer", "ghl-ahmed")).toBeNull();
+    expect(appointmentWork(pm, Date.parse("2026-09-26T06:30:00Z"), "closer", "ghl-ahmed")).toMatchObject({ kind: "confirm" });
+    expect(appointmentWork({ ...demo, booked: demo.start - 3 * 3_600_000 }, friEve, "closer", "ghl-ahmed")).toBeNull();
+    expect(appointmentWork({ ...demo, confirmed: true }, friEve, "closer", "ghl-ahmed")).toBeNull();
+    expect(appointmentWork({ ...demo, last_try: friEve - 3_600_000 }, friEve, "closer", "ghl-ahmed")).toBeNull();
   });
   test("times are said as a rep says them", () => {
     const at = Date.parse("2026-09-24T13:00:00Z"); // 16:00 Kuwait, a Thursday
@@ -587,5 +608,370 @@ describe("reschedule and book from the lead (2026-10-11)", () => {
     expect(rankForSetter([lead({ contact_id: "s", signed: true, ...wrote })], "me", NOW)).toEqual([]);
     expect(rankForSetter([lead({ contact_id: "w", stage_role: "won", ...wrote })], "me", NOW)).toEqual([]);
     expect(rankForSetter([lead({ contact_id: "o", ...wrote })], "me", NOW).map(r => r.contact_id)).toEqual(["o"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The setter's one queue (Aziz, 2026-11-05): one queue all day instead of
+// four Slack channels. NOW is Thursday 12:00 Kuwait.
+// ---------------------------------------------------------------------------
+
+const MIN = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+describe("1. his intro is on top at its minute (an explicit rule, not deadline order)", () => {
+  const intro: Appt = { id: "i1", type: "intro", start: NOW + 2 * MIN, booked: NOW - 2 * DAY, status: "confirmed", assigned: "ghl-me", confirmed: false, last_try: null };
+  const other: Appt = { id: "i2", type: "intro", start: NOW + 40 * MIN, booked: NOW - 2 * DAY, status: "confirmed", assigned: "ghl-me", confirmed: false, last_try: null };
+  test("before a new lead, a reply, a missed call, a call-back and a confirmation", () => {
+    const q = rankForSetter(
+      [
+        lead({ contact_id: "new", created_at: NOW - MIN }),
+        lead({ contact_id: "wrote", inbound_at: NOW - 30_000, last_dial_at: NOW - DAY, reached: true }),
+        lead({ contact_id: "rang", inbound_call_at: NOW - MIN, last_dial_at: NOW - DAY, reached: true }),
+        lead({ contact_id: "back", callback_at: NOW + MIN, due_at: NOW + MIN, last_dial_at: NOW - HOUR }),
+        lead({ contact_id: "confirm", appt: other, booked_at: other.start }),
+        lead({ contact_id: "intro", appt: intro, booked_at: intro.start }),
+      ],
+      "me",
+      NOW,
+      "ghl-me",
+    );
+    expect(q[0]).toMatchObject({ contact_id: "intro", kind: "intro", code: "intro_now", tier: 0 });
+    expect(q.every(r => r.tier === 0)).toBe(true);
+  });
+  test("from five minutes before to twenty after; a closer's intro is not the setter's", () => {
+    const at = (t: number) => rankForSetter([lead({ contact_id: "intro", appt: intro })], "me", t, "ghl-me")[0]?.code;
+    expect(at(intro.start - 5 * MIN)).toBe("intro_now");
+    expect(at(intro.start + 20 * MIN)).toBe("intro_now");
+    expect(rankForSetter([lead({ contact_id: "intro", appt: { ...intro, assigned: "ghl-closer" } })], "me", NOW, "ghl-me").filter(r => r.kind === "intro")).toEqual([]);
+  });
+});
+
+describe("2. a new lead or a fresh booking: call now, twice", () => {
+  test("(a) a new lead who booked an intro on the form is called now, with the booking in the words", () => {
+    const q = rankForSetter(
+      [lead({ contact_id: "n", created_at: NOW - 2 * MIN, just_booked: { id: "b1", start: NOW + DAY, booked: NOW - MIN }, booked_at: NOW + DAY })],
+      "me",
+      NOW,
+    );
+    expect(q[0]).toMatchObject({ tier: 0, code: "new_lead", why: "New lead, booked an intro for tomorrow at 12:00, call now", due_since: NOW - 2 * MIN });
+  });
+  test("(b) an older lead who booked an intro in the last half hour is called now, until someone calls", () => {
+    const booked = { id: "b1", start: NOW + 2 * DAY, booked: NOW - 5 * MIN };
+    const c = lead({ contact_id: "jb", created_at: NOW - 20 * DAY, last_dial_at: NOW - 10 * DAY, reached: true, just_booked: booked, booked_at: booked.start });
+    expect(rankForSetter([c], "me", NOW)[0]).toMatchObject({ tier: 0, code: "just_booked", why: "Booked an intro for Saturday at 12:00, call now" });
+    // Called since the booking (or an outcome saved): done.
+    expect(rankForSetter([{ ...c, last_dial_at: NOW - MIN }], "me", NOW)).toEqual([]);
+    // Thirty minutes on, nobody called: it waits for its confirmation and its minute.
+    expect(rankForSetter([c], "me", booked.booked + 31 * MIN)).toEqual([]);
+    // A booking that reopens a closed lead is the lead's own news (index.ts reopens it).
+    expect(rankForSetter([{ ...c, closed: "not_interested" }], "me", NOW)).toEqual([]);
+  });
+  test("(c) the first no-answer comes back two minutes later as the second try; after the second, the ladder", () => {
+    const created = NOW - 8 * MIN;
+    const miss = NOW - 3 * MIN;
+    const c = lead({ contact_id: "s", created_at: created, last_dial_at: miss, miss_times: [miss], due_at: miss + 2 * MIN, voice_note_at: miss + 30_000 });
+    expect(rankForSetter([c], "me", NOW)[0]).toMatchObject({ tier: 0, code: "second_try", why: "Second try now", due_since: miss + 2 * MIN });
+    // Inside the two minutes it waits out of sight (the voice note went).
+    expect(rankForSetter([c], "me", miss + MIN)).toEqual([]);
+    expect(secondTry(c, miss + MIN)).toBe("wait");
+    // The second no-answer: the ladder's (17:00 today), not another quick try.
+    const twice = { ...c, miss_times: [miss, NOW - 30_000], last_dial_at: NOW - 30_000, due_at: kuwaitAt(NOW, 17) };
+    expect(secondTry(twice, NOW)).toBeNull();
+    expect(rankForSetter([twice], "me", NOW)).toEqual([]);
+    // An hour after the lead came in the burst is over.
+    expect(secondTry(c, created + 61 * MIN)).toBeNull();
+    // An answered call since the miss ends it.
+    expect(secondTry({ ...c, last_dial_at: NOW - MIN }, NOW)).toBeNull();
+  });
+  test("a lead who just booked gets the same second try, then waits for the confirmations and the intro", () => {
+    const booked = { id: "b1", start: NOW + DAY, booked: NOW - 10 * MIN };
+    const base = { contact_id: "jb", created_at: NOW - 20 * DAY, reached: true, just_booked: booked, booked_at: booked.start, voice_note_at: NOW - 4 * MIN };
+    const once = lead({ ...base, last_dial_at: NOW - 5 * MIN, miss_times: [NOW - 5 * MIN] });
+    expect(rankForSetter([once], "me", NOW)[0]).toMatchObject({ code: "second_try", why: "Second try now (booked an intro for tomorrow at 12:00)" });
+    const twice = lead({ ...base, last_dial_at: NOW - MIN, miss_times: [NOW - 5 * MIN, NOW - MIN] });
+    expect(rankForSetter([twice], "me", NOW)).toEqual([]);
+  });
+  test("the burst's anchor, the quick retry a save sets, and one count per call", () => {
+    expect(burstAnchor({ created_at: NOW - 10 * MIN, just_booked: null }, NOW)).toEqual({ at: NOW - 10 * MIN, step: "new" });
+    expect(burstAnchor({ created_at: NOW - 10 * MIN, just_booked: { id: "b", start: NOW + DAY, booked: NOW - 2 * MIN } }, NOW)?.step).toBe("booked");
+    expect(burstAnchor({ created_at: NOW - 61 * MIN, just_booked: null }, NOW)).toBeNull();
+    expect(quickRetryDue({ at: NOW - 10 * MIN }, 0, NOW)).toBe(NOW + 2 * MIN);
+    expect(quickRetryDue({ at: NOW - 10 * MIN }, 1, NOW)).toBeNull();
+    expect(quickRetryDue({ at: NOW - 61 * MIN }, 0, NOW)).toBeNull();
+    expect(quickRetryDue(null, 0, NOW)).toBeNull();
+    // The dialer's save 40 s after Maqsam's call is that call; a softphone call ten minutes before is another.
+    expect(mergeMisses([NOW], [NOW - 40_000, NOW - 10 * MIN])).toEqual([NOW - 10 * MIN, NOW]);
+  });
+});
+
+describe("3. the voice note is the next step after a call nobody answered", () => {
+  test("after a burst miss with no voice note since, it is an item of its own (Today, first)", () => {
+    const miss = NOW - MIN;
+    const c = lead({ contact_id: "v", created_at: NOW - 6 * MIN, last_dial_at: miss, miss_times: [miss], due_at: miss + 2 * MIN });
+    expect(voiceNoteDue(c, NOW)).toBe("new");
+    expect(rankForSetter([c], "me", NOW)[0]).toMatchObject({ tier: 1, pin: 0, code: "voice_note", voice_step: "new", why: "No answer: send a voice note" });
+    // Recorded: not asked again; the second try still comes at its two minutes.
+    const sent = { ...c, voice_note_at: NOW - 30_000 };
+    expect(voiceNoteDue(sent, NOW)).toBeNull();
+    expect(rankForSetter([sent], "me", miss + 2 * MIN)[0]).toMatchObject({ code: "second_try", voice_step: null });
+  });
+  test("after a confirmation call nobody answered, until the call or a voice note", () => {
+    const appt: Appt = { id: "c1", type: "intro", start: NOW + 2 * HOUR, booked: NOW - 2 * DAY, status: "confirmed", assigned: "ghl-me", confirmed: false, last_try: NOW - 5 * MIN };
+    const c = lead({ contact_id: "cv", appt, booked_at: appt.start, reached: true, last_dial_at: NOW - 5 * MIN });
+    expect(voiceNoteDue(c, NOW)).toBe("confirm");
+    expect(rankForSetter([c], "me", NOW, "ghl-me")[0]).toMatchObject({ code: "voice_note", voice_step: "confirm", why: "No answer to the confirmation: send a voice note" });
+    expect(voiceNoteDue({ ...c, voice_note_at: NOW - MIN }, NOW)).toBeNull();
+  });
+  test("the script's facts: the form's answers, the call in both clocks, the rep's first name, what is not known", () => {
+    const f = voiceFacts(
+      "booked",
+      {
+        name: "Huda Salem",
+        company: null,
+        country: "AE",
+        services: "Yes",
+        revenue: "$500k - $1M",
+        revenue_goal: "$3M+",
+        readiness: "$12K أكثر من",
+        decision_maker: "نعم، أنا صاحب القرار الوحيد",
+        challenge: "ما يوصلنا عملاء كفاية",
+      },
+      { type: "intro", start: Date.parse("2026-09-26T07:00:00Z") },
+      { name: "Sami Rep", name_ar: "سامي" },
+    );
+    expect(f).toMatchObject({
+      step: "booked",
+      first_name: "Huda",
+      company: null,
+      country: "United Arab Emirates",
+      services: null,
+      revenue: "$500k - $1M",
+      goal: "$3M+",
+      ready_to_invest: "$12K أكثر من",
+      projects_12m: null,
+      language: "ar",
+      rep: { first_name: "Sami", first_name_ar: "سامي" },
+      call: { type: "intro", start_at: "2026-09-26T07:00:00.000Z", kuwait: "Sat 26 Sep, 10:00", theirs: "11:00 their time" },
+    });
+    expect(f.missing).toEqual(["company", "what they do", "projects signed in the last 12 months (the form does not ask)"]);
+    const en = voiceFacts("new", { name: "Omar", country: "KW", challenge: "Not enough clients" }, null, { name: null });
+    expect([en.language, en.call, en.rep.first_name]).toEqual(["en", null, null]);
+  });
+});
+
+describe("4. every intro and demo nobody confirmed is called from 2.5 hours before", () => {
+  const start = NOW + 2 * HOUR;
+  const intro: Appt = { id: "c1", type: "intro", start, booked: NOW - 5 * HOUR, status: "confirmed", assigned: "ghl-me", confirmed: false, last_try: null };
+  test("booked the same day, more than three hours ahead: Call now from 2.5 hours before (it got nothing before)", () => {
+    expect(appointmentWork({ ...intro, start: NOW + 3 * HOUR }, NOW, "setter", "ghl-me")).toBeNull();
+    expect(appointmentWork(intro, NOW, "setter", "ghl-me")).toMatchObject({ tier: 0, kind: "confirm", code: "confirm", why: "Confirm the intro today at 14:00" });
+    expect(appointmentWork(intro, start - CONFIRM_FROM, "setter", "ghl-me")?.code).toBe("confirm");
+  });
+  test("a try nobody answered brings it back sixty minutes before; one in the last hour leaves it to the call", () => {
+    const tried = { ...intro, last_try: NOW - 5 * MIN };
+    expect(appointmentWork(tried, NOW, "setter", "ghl-me")).toBeNull();
+    expect(appointmentWork(tried, start - 60 * MIN, "setter", "ghl-me")).toMatchObject({ tier: 0, code: "confirm_last", why: "Confirm the intro today at 14:00, second try" });
+    expect(appointmentWork({ ...intro, last_try: start - 55 * MIN }, start - 50 * MIN, "setter", "ghl-me")).toBeNull();
+    // Never tried until the last hour: called then.
+    expect(appointmentWork(intro, start - 30 * MIN, "setter", "ghl-me")?.code).toBe("confirm_last");
+  });
+  test("booked less than three hours before it starts: the just-booked call, no confirmation", () => {
+    expect(appointmentWork({ ...intro, booked: start - 2 * HOUR }, NOW, "setter", "ghl-me")).toBeNull();
+  });
+  test("confirmed is the lead's own yes, never HighLevel's status", () => {
+    expect(appointmentWork({ ...intro, confirmed: true }, NOW, "setter", "ghl-me")).toBeNull();
+    // status "confirmed" alone (every calendar confirms on booking) still asks.
+    expect(appointmentWork({ ...intro, status: "confirmed" }, NOW, "setter", "ghl-me")?.kind).toBe("confirm");
+    expect(stageConfirms("intro_confirmed", "📞Intro Call CONFIRMED", NOW - HOUR, { type: "intro", booked: NOW - 2 * HOUR })).toBe(true);
+    // The stage from an earlier booking does not confirm this one.
+    expect(stageConfirms("intro_confirmed", "📞Intro Call CONFIRMED", NOW - 3 * HOUR, { type: "intro", booked: NOW - 2 * HOUR })).toBe(false);
+    expect(stageConfirms("intro_confirmed", "📞Intro Call CONFIRMED", NOW, { type: "demo", booked: NOW - HOUR })).toBe(false);
+    expect(stageConfirms("intro_confirmed", "📞Call CONFIRMED", NOW, { type: "demo", booked: NOW - HOUR })).toBe(true);
+    expect(stageConfirms("intro_booked", "👀Intro Call REQUESTED", NOW, { type: "intro", booked: NOW - HOUR })).toBe(false);
+  });
+  test("the closer confirms their demos the same way; the setter leaves them alone", () => {
+    const demo: Appt = { ...intro, type: "demo", assigned: "ghl-closer" };
+    expect(appointmentWork(demo, NOW, "closer", "ghl-closer")).toMatchObject({ tier: 0, code: "confirm" });
+    expect(appointmentWork(demo, NOW, "setter", "ghl-me")).toBeNull();
+    expect(appointmentWork({ ...demo, assigned: null }, NOW, "setter", "ghl-me")?.kind).toBe("confirm");
+  });
+});
+
+describe("5. replies: from both copies, kept with a booked call, and still waiting after a day", () => {
+  test("a reply from a lead with their intro booked is Today's, confirmed in one tap", () => {
+    const appt: Appt = { id: "i9", type: "intro", start: NOW + DAY, booked: NOW - DAY, status: "confirmed", assigned: "ghl-me", confirmed: false, last_try: null };
+    const c = lead({ contact_id: "r", inbound_at: NOW - 3 * HOUR, last_dial_at: NOW - DAY, reached: true, appt, booked_at: appt.start });
+    expect(rankForSetter([c], "me", NOW, "ghl-me")[0]).toMatchObject({ tier: 1, kind: "confirm", code: "reply_booked", why: "Wrote back, has an intro tomorrow at 12:00" });
+    // A dial (or a saved outcome) after the reply clears it.
+    expect(rankForSetter([{ ...c, last_dial_at: NOW - HOUR }], "me", NOW, "ghl-me")).toEqual([]);
+  });
+  test("a reply with a retry still ahead is not hidden behind it", () => {
+    const c = lead({ contact_id: "r", inbound_at: NOW - 2 * HOUR, last_dial_at: NOW - 5 * HOUR, due_at: NOW + 5 * HOUR, reached: true });
+    expect(rankForSetter([c], "me", NOW)[0]).toMatchObject({ tier: 1, code: "reply_today", why: "Wrote back today" });
+  });
+  test("older than a day and up to seven: 'Still waiting on you', lower down", () => {
+    const at = (ago: number) => rankForSetter([lead({ contact_id: "r", inbound_at: NOW - ago, last_dial_at: NOW - 9 * DAY, reached: true })], "me", NOW)[0];
+    expect(at(3 * DAY)).toMatchObject({ tier: 2, code: "reply_waiting", why: "Still waiting on you" });
+    expect(at(8 * DAY)).toBeUndefined();
+  });
+});
+
+describe("6. whose lead it is (the critic's correction, 2026-11-05)", () => {
+  const fresh = { created_at: NOW - 3 * MIN, last_dial_at: null };
+  test("a lead the closer owns at the intro stage is the setter's work", () => {
+    const c = lead({ contact_id: "a", ...fresh, owner: "closer@x", owner_role: "closer" });
+    expect(rankForSetter([c], "me", NOW).map(r => r.code)).toEqual(["new_lead"]);
+    expect(setterScope(c, "me", "ghl-me", false)).toBe(true);
+  });
+  test("past the intro (a demo on the closer's calendar), the closer's", () => {
+    const c = lead({ contact_id: "a", ...fresh, owner: "closer@x", owner_role: "closer", demo_rep: "ghl-closer" });
+    expect(rankForSetter([c], "me", NOW, "ghl-me")).toEqual([]);
+    // Unowned too: the demo's host has it.
+    expect(rankForSetter([{ ...c, owner: null, owner_role: null }], "me", NOW, "ghl-me")).toEqual([]);
+  });
+  test("another setter's lead stays hidden; a call-back on another rep's calendar stays theirs", () => {
+    expect(rankForSetter([lead({ contact_id: "a", ...fresh, owner: "setter2@x", owner_role: "setter" })], "me", NOW)).toEqual([]);
+    const back = lead({ contact_id: "b", callback_at: NOW + MIN, due_at: NOW + MIN, last_dial_at: NOW - HOUR, callback_owner: "closer@x" });
+    expect(rankForSetter([back], "me", NOW)).toEqual([]);
+    expect(rankForSetter([{ ...back, callback_owner: "me" }], "me", NOW)[0]?.code).toBe("callback_now");
+    expect(rankForSetter([back], "boss", NOW, null, true)).toHaveLength(1);
+  });
+  test("an intro no-show and a cancelled intro of a closer-owned lead come to the setter", () => {
+    const ns = lead({ contact_id: "n", reached: true, last_dial_at: NOW - 9 * DAY, last_call_type: "intro", last_call_status: "noshow", last_call_at: NOW - 2 * HOUR, owner: "closer@x", owner_role: "closer" });
+    expect(rankForSetter([ns], "me", NOW)[0]?.code).toBe("intro_noshow");
+  });
+});
+
+describe("7. marking his intro in the queue", () => {
+  const past: Appt = { id: "m1", type: "intro", start: NOW - HOUR, booked: NOW - DAY, status: "confirmed", assigned: "ghl-me", confirmed: false, last_try: null };
+  test("his own intro past its twenty minutes with no mark is Today's 'Mark the intro'", () => {
+    const q = rankForSetter([lead({ contact_id: "m", unmarked: past, reached: true, last_dial_at: NOW - 2 * DAY })], "me", NOW, "ghl-me");
+    expect(q[0]).toMatchObject({ tier: 1, kind: "lead", code: "mark_call", why: "Mark the intro booked for today at 11:00" });
+    expect(q[0]?.mark?.id).toBe("m1");
+    expect(markWork(past, past.start + 19 * MIN, "setter", "ghl-me")).toBeNull();
+    expect(markWork({ ...past, status: "showed" }, NOW, "setter", "ghl-me")).toBeNull();
+    expect(markWork({ ...past, assigned: "ghl-closer" }, NOW, "setter", "ghl-me")).toBeNull();
+    expect(markWork({ ...past, assigned: null }, NOW, "setter", "ghl-me")).toBeNull();
+    expect(markWork({ ...past, assigned: null }, NOW, "setter", null)?.code).toBe("mark_call");
+  });
+  test("a lead with something as urgent keeps that item, the call to mark riding on it", () => {
+    const q = rankForSetter([lead({ contact_id: "m", unmarked: past, inbound_at: NOW - MIN, last_dial_at: NOW - DAY, reached: true })], "me", NOW, "ghl-me");
+    expect(q[0]).toMatchObject({ code: "reply_now" });
+    expect(q[0]?.mark?.id).toBe("m1");
+  });
+  test("a closer marks their own demo", () => {
+    const demo = { ...past, type: "demo" as const, assigned: "ghl-closer" };
+    const q = rankForCloser([{ ...lead({ contact_id: "d", unmarked: demo }), demo_at: demo.start, demo_status: "confirmed", signed: false }], "c", NOW, "ghl-closer");
+    expect(q[0]).toMatchObject({ code: "mark_call", why: "Mark the demo booked for today at 11:00" });
+  });
+});
+
+describe("8. the smaller rules", () => {
+  test("an intro the lead cancelled: rebook it, due, for a week", () => {
+    const c = lead({ contact_id: "x", reached: true, last_dial_at: NOW - 9 * DAY, cancelled_intro_at: NOW - 2 * DAY });
+    expect(rankForSetter([c], "me", NOW)[0]).toMatchObject({ tier: 2, code: "intro_cancelled", why: "Cancelled the intro, rebook it" });
+    expect(rankForSetter([{ ...c, cancelled_intro_at: NOW - 8 * DAY }], "me", NOW)).toEqual([]);
+    // Rebooked: nothing to rebook.
+    expect(rankForSetter([{ ...c, booked_at: NOW + DAY }], "me", NOW)).toEqual([]);
+  });
+  test("a call-back missed today is Today's; an older one is overdue", () => {
+    const at = (t: number) => rankForSetter([lead({ contact_id: "b", callback_at: t, due_at: t, last_dial_at: t - HOUR, reached: true })], "me", NOW)[0];
+    expect(at(NOW - 2 * HOUR)).toMatchObject({ tier: 1, code: "callback_today", why: "Call back, missed at 10:00 today" });
+    expect(at(NOW - DAY)).toMatchObject({ tier: 2, code: "callback_late", why: "Callback is overdue" });
+  });
+  test("new leads not reached: under an hour old first (newest first), then the rest by heat", () => {
+    const q = rankForSetter(
+      [
+        lead({ contact_id: "old-hot", created_at: NOW - 5 * HOUR, revenue: "$1M-$2M", readiness: "$8K - $12K" }),
+        lead({ contact_id: "young-cold", created_at: NOW - 50 * MIN, lead_class: "unqualified" }),
+        lead({ contact_id: "younger", created_at: NOW - 20 * MIN, lead_class: "unqualified" }),
+        lead({ contact_id: "old-cold", created_at: NOW - 6 * HOUR, lead_class: "unqualified" }),
+      ],
+      "me",
+      NOW,
+    );
+    expect(q.map(r => r.contact_id)).toEqual(["younger", "young-cold", "old-hot", "old-cold"]);
+  });
+});
+
+describe("9. not ready yet: long-term nurture, no tag, no disqualification", () => {
+  test("on a lead, on the intro held, on a confirmation", () => {
+    expect(appointmentEffect("lead", "not_ready")).toEqual({ mark: null, confirmation: null, ladder: true, rebook: false });
+    expect(afterOutcome("not_ready", 1, NOW, null).closed).toBe("not_ready");
+    expect(appointmentEffect("intro", "not_ready")).toEqual({ mark: "showed", confirmation: null, ladder: true, rebook: false });
+    expect(appointmentEffect("confirm", "not_ready")).toMatchObject({ mark: "cancelled", confirmation: "cancelled", ladder: true });
+    expect(targetRoles("lead", "not_ready", "not_ready")).toEqual(["nurture_long"]);
+    expect(tagsFor("not_ready")).toEqual([]);
+    expect(tagsFor("not_interested")).toEqual(["not interested"]);
+  });
+  test("a lead left not ready is out of the queue until they write", () => {
+    expect(rankForSetter([lead({ contact_id: "nr", closed: "not_ready", created_at: NOW - 5 * DAY })], "me", NOW)).toEqual([]);
+  });
+});
+
+describe("10. today's speed to lead for the strip", () => {
+  const today = kuwaitAt(NOW, 0);
+  test("the Numbers page's leads, any sales-line call, the never-called beside the median", () => {
+    const leads = [
+      { contact_id: "a", name: "A", phone8: "11111111", lead_created_at: new Date(today + HOUR).toISOString(), lead_class: "qualified" },
+      { contact_id: "b", name: "B", phone8: "22222222", lead_created_at: new Date(today + 2 * HOUR).toISOString(), lead_class: "unqualified" },
+      { contact_id: "c", name: "C", phone8: "33333333", lead_created_at: new Date(today + 3 * HOUR).toISOString(), lead_class: "qualified" },
+      { contact_id: "d", name: "D", phone8: null, lead_created_at: new Date(today + 4 * HOUR).toISOString(), lead_class: "qualified" },
+      // Not counted: no ROAS class, or yesterday's.
+      { contact_id: "e", name: "E", phone8: null, lead_created_at: new Date(today + HOUR).toISOString(), lead_class: "unprepared" },
+      { contact_id: "f", name: "F", phone8: null, lead_created_at: new Date(today - HOUR).toISOString(), lead_class: "qualified" },
+    ];
+    const calls = [
+      { contact_id: "a", occurred_at: new Date(today + HOUR + 3 * MIN).toISOString(), sales_rep_id: "rep-closer" },
+      // Not linked yet: found by its last eight digits.
+      { contact_id: null, lead_phone8: "22222222", occurred_at: new Date(today + 2 * HOUR + 20 * MIN).toISOString(), sales_rep_id: "rep-closer" },
+      // Before the lead came in: not their first call.
+      { contact_id: "c", occurred_at: new Date(today + HOUR).toISOString(), sales_rep_id: "rep-closer" },
+    ];
+    expect(speedToday(leads, calls, NOW)).toEqual({
+      leads: 4,
+      called: 2,
+      within5: 1,
+      median_min: 11.5,
+      not_called: 2,
+      oldest_waiting: { contact_id: "c", name: "C", minutes: 9 * 60 },
+    });
+  });
+  test("no leads yet today: nothing to measure, said as none rather than zero minutes", () => {
+    expect(speedToday([], [], NOW)).toEqual({ leads: 0, called: 0, within5: 0, median_min: null, not_called: 0, oldest_waiting: null });
+  });
+
+  describe("the Numbers page's call rule (2026-11-05): a sales seat's call, by rep id or by the seat's Maqsam address", () => {
+    const one = [{ contact_id: "s", name: "S", phone8: "88888888", lead_created_at: new Date(today + HOUR).toISOString(), lead_class: "qualified" }];
+    const line = new Set(["setter@seat.test", "closer@seat.test"]);
+    const at2 = new Date(today + HOUR + 2 * MIN).toISOString();
+    test("the setter's Maqsam call, with no rep id, counts by his seat's address", () => {
+      const calls = [{ contact_id: "s", occurred_at: at2, agent_email: " SETTER@seat.test", sales_rep_id: null }];
+      expect(speedToday(one, calls, NOW, line)).toMatchObject({ called: 1, within5: 1, median_min: 2 });
+      // Without the seats' addresses it would not.
+      expect(speedToday(one, calls, NOW)).toMatchObject({ called: 0, not_called: 1 });
+    });
+    test("a call-centre agent's call never counts", () => {
+      const calls = [{ contact_id: "s", occurred_at: at2, agent_email: "agent@callcentre.test", sales_rep_id: null }];
+      expect(speedToday(one, calls, NOW, line)).toMatchObject({ called: 0, not_called: 1 });
+    });
+    test("a call the dialer placed counts before Maqsam's copy has it: a seat placed it", () => {
+      const calls = [{ contact_id: "s", occurred_at: at2, seat: true }];
+      expect(speedToday(one, calls, NOW, line)).toMatchObject({ called: 1, median_min: 2 });
+    });
+    test("the strip and the Numbers page share one rule (calls.ts salesLineCall)", () => {
+      expect(salesLineCall({ sales_rep_id: "r" }, line)).toBe(true);
+      expect(salesLineCall({ sales_rep_id: null, agent_email: "Closer@Seat.test " }, line)).toBe(true);
+      expect(salesLineCall({ sales_rep_id: null, agent_email: null }, line)).toBe(false);
+      expect(salesLineCall({ sales_rep_id: null, agent_email: "" }, new Set([""]))).toBe(false);
+      expect(lineAddress("  A@B.test ")).toBe("a@b.test");
+      // The app's copy says the same, word for word in its rule.
+      const app = readFileSync(new URL("../../../apps/sales-cockpit/src/lib/calls.ts", import.meta.url), "utf8");
+      expect(app).toContain("if (c.sales_rep_id) return true;\n  const a = lineAddress(c.agent_email);\n  return a.includes(\"@\") && line.has(a);");
+      const server = readFileSync(new URL("./dialer.ts", import.meta.url), "utf8");
+      expect(server).toContain("if (c.sales_rep_id) return true;\n  const a = lineAddress(c.agent_email);\n  return a.includes(\"@\") && line.has(a);");
+    });
   });
 });

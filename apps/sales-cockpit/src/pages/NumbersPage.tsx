@@ -175,6 +175,8 @@ export default function NumbersPage({ me }: { me: Me }) {
   // The setter's rhythm: speed to lead (the first caller's cohort for one
   // rep, every lead for the team) and the gap between calls.
   const speedIn = useSpeedToLead(fromIso, toIso);
+  // A seat's calls count by its Maqsam address too, the setter's with no
+  // row on B2B's roster (calls.ts salesLineCall).
   const speed = useMemo(
     () =>
       speedIn.data
@@ -182,10 +184,12 @@ export default function NumbersPage({ me }: { me: Me }) {
             speedIn.data.leads,
             speedIn.data.calls,
             team ? null : maqsam,
+            new Set(speedIn.data.line),
           )
         : null,
     [speedIn.data, team, maqsam],
   );
+  const speedPartial = Boolean(speedIn.data && !speedIn.data.lineExact);
   const gaps = useMemo(
     () => (dials.data ? callGaps(dials.data as unknown as CallRow[]) : null),
     [dials.data],
@@ -340,6 +344,7 @@ export default function NumbersPage({ me }: { me: Me }) {
         <>
           <NumbersDials
             speed={speed}
+            speedPartial={speedPartial}
             gaps={gaps}
             stats={stats}
             rows={dials.data?.length ?? 0}

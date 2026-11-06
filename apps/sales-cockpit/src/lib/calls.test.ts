@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   type CallRow,
   callGaps,
+  lineAddress,
   minutesWords,
+  salesLineCall,
   speedToLead,
   workingMinutes,
 } from "./calls";
@@ -130,6 +132,95 @@ describe("speed to lead", () => {
       leads: 2,
       called: 2,
       never: 0,
+    });
+  });
+  describe("a seat with no row on B2B's roster counts by its Maqsam address (2026-11-05)", () => {
+    const SETTER = "setter@seat.test";
+    const CLOSER = "closer@seat.test";
+    const one = [
+      {
+        contact_id: "s1",
+        phone8: "88888888",
+        lead_created_at: "2026-09-26T07:00:00Z",
+      },
+    ];
+    // The setter's call: the desk copies it with no rep id.
+    const setterCall = call({
+      contact_id: "s1",
+      occurred_at: "2026-09-26T07:02:00Z",
+      agent_email: " Setter@Seat.test ",
+      sales_rep_id: null,
+    });
+    // The closer, on the roster, calls later.
+    const closerCall = call({
+      contact_id: "s1",
+      occurred_at: "2026-09-26T07:40:00Z",
+      agent_email: CLOSER,
+      sales_rep_id: "rep-closer",
+    });
+    const line = new Set([SETTER, CLOSER]);
+
+    test("the setter's call counts once his address is a seat's", () => {
+      expect(speedToLead(one, [setterCall], null, line)).toMatchObject({
+        called: 1,
+        never: 0,
+        medianMin: 2,
+        within5: 1,
+      });
+    });
+    test("without the seats' addresses, only rep ids count, as before", () => {
+      expect(speedToLead(one, [setterCall])).toMatchObject({
+        called: 0,
+        never: 1,
+      });
+    });
+    test("the first caller's cohort: the lead is the setter's, not the closer's who called later", () => {
+      const calls2 = [setterCall, closerCall];
+      expect(speedToLead(one, calls2, SETTER, line)).toMatchObject({
+        leads: 1,
+        called: 1,
+        medianMin: 2,
+      });
+      expect(speedToLead(one, calls2, CLOSER, line)).toMatchObject({
+        leads: 0,
+        called: 0,
+      });
+      // The old rule gave the closer a lead the setter had called 38 minutes before.
+      expect(speedToLead(one, calls2, CLOSER)).toMatchObject({
+        leads: 1,
+        medianMin: 40,
+      });
+    });
+    test("a call-centre agent's call, with no rep id and no seat's address, never counts", () => {
+      const agent = call({
+        contact_id: "s1",
+        occurred_at: "2026-09-26T07:01:00Z",
+        agent_email: "agent@callcentre.test",
+        sales_rep_id: null,
+      });
+      expect(speedToLead(one, [agent], null, line)).toMatchObject({
+        called: 0,
+        never: 1,
+      });
+    });
+    test("the rule itself: a rep id, or a seat's address compared trimmed and in lower case", () => {
+      expect(
+        salesLineCall({ sales_rep_id: "r", agent_email: null }, line),
+      ).toBe(true);
+      expect(
+        salesLineCall(
+          { sales_rep_id: null, agent_email: "SETTER@seat.test" },
+          line,
+        ),
+      ).toBe(true);
+      expect(
+        salesLineCall({ sales_rep_id: null, agent_email: null }, line),
+      ).toBe(false);
+      // An empty address in the list never matches a call with none.
+      expect(
+        salesLineCall({ sales_rep_id: null, agent_email: "" }, new Set([""])),
+      ).toBe(false);
+      expect(lineAddress("  A@B.test ")).toBe("a@b.test");
     });
   });
   test("working minutes skip the night and Friday", () => {

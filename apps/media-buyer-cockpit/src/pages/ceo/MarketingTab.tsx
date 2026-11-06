@@ -416,7 +416,7 @@ function SpendAndLeads({
               ? `working hours · ${minutesText(w.speedToLead.medianMin)} on the plain clock`
               : undefined
           }
-          hint="From the lead's creation to the first Maqsam call with it made by a sales rep on the roster (setter, closer or both), never a call-centre agent, matched by the CRM contact or the phone's last eight digits. On the working clock the time starts at the later of the lead's creation and the next working window and only working minutes count; the plain clock figure is beside it. The median over the leads that were called; the never-called are counted beside it, not inside it."
+          hint="From the lead's creation to the first Maqsam call with it made by a sales seat (a rep on B2B's roster, or a seat's Maqsam address, so the setter counts), never a call-centre agent, matched by the CRM contact or the phone's last eight digits. On the working clock the time starts at the later of the lead's creation and the next working window and only working minutes count; the plain clock figure is beside it. The median over the leads that were called; the never-called are counted beside it, not inside it."
           naHint="No lead in this window has a sales rep's Maqsam call against it."
         />
         <StatTile

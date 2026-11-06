@@ -70,6 +70,14 @@ const d = (
 const B2B =
   "B2B GoHighLevel and Meta through the B2B Supabase database (flwboeijllbtrufxkhts)";
 const TRIAGE = "Creative Triage Supabase (bldgtotkfmhoxmlzowdx)";
+/**
+ * Speed to lead's two databases (2026-11-06): B2B says which contacts are
+ * leads and when they came in; the calls are the sales cockpit's Maqsam copy
+ * in Creative Triage, by the sales-seat rule (B2B's own copy for leads from
+ * before that copy starts, 4 December 2025).
+ */
+const SPEED_SOURCE =
+  "B2B GoHighLevel leads (flwboeijllbtrufxkhts), with the sales seats' Maqsam calls from the sales cockpit's copy in Creative Triage (cockpit_sales_dials, bldgtotkfmhoxmlzowdx)";
 const CLICKUP = "ClickUp, the Clients - Mahara list, synced into the cockpit";
 /**
  * Client Meta spend and leads since 2026-10-11 (R2): the media buyer's sync,
@@ -390,8 +398,8 @@ export const DEFINITIONS: MetricDefinition[] = [
     "growth.speed_to_lead_median_min",
     "growth",
     "Speed to lead, median minutes",
-    "Minutes from a lead's creation to the first Maqsam call with it made by a sales rep on the roster, median over the leads that were called.",
-    B2B,
+    "Minutes from a lead's creation to the first Maqsam call with it made by a sales seat (a rep on B2B's roster, or a seat's Maqsam address), median over the leads that were called.",
+    SPEED_SOURCE,
     "minutes",
     "Leads never called; calls by call-centre agents; WhatsApp first touches.",
   ),
@@ -399,16 +407,16 @@ export const DEFINITIONS: MetricDefinition[] = [
     "growth.speed_to_lead_called",
     "growth",
     "Leads called",
-    "Leads in the window with a sales rep's Maqsam call after creation.",
-    B2B,
+    "Leads in the window with a Maqsam call by a sales seat (a rep on B2B's roster, or a seat's Maqsam address) after creation.",
+    SPEED_SOURCE,
     "count",
   ),
   d(
     "growth.speed_to_lead_never_called",
     "growth",
     "Leads never called",
-    "Leads in the window with no sales rep's Maqsam call.",
-    B2B,
+    "Leads in the window with no Maqsam call by a sales seat (a rep on B2B's roster, or a seat's Maqsam address).",
+    SPEED_SOURCE,
     "count",
   ),
   d(
@@ -416,7 +424,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "growth",
     "Called within 5 minutes",
     "Of the leads called, the share whose first call came within 5 minutes.",
-    B2B,
+    SPEED_SOURCE,
     "share",
   ),
   d(
