@@ -94,7 +94,9 @@ class ReconciliationTests(unittest.TestCase):
             s = fixture(); s["make_output"][field] = value
             with self.assertRaises(r.Refusal): r.create_plan(s)
         for field, mutation in [("reportLink", {"parents": ["other"]}), ("brandDnaLink", {"trashed": True}),
-                                ("offerLink", {"mimeType": "text/plain"})]:
+                                ("offerLink", {"mimeType": "text/plain"}),
+                                ("offerLink", {"parents": "prefix_fake_folder"}),
+                                ("offerLink", {"parents": ["fake_folder", None]})]:
             s = fixture(); s["drive_metadata"][field].update(mutation)
             with self.assertRaises(r.Refusal): r.create_plan(s)
 

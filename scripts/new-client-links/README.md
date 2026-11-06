@@ -39,7 +39,10 @@ object without a `value`, or with a null or empty value, is treated as unset.
   "complete_task_fields": true,
   "source_task_id": "task-id-from-original-execution",
   "source_execution_id": "32-hex-character-original-execution-id",
-  "task": {"id": "same-task-id", "date_updated": "unix-milliseconds", "custom_fields": []},
+  "task": {"id": "same-task-id", "date_updated": "unix-milliseconds", "custom_fields": [
+    {"id": "folder-field-id"}, {"id": "offer-field-id"},
+    {"id": "dna-field-id"}, {"id": "report-field-id"}
+  ]},
   "make_output": {"success": true, "folderLink": "...", "offerLink": "...", "brandDnaLink": "...", "reportLink": "..."},
   "field_schema": {
     "folderLink": {"id": "folder-field-id", "type": "url"},

@@ -98,8 +98,12 @@ def create_plan(snapshot):
         f = files.get(name)
         if not isinstance(f, dict) or f.get("id") != ids[name] or f.get("mimeType") != mime or f.get("trashed") is not False:
             raise Refusal("Drive identity, type or trash state not confirmed: " + name)
-        if name != "folderLink" and ids["folderLink"] not in f.get("parents", []):
-            raise Refusal("File not confirmed in client folder: " + name)
+        if name != "folderLink":
+            parents = f.get("parents")
+            if (not isinstance(parents, list) or
+                    any(not isinstance(parent, str) for parent in parents) or
+                    ids["folderLink"] not in parents):
+                raise Refusal("File not confirmed in client folder: " + name)
     changes = {}
     for name in FIELDS:
         old, wanted = current[name], source[name]
