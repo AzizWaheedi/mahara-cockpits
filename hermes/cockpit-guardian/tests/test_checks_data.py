@@ -451,6 +451,20 @@ class PgCron(unittest.TestCase):
         runs = [{"jobid": 0, "runs_24h": 48, "failed_24h": 2, "last_error": "job startup timeout"}]
         self.assertEqual(pg_cron.run_runs(make(db=fakes.FakeDb(probe=self.probe(cron_runs=runs)))).status, WARN)
 
+    def test_the_new_contacts_job_is_expected(self):
+        # 20261105s: sales-mirror's new_contacts step every minute, so a new lead reaches the setter within about a minute.
+        self.assertIn("mahara-sales-new-contacts", pg_cron.EXPECTED_JOBS)
+        p = self.probe()
+        p["cron_jobs"] = [j for j in p["cron_jobs"] if j["jobname"] != "mahara-sales-new-contacts"]
+        r = pg_cron.run_jobs(make(db=fakes.FakeDb(probe=p)))
+        self.assertEqual(r.status, FAIL)
+        self.assertEqual(r.items, ["mahara-sales-new-contacts"])
+        p = self.probe()
+        next(j for j in p["cron_jobs"] if j["jobname"] == "mahara-sales-new-contacts")["active"] = False
+        r = pg_cron.run_jobs(make(db=fakes.FakeDb(probe=p)))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("switched off: mahara-sales-new-contacts", r.summary)
+
     def test_probe_missing_names_the_migration(self):
         with self.assertRaises(SourceError) as e:
             pg_cron.run_jobs(make(db=fakes.FakeDb(probe=None)))
