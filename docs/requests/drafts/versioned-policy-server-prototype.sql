@@ -338,7 +338,7 @@ BEGIN
     RAISE EXCEPTION 'Send requests from the Requests page or a client page.' USING ERRCODE = '22023';
   END IF;
   SELECT * INTO t FROM public.cockpit_request_types WHERE key = p_type_key;
-  IF p_policy_guard = 'retained_v1' THEN
+  IF p_policy_guard = 'retained_v1' OR p_type_key IN ('card_missing','whatsapp_connection') THEN
     SELECT * INTO t FROM public.cockpit_request_types WHERE key = p_type_key FOR SHARE;
   END IF;
   IF t.key IS NULL THEN RAISE EXCEPTION 'That request type does not exist. Reload the form.' USING ERRCODE = '22023'; END IF;
