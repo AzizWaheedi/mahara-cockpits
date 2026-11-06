@@ -23,6 +23,8 @@ const AgreedSchema = z
   })
   .passthrough();
 export type AgreedNote = z.output<typeof AgreedSchema>;
+const metaScope =
+  "Based on available Meta data. Other accounts or platforms may be missing.";
 
 /** The cell's agreed note, or null before 20261103e or on another shape. */
 export function agreedOf(cell: Cell | null | undefined): AgreedNote | null {
@@ -35,7 +37,9 @@ export function agreedOf(cell: Cell | null | undefined): AgreedNote | null {
 /** The help line: the words, then why any source is not the default. */
 export function agreedHelp(cell: Cell | null | undefined): string | null {
   const a = agreedOf(cell);
-  return a ? [a.words, ...(a.notes ?? [])].join(" ") : null;
+  return a
+    ? [a.words, ...(a.now ? [metaScope] : []), ...(a.notes ?? [])].join(" ")
+    : null;
 }
 
 /** Under "Daily budget now" in Numbers against targets: the agreed figure alone. */
@@ -68,6 +72,9 @@ export function AgreedAgainstNow({ cell }: { cell: Cell | null | undefined }) {
           <span className="text-muted-foreground"> {a.now}</span>
         ) : null}
       </p>
+      {a.now ? (
+        <p className="text-xs text-muted-foreground">{metaScope}</p>
+      ) : null}
       {a.notes?.length ? (
         <p className="text-xs text-muted-foreground">{a.notes.join(" ")}</p>
       ) : null}

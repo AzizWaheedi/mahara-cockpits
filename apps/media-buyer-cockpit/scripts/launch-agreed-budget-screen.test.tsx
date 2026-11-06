@@ -204,7 +204,7 @@ const note = {
 test("the client page says the agreed figure against the budget now, not judged", () => {
   const h = html(<AgreedAgainstNow cell={cell(note)} />);
   expect(text(h)).toBe(
-    "Agreed $39.99 a day (kickoff, 150 SAR). Set now: $25 a day.",
+    "Agreed $39.99 a day (kickoff, 150 SAR). Set now: $25 a day. Based on available Meta data. Other accounts or platforms may be missing.",
   );
   expect(h).toContain("data-agreed-now");
   // Display only: no status dot, no warning colour.
@@ -212,7 +212,7 @@ test("the client page says the agreed figure against the budget now, not judged"
   expect(h).not.toMatch(/ceo-(warning|critical)|text-red|text-amber/);
   const sub = html(<AgreedSubline cell={cell(note)} />);
   expect(text(sub)).toBe("Agreed $39.99 a day (kickoff, 150 SAR).");
-  expect(agreedHelp(cell(note))).toBe(note.words);
+  expect(agreedHelp(cell(note))).toBe(`${note.words} Based on available Meta data. Other accounts or platforms may be missing.`);
 });
 
 test("why a source is not the default reaches the help and the line", () => {
@@ -229,7 +229,7 @@ test("why a source is not the default reaches the help and the line", () => {
     ],
   };
   expect(text(html(<AgreedAgainstNow cell={cell(month)} />))).toBe(
-    "No agreed budget yet. Set now: at least $80 a day. The sale's figure, $1,200 a day, looks like a month or another currency, so it is not the default. Ask the CSM.",
+    "No agreed budget yet. Set now: at least $80 a day. Based on available Meta data. Other accounts or platforms may be missing. The sale's figure, $1,200 a day, looks like a month or another currency, so it is not the default. Ask the CSM.",
   );
   expect(agreedHelp(cell(month))).toContain("Ask the CSM.");
 });
