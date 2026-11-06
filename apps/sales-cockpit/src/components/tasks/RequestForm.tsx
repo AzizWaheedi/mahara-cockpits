@@ -308,10 +308,22 @@ function Seal({
  */
 /** A late result is safe only for the same committed seat, ticket and session. */
 export function requestViewMatches(
-  expected: { seatId: string | null; ticketId: string | null; generation: number },
-  current: { seatId: string | null; ticketId: string | null; generation: number },
+  expected: {
+    seatId: string | null;
+    ticketId: string | null;
+    generation: number;
+  },
+  current: {
+    seatId: string | null;
+    ticketId: string | null;
+    generation: number;
+  },
 ): boolean {
-  return expected.seatId === current.seatId && expected.ticketId === current.ticketId && expected.generation === current.generation;
+  return (
+    expected.seatId === current.seatId &&
+    expected.ticketId === current.ticketId &&
+    expected.generation === current.generation
+  );
 }
 
 export function RequestForm(props: RequestFormProps) {
@@ -320,27 +332,44 @@ export function RequestForm(props: RequestFormProps) {
   const observedToken = useRef<string | null>(null);
   const ticketId = props.replacesTaskId ?? null;
   const committedIdentity = useRef({ seatId, ticketId });
-  useLayoutEffect(() => { committedIdentity.current = { seatId, ticketId }; }, [seatId, ticketId]);
+  useLayoutEffect(() => {
+    committedIdentity.current = { seatId, ticketId };
+  }, [seatId, ticketId]);
   const [sessionEpoch, setSessionEpoch] = useState(0);
   useEffect(() => {
     if (!client) return;
     const subscription = client.auth.onAuthStateChange((event, session) => {
       const token = session?.access_token ?? null;
-      if (event === "SIGNED_OUT" || (event === "SIGNED_IN" && (!token || token !== observedToken.current))) {
+      if (
+        event === "SIGNED_OUT" ||
+        (event === "SIGNED_IN" && (!token || token !== observedToken.current))
+      ) {
         generation.current += 1;
         setSessionEpoch(generation.current);
       }
-      if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED" || event === "SIGNED_IN" || event === "SIGNED_OUT") {
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "SIGNED_IN" ||
+        event === "SIGNED_OUT"
+      ) {
         observedToken.current = token;
       }
     });
     return () => subscription.data.subscription.unsubscribe();
   }, [client]);
-  return <RequestFormInner key={JSON.stringify([seatId, sessionEpoch, ticketId])}
-    {...props} stillCurrent={() => requestViewMatches(
-      { seatId, ticketId, generation: sessionEpoch },
-      { ...committedIdentity.current, generation: generation.current },
-    )} />;
+  return (
+    <RequestFormInner
+      key={JSON.stringify([seatId, sessionEpoch, ticketId])}
+      {...props}
+      stillCurrent={() =>
+        requestViewMatches(
+          { seatId, ticketId, generation: sessionEpoch },
+          { ...committedIdentity.current, generation: generation.current },
+        )
+      }
+    />
+  );
 }
 
 function RequestFormInner({
@@ -414,7 +443,9 @@ function RequestFormInner({
   const mounted = useRef(false);
   useLayoutEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, []);
   const formRef = useRef<HTMLDivElement>(null);
   const plateRef = useRef<HTMLHeadingElement>(null);
