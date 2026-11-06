@@ -168,12 +168,12 @@ console.error = (...args: unknown[]) => {
 };
 
 const { createRoot } = await import("react-dom/client");
-const { act, createElement: h } = await import("react");
+const { act, createElement: h, useLayoutEffect } = await import("react");
 const { MemoryRouter } = await import("react-router");
 const { SupabaseAuthProvider } = await import(
   "../src/auth/SupabaseAuthProvider"
 );
-const { RequestForm } = await import("../src/components/tasks/RequestForm");
+const { RequestForm, requestViewMatches } = await import("../src/components/tasks/RequestForm");
 
 const container = win.document.createElement("div");
 win.document.body.appendChild(container);
@@ -1120,6 +1120,39 @@ describe("the request form", () => {
       expect(callbacks).toBe(0);
       expect(field("details").value).toBe("Second context");
     } finally { db.rpc = previousRpc; }
+  });
+
+  test("a result released during the next ticket commit cannot call the old form", async () => {
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void;
+    let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => name === "cockpit_request_submit"
+      ? await new Promise<Answer>(resolve => { release = resolve; }) : previousRpc(name, args));
+    function ResolveAtCommit() {
+      useLayoutEffect(() => { release({ data: { id: "fictional-old-result", state: "sending", held: false, parts: [] }, error: null }); }, []);
+      return null;
+    }
+    try {
+      await render({ presetType: "general_tech", presetDetails: "First fictional ticket", replacesTaskId: "fictional-first", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(release).toBeDefined();
+      await act(async () => {
+        root.render(h(SupabaseAuthProvider, null, h(MemoryRouter, { initialEntries: ["/requests"] },
+          h(RequestForm, { source: "requests_page", presetType: "general_tech", presetDetails: "Second fictional ticket", replacesTaskId: "fictional-second" } as any),
+          h(ResolveAtCommit))));
+      });
+      await settle();
+      expect(callbacks).toBe(0);
+      expect(field("details").value).toBe("Second fictional ticket");
+    } finally { db.rpc = previousRpc; }
+  });
+
+  test("late results require the committed ticket, account and auth generation to match", () => {
+    const old = { seatId: "fictional-seat-a", ticketId: "fictional-ticket-a", generation: 1 };
+    expect(requestViewMatches(old, { ...old })).toBe(true);
+    expect(requestViewMatches(old, { ...old, ticketId: "fictional-ticket-b" })).toBe(false);
+    expect(requestViewMatches(old, { ...old, seatId: "fictional-seat-b" })).toBe(false);
+    expect(requestViewMatches(old, { ...old, generation: 2 })).toBe(false);
   });
 
   test("a late old-ticket refusal after switching cannot start a standalone retry", async () => {

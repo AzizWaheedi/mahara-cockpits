@@ -59,6 +59,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -305,10 +306,21 @@ function Seal({
  * Ask a team: the request form (CONTRACT.md 6.4). Shared byte for byte by
  * the five cockpits; it reads the seat through each app's own taskSeat.ts.
  */
+/** A late result is safe only for the same committed seat, ticket and session. */
+export function requestViewMatches(
+  expected: { seatId: string | null; ticketId: string | null; generation: number },
+  current: { seatId: string | null; ticketId: string | null; generation: number },
+): boolean {
+  return expected.seatId === current.seatId && expected.ticketId === current.ticketId && expected.generation === current.generation;
+}
+
 export function RequestForm(props: RequestFormProps) {
   const { client, seatId } = useTaskSeat();
   const generation = useRef(0);
   const observedToken = useRef<string | null>(null);
+  const ticketId = props.replacesTaskId ?? null;
+  const committedIdentity = useRef({ seatId, ticketId });
+  useLayoutEffect(() => { committedIdentity.current = { seatId, ticketId }; }, [seatId, ticketId]);
   const [sessionEpoch, setSessionEpoch] = useState(0);
   useEffect(() => {
     if (!client) return;
@@ -324,8 +336,11 @@ export function RequestForm(props: RequestFormProps) {
     });
     return () => subscription.data.subscription.unsubscribe();
   }, [client]);
-  return <RequestFormInner key={JSON.stringify([seatId, sessionEpoch, props.replacesTaskId ?? null])}
-    {...props} stillCurrent={() => generation.current === sessionEpoch} />;
+  return <RequestFormInner key={JSON.stringify([seatId, sessionEpoch, ticketId])}
+    {...props} stillCurrent={() => requestViewMatches(
+      { seatId, ticketId, generation: sessionEpoch },
+      { ...committedIdentity.current, generation: generation.current },
+    )} />;
 }
 
 function RequestFormInner({
@@ -397,7 +412,7 @@ function RequestFormInner({
   const requestId = useRef(newRequestId());
   const inFlight = useRef(false);
   const mounted = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
