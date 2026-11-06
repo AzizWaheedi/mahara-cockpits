@@ -57,15 +57,19 @@ export const COCKPIT_SOP: Record<string, string> = {
  * maharamedia.com accounts. A re-recording replaces each file in place, so
  * these addresses stay the same.
  *
- * `howTo` holds a cockpit's silent how-to videos, one call or task each, in
+ * `howTo` holds a cockpit's how-to videos, one call or task each, in
  * "Cockpit SOPs / Team how-to videos (October 2026)": client success has the
  * onboarding call, the launch call (2026-10-24) and Money → Offers
  * (2026-11-01); the creative director has the Brand Blueprint call.
  * Client success also has four on logging (2026-11-02): money in, client
- * changes, wins, and what to log after a call.
+ * changes, wins, and what to log after a call. These are silent. Sales has
+ * the setter's day in the dialer (2026-11-06), narrated: its Drive file was
+ * replaced in place by the narrated cut, and its Wistia media is a new one.
  *
  * `sops` holds a cockpit's SOPs for one job rather than the whole day:
- * client success has "Logging money and client changes" (2026-11-02).
+ * client success has "Logging money and client changes" (2026-11-02), and
+ * sales has "The setter's day in the dialer" (2026-11-06): one queue in the
+ * Dialer all day instead of the four Slack channels.
  */
 const DRIVE_FILE = "https://drive.google.com/file/d";
 const GOOGLE_DOC = "https://docs.google.com/document/d";
@@ -109,6 +113,12 @@ export const COCKPIT_GUIDES = {
     video: `${DRIVE_FILE}/1swnauUROiAJXiJ3f-DeAHift7iHz-553/view`,
     simple: `${GOOGLE_DOC}/1-tpPls6rTKLaGMw4svWeAD6DdgRvTgBxSGEEUFE_qV4/edit`,
     deep: `${GOOGLE_DOC}/1tDDpvBjwmWiomypTpBmh5-qLMzkhYH94dsV6aJbXgyI/edit`,
+    howTo: {
+      setter: `${DRIVE_FILE}/1jXgNxiLeOhgUB1THzjx_Fvxbgzb9cyW2/view`,
+    },
+    sops: {
+      setter: `${GOOGLE_DOC}/1J0h59nnDZjSH0SwfHB8lVJG7NzB1e-cNo1FdFZjlbVg/edit`,
+    },
   },
 } satisfies Record<
   string,
@@ -270,6 +280,14 @@ export const SOP_VIDEOS = {
       url: COCKPIT_GUIDES.sales.video,
       length: "2:09",
       note: "The setter's and the closer's day, step by step",
+    },
+    setter: {
+      key: "sales-setter",
+      wistia: "meweo5l2k9",
+      title: "The setter's day in the dialer",
+      url: COCKPIT_GUIDES.sales.howTo.setter,
+      length: "11:19",
+      note: "Narrated, step by step: one queue all day, the voice note, confirmations and marks",
     },
   },
   team: {
