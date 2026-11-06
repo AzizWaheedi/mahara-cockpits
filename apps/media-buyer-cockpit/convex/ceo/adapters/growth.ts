@@ -276,8 +276,8 @@ wb_calls as (
     count(*) filter (where c.call_type='intro' and c.start_at <= now() and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_due,
     count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_scheduled,
     count(*) filter (where c.call_type='demo' and (c.booked_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_booked,
-    count(*) filter (where c.call_type='demo' and (c.start_at <= now() and c.status in ('showed','confirmed','invalid')) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_shown,
-    count(*) filter (where c.call_type='demo' and (c.start_at <= now() and c.status in ('showed','confirmed')) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_qualified,
+    count(*) filter (where c.call_type='demo' and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now())) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_shown,
+    count(*) filter (where c.call_type='demo' and (c.status='showed' or (c.status='confirmed' and c.start_at <= now())) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_qualified,
     count(*) filter (where c.call_type='demo' and c.status='invalid' and c.start_at <= now() and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_disqualified,
     count(*) filter (where c.call_type='demo' and c.status='cancelled' and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_cancelled,
     count(*) filter (where c.call_type='demo' and c.start_at <= now() and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_due,
@@ -423,8 +423,8 @@ held as (
     count(*) filter (where call_type = 'intro' and start_at <= now()) as intros_due,
     count(*) filter (where call_type = 'demo' and start_at <= now()) as demos_due,
     count(*) filter (where call_type = 'intro' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as intros_shown,
-    count(*) filter (where call_type = 'demo' and (start_at <= now() and status in ('showed', 'confirmed', 'invalid'))) as demos_shown,
-    count(*) filter (where call_type = 'demo' and (start_at <= now() and status in ('showed', 'confirmed'))) as demos_qualified,
+    count(*) filter (where call_type = 'demo' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as demos_shown,
+    count(*) filter (where call_type = 'demo' and (status = 'showed' or (status = 'confirmed' and start_at <= now()))) as demos_qualified,
     count(*) filter (where call_type = 'intro' and status = 'cancelled') as intros_cancelled,
     count(*) filter (where call_type = 'demo' and status = 'cancelled') as demos_cancelled
   from public.calls c
