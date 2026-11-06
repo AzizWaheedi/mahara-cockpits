@@ -1,7 +1,7 @@
 // The CEO kit's status colours (StatusChip, StatusDot) live here.
 import "@/components/ceo/ceo.css";
 import { ChevronRight, CircleAlert, Inbox } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
@@ -88,6 +88,7 @@ export function RequestsPage() {
   const [views, setViews] = useState<RequestsRead["views"]>([]);
   const [route, setRoute] = useState<RouteFrom | null>(null);
   const [formKey, setFormKey] = useState(0);
+  const sentRoute = useRef<{ formKey: number; ticketId: string } | null>(null);
   // Rows per view: the first 50, then 50 more a press, up to the 200 a read
   // may return (DESIGN.md, long lists).
   const [limits, setLimits] = useState<Partial<Record<RequestView, number>>>(
@@ -256,6 +257,12 @@ export function RequestsPage() {
             presetPriority={route?.priority}
             presetDueOn={route?.dueOn ?? undefined}
             replacesTaskId={route?.replacesTaskId || undefined}
+            sentViewTicketId={
+              route?.replacesTaskId ||
+              (sentRoute.current?.formKey === formKey
+                ? sentRoute.current.ticketId
+                : undefined)
+            }
             replacesIfOpen={Boolean(route?.againOf)}
             onSent={() => {
               // An old ticket is routed now (the server moved it); a request
@@ -264,6 +271,9 @@ export function RequestsPage() {
               // above goes, and "Ask for something else" starts clean.
               const first =
                 route?.againOf && route.againCanCancel ? route.againOf : null;
+              if (route?.replacesTaskId) {
+                sentRoute.current = { formKey, ticketId: route.replacesTaskId };
+              }
               setRoute(null);
               void (async () => {
                 if (first && client) {

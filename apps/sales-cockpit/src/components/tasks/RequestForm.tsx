@@ -203,6 +203,8 @@ export type RequestFormProps = {
   presetDueOn?: string;
   /** The old ClickUp form ticket this request routes (2.10). */
   replacesTaskId?: string;
+  /** Keep the sent view when a parent clears a completed ticket route. */
+  sentViewTicketId?: string;
   /**
    * A request filed again routes its old form ticket only while the ticket
    * still waits: once it is routed ("That old ticket was already routed."),
@@ -360,7 +362,11 @@ export function RequestForm(props: RequestFormProps) {
   }, [client]);
   return (
     <RequestFormInner
-      key={JSON.stringify([seatId, sessionEpoch, ticketId])}
+      key={JSON.stringify([
+        seatId,
+        sessionEpoch,
+        ticketId ?? props.sentViewTicketId,
+      ])}
       {...props}
       stillCurrent={() =>
         requestViewMatches(
