@@ -248,16 +248,19 @@ export async function submitReplacementForSeat(
 ): Promise<SubmitResult> {
   let changed = false;
   let dispatched = false;
+  let boundToken: string | null = null;
   let unsubscribe: () => void = () => {};
   try {
     const listener = client.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_OUT" || (session && session.user.id !== expectedSeatId)) changed = true;
+      if (event === "SIGNED_OUT" || (session && session.user.id !== expectedSeatId) ||
+          (event === "SIGNED_IN" && boundToken && session?.access_token !== boundToken)) changed = true;
     });
     unsubscribe = () => listener.data.subscription.unsubscribe();
     const initial = await client.auth.getSession();
     const session = initial.data.session;
     if (initial.error || !session || session.user.id !== expectedSeatId || !session.access_token || changed)
       throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
+    boundToken = session.access_token;
     const verified = await client.auth.getUser(session.access_token);
     if (verified.error || verified.data.user?.id !== expectedSeatId || changed)
       throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
@@ -266,12 +269,17 @@ export async function submitReplacementForSeat(
         current.data.session.access_token !== session.access_token || changed || !stillMounted())
       throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
     dispatched = true;
-    return await callRequests<SubmitResult>(client, "cockpit_request_submit", {
+    const result = await callRequests<SubmitResult>(client, "cockpit_request_submit", {
       p_request_id: input.requestId, p_type_key: input.typeKey,
       p_client_task_id: input.clientTaskId, p_answers: input.answers,
       p_due_on: input.dueOn, p_priority: input.priority, p_source: input.source,
       p_replaces_task_id: input.replacesTaskId ?? null,
     }, session.access_token);
+    // A response may arrive after sign-out, even when the same user signs
+    // back in before React unmounts the old view. Keep its outcome unknown
+    // to this view so it checks the original request rather than showing it.
+    if (changed || !stillMounted()) throw new RequestError(PLAIN_ERRORS.signedOut);
+    return result;
   } catch (error) {
     if (!dispatched && !(error instanceof RequestError))
       throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");

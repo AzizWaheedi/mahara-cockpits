@@ -230,7 +230,7 @@ type PendingReplacement = {
 const replacementOperations = new WeakMap<object, Map<string, Map<string, PendingReplacement>>>();
 class ReplacementBusy extends Error {}
 
-/** Join only the exact same payload; an uncertain different edit must be reviewed. */
+/** Hold an earlier submission; an uncertain different edit must be reviewed. */
 export function submitReplacementOnce(
   client: object,
   seatId: string,
@@ -255,8 +255,9 @@ export function submitReplacementOnce(
     op = { signature, requestId: body.requestId, pending: null, completed: null, mayHaveCommitted: false };
     operations.set(body.replacesTaskId, op);
   }
-  if (op.completed) return Promise.resolve(op.completed);
-  if (op.pending) return op.pending;
+  // A later mount may belong to a new session for the same user. Do not
+  // hand it an earlier session's result, even when that user ID matches.
+  if (op.completed || op.pending) return Promise.reject(new ReplacementBusy());
   const current = op;
   const pending = Promise.resolve().then(() => send({ ...snapshot, requestId: current.requestId }));
   current.pending = pending;

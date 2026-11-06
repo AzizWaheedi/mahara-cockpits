@@ -1219,7 +1219,7 @@ describe("the request form", () => {
     } finally { db.rpc = previousRpc; }
   });
 
-  test("replacement operations join exact pending payloads and retain the ID after uncertain failure", async () => {
+  test("replacement operations hold pending payloads and retain the ID after uncertain failure", async () => {
     const client = {};
     const body = { requestId: "fictional-id-one", typeKey: "card_missing", clientTaskId: "fictional-client", answers: { details: "new" }, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
     let release!: (result: any) => void;
@@ -1227,12 +1227,13 @@ describe("the request form", () => {
     const send = async (input: typeof body) => { sent.push(input.requestId); return await new Promise<any>(resolve => { release = resolve; }); };
     const first = submitReplacementOnce(client, "account-a", body, send);
     const joined = submitReplacementOnce(client, "account-a", { ...body, requestId: "fictional-id-two" }, send);
+    await expect(joined).rejects.toThrow();
     await Promise.resolve();
     expect(sent).toEqual(["fictional-id-one"]);
     await expect(submitReplacementOnce(client, "account-a", { ...body, answers: { details: "changed" } }, send)).rejects.toThrow();
     release({ id: "fictional-id-one", state: "sending", parts: [] });
-    expect((await first).id).toBe("fictional-id-one"); expect((await joined).id).toBe("fictional-id-one");
-    expect((await submitReplacementOnce(client, "account-a", { ...body, requestId: "fictional-id-three" }, send)).id).toBe("fictional-id-one");
+    expect((await first).id).toBe("fictional-id-one");
+    await expect(submitReplacementOnce(client, "account-a", { ...body, requestId: "fictional-id-three" }, send)).rejects.toThrow();
     expect(sent).toEqual(["fictional-id-one"]);
 
     const uncertainClient = {}; const attempts: string[] = [];
@@ -1293,6 +1294,29 @@ describe("the request form", () => {
     expect(rpcCalls).toBe(0);
   });
 
+  test("same-user reauthentication before an answer cannot release the old result", async () => {
+    for (const signOut of [true, false]) {
+    const body = { requestId: "fictional-auth-switch", typeKey: "card_missing", clientTaskId: "fictional-client", answers: {}, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
+    let listener: (event: string, session: any) => void = () => {};
+    let finish!: (result: Answer) => void;
+    let started!: () => void;
+    const hasStarted = new Promise<void>(resolve => { started = resolve; });
+    const session = { user: { id: "account-a" }, access_token: "fictional-token-a" };
+    const client: any = { auth: {
+      onAuthStateChange: (cb: typeof listener) => { listener = cb; return { data: { subscription: { unsubscribe() {} } } }; },
+      getSession: async () => ({ data: { session }, error: null }),
+      getUser: async () => ({ data: { user: session.user }, error: null }),
+    }, rpc: () => mockQuery(async () => { started(); return await new Promise<Answer>(resolve => { finish = resolve; }); }) };
+    const pending = submitReplacementForSeat(client, "account-a", body, () => true);
+    await hasStarted;
+    if (signOut) listener("SIGNED_OUT", null);
+    listener("SIGNED_IN", { ...session, access_token: "fictional-token-new" });
+    finish({ data: { id: "fictional-old-result", state: "sending", parts: [] }, error: null });
+    try { await pending; throw new Error("expected rejection"); }
+    catch (error) { expect(error).toBeInstanceOf(RequestError); expect((error as InstanceType<typeof RequestError>).outcome).toBe("unknown"); }
+    }
+  });
+
   test("actual Supabase fetch keeps the verified seat token if the shared session changes", async () => {
     const { createClient } = await import("@supabase/supabase-js");
     let header = "";
@@ -1316,7 +1340,7 @@ describe("the request form", () => {
     expect(reads).toBeGreaterThanOrEqual(3);
   });
 
-  test("A to B to A joins the in-flight request and only the current form receives it", async () => {
+  test("A to B to A does not expose an earlier form's in-flight result", async () => {
     const t = fake.types.find(x => x.key === "card_missing");
     if (!t) throw new Error("No fictional card type");
     t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
@@ -1339,7 +1363,8 @@ describe("the request form", () => {
       expect(attempts).toBe(1);
       release({ data: { id: "fictional-result", state: "sending", held: false, parts: [] }, error: null });
       await flush();
-      expect(firstCallback).toBe(0); expect(currentCallback).toBe(1);
+      expect(firstCallback).toBe(0); expect(currentCallback).toBe(0);
+      expect(page()).toContain("Check the original request");
     } finally { db.rpc = previousRpc; }
   });
 
@@ -1377,6 +1402,47 @@ describe("the request form", () => {
       expect(callbacks).toBe(0);
       expect(sent).toBe(1);
       expect(page()).not.toContain("fictional-old-result");
+    } finally {
+      db.rpc = prior.rpc; db.auth.getSession = prior.getSession; db.auth.getUser = prior.getUser; db.auth.onAuthStateChange = prior.onAuthStateChange;
+    }
+  });
+
+  test("same user reauthenticating cannot receive the previous session's result", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const prior = { rpc: db.rpc, getSession: db.auth.getSession, getUser: db.auth.getUser, onAuthStateChange: db.auth.onAuthStateChange };
+    const listeners = new Set<(event: string, session: any) => void>();
+    let session: any = { user: USER, access_token: "fictional-token-old" };
+    db.auth.onAuthStateChange = (listener: (event: string, session: any) => void) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    };
+    db.auth.getSession = async () => ({ data: { session }, error: null });
+    db.auth.getUser = async () => ({ data: { user: USER }, error: null });
+    let release!: (result: Answer) => void; let sent = 0; let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return prior.rpc(name, args);
+      sent++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    try {
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, replacesTaskId: "fictional-same-user-ticket", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(sent).toBe(1);
+      await act(async () => { session = null; for (const listener of [...listeners]) listener("SIGNED_OUT", null); });
+      await flush();
+      await act(async () => { session = { user: USER, access_token: "fictional-token-new" }; for (const listener of [...listeners]) listener("SIGNED_IN", session); });
+      await flush();
+      await click(button("Send request"));
+      expect(sent).toBe(1);
+      release({ data: { id: "fictional-old-session-result", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(page()).not.toContain("fictional-old-session-result");
+      expect(page()).toContain("Check the original request");
     } finally {
       db.rpc = prior.rpc; db.auth.getSession = prior.getSession; db.auth.getUser = prior.getUser; db.auth.onAuthStateChange = prior.onAuthStateChange;
     }
