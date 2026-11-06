@@ -311,7 +311,8 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
         ('demo-cancelled', 'journey', '{roas-qualified}', '2026-10-10 05:00+00'),
         ('future-shown', 'journey', '{roas-qualified}', '2026-10-10 05:00+00'),
         ('past-confirmed', 'journey', '{roas-qualified}', '2026-10-10 05:00+00'),
-        ('past-noshow', 'journey', '{roas-qualified}', '2026-10-10 05:00+00');
+        ('past-noshow', 'journey', '{roas-qualified}', '2026-10-10 05:00+00'),
+        ('past-invalid', 'journey', '{roas-unqualified}', '2026-10-10 05:00+00');
       insert into public.calls values
         ('demo-booked', 'journey', 'demo', '2026-10-11 06:00+00', '2030-01-15 08:00+00', 'confirmed', 'u2'),
         ('demo-shown', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'showed', 'u2'),
@@ -319,11 +320,12 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
         ('demo-cancelled', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'cancelled', 'u2'),
         ('future-shown', 'journey', 'demo', '2026-10-11 06:00+00', '2030-01-15 08:00+00', 'showed', 'u2'),
         ('past-confirmed', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'confirmed', 'u2'),
-        ('past-noshow', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'noshow', 'u2');
+        ('past-noshow', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'noshow', 'u2'),
+        ('past-invalid', 'journey', 'demo', '2026-10-11 06:00+00', '2026-10-14 08:00+00', 'invalid', 'u2');
     `);
     expect(adOf(payload, "journey").w7).toMatchObject({
-      leads: 6, leadsToIntro: 5, leadsToConfirmedIntro: 5,
-      leadsToProgressedDemo: 5, leadsToDemoAttended: 2,
+      leads: 7, leadsToIntro: 6, leadsToConfirmedIntro: 6,
+      leadsToProgressedDemo: 6, leadsToDemoAttended: 3,
     });
   });
 
