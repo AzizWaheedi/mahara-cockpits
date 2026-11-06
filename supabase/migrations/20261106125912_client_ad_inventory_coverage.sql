@@ -1,5 +1,5 @@
 -- Offline candidate only. There is deliberately no runtime grant, writer,
--- provider adapter, Data API exposure, budget amount, or write authorizer.
+-- provider collector, Data API exposure, budget amount, or write authorizer.
 -- Do not apply until the model and its eventual authentication are reviewed.
 CREATE SCHEMA cockpit_budget_inventory_private;
 REVOKE ALL ON SCHEMA cockpit_budget_inventory_private FROM PUBLIC, anon, authenticated, service_role;
@@ -153,3 +153,52 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION cockpit_budget_inventory_private.coverage_status(text) FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION cockpit_budget_inventory_private.bump_membership_generation() FROM PUBLIC, anon, authenticated, service_role;
+
+-- Offline evidence candidate only. Board account ties include heuristic matches,
+-- so even a fresh snapshot is not proof of ownership or complete provider
+-- pagination. This function makes no write and can never return completeness.
+-- It is SECURITY INVOKER and must not be exposed without an independent
+-- authenticated client-authorization design and privilege review.
+CREATE FUNCTION cockpit_budget_inventory_private.meta_board_evidence(p_client_key text, p_account_key text)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+  matched integer; account_at timestamptz; account_run uuid; snap_at timestamptz; snap_run uuid;
+  freshness text := 'missing'; t timestamptz := statement_timestamp();
+BEGIN
+  IF NOT coalesce((SELECT enabled FROM cockpit_budget_inventory_private.gate WHERE singleton), false) THEN
+    RETURN jsonb_build_object('state','disabled');
+  END IF;
+  -- A single exact card and no duplicate visible board links are prerequisites.
+  -- This does not establish ownership and needs an unrestricted conflict check
+  -- by a trusted server; client-filtered RLS could hide competing board rows.
+  -- Refuse without disclosing whether another client or account exists.
+  IF p_client_key IS NULL OR length(btrim(p_client_key)) = 0 OR p_client_key <> btrim(p_client_key)
+     OR p_account_key IS NULL OR p_account_key !~ '^[1-9][0-9]{4,24}$' THEN
+    RETURN jsonb_build_object('state','unavailable');
+  END IF;
+  SELECT count(*) INTO matched FROM public.cockpit_board_clients WHERE clickup_id = p_client_key;
+  IF matched <> 1 OR NOT EXISTS (
+       SELECT 1 FROM public.cockpit_board_clients WHERE clickup_id = p_client_key AND p_account_key = ANY(ad_account_ids)
+     ) OR EXISTS (
+       SELECT 1 FROM public.cockpit_board_clients WHERE clickup_id IS DISTINCT FROM p_client_key AND p_account_key = ANY(ad_account_ids)
+     ) THEN
+    RETURN jsonb_build_object('state','unavailable');
+  END IF;
+  SELECT fetched_at, run_id INTO account_at, account_run FROM public.cockpit_meta_account_state WHERE account_id=p_account_key;
+  SELECT last_read, run_id INTO snap_at, snap_run FROM public.cockpit_meta_budget_account_days
+    WHERE account_id=p_account_key AND source='snapshot' AND verified IS TRUE
+    ORDER BY last_read DESC LIMIT 1;
+  IF account_at IS NOT NULL AND snap_at IS NOT NULL THEN
+    IF account_at > t OR snap_at > t OR account_run IS NULL OR account_run IS DISTINCT FROM snap_run THEN
+      freshness := 'inconsistent';
+    ELSIF account_at < t - interval '5 minutes' OR snap_at < t - interval '5 minutes' THEN
+      freshness := 'stale';
+    ELSE
+      freshness := 'recent';
+    END IF;
+  END IF;
+  RETURN jsonb_build_object('state','incomplete', 'source','meta_board_snapshot',
+    'snapshot_freshness',freshness, 'provider_read_complete',false,
+    'reason','Board linkage and snapshot metadata do not prove ownership or a complete provider read.');
+END $$;
+REVOKE ALL ON FUNCTION cockpit_budget_inventory_private.meta_board_evidence(text,text) FROM PUBLIC, anon, authenticated, service_role;

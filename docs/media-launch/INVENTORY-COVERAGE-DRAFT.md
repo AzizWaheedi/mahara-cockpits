@@ -5,6 +5,8 @@ account importer, an editing screen, a provider collector, a spend total, or a
 budget write guard. Do not apply or activate it without independent security,
 operational and adapter review. It creates a new non-exposed schema and no
 runtime grants. It does not populate data or affect existing clients or jobs.
+The private Meta board evidence function is a disabled, read-only research
+adapter.
 
 ## Why
 
@@ -50,6 +52,41 @@ never approve an ad budget or claim a cross-platform total. The 30-day
 attestation and ownership expiry and five-minute read window are conservative
 experimental ceilings, not approved operational policy. They need review.
 
+## Meta board evidence candidate
+
+`meta_board_evidence` reads only existing board link and snapshot metadata.
+It first requires exactly one board card for the supplied client key, an exact
+numeric account link on that card, and no other board card linking that same
+account visible to the function. Board refresh chooses one tie per account,
+so absence of a duplicate board row does not establish ownership or rule out
+conflicting source mappings. A conflict or unknown link returns the same
+`unavailable` response without disclosing account details. These checks are
+not caller authorization. Before any use, a trusted server must authorize
+the caller for the client and perform a global conflict check. Review actual
+RLS and privileges: client-filtered RLS could hide other board rows and make
+the duplicate check falsely pass. Never expose this function directly to a
+client-scoped caller. No runtime
+role is granted access and the gate is disabled.
+
+For an eligible link, it labels the most recent verified snapshot and account
+state `recent`, `stale`, `inconsistent`, or `missing`, requiring matching run
+IDs and rejecting future timestamps. Matching IDs are only a filter, not
+proof the timestamps came from that run: the per-day upsert can retain the
+greatest last-read timestamp while replacing its run ID. Activity-reconstructed
+history is not accepted as a snapshot. `recent` means recently recorded
+metadata, not verified budgets for the account-local day or complete worker
+output. The five-minute boundary is an experimental ceiling.
+It always returns `incomplete` and `provider_read_complete: false`, even for a
+recent snapshot. It does not create or update inventory, coverage, or any
+provider record, return amounts or authorize actions. Board linkage can depend
+on names, so does not prove ownership; the snapshot's `verified` flag records a
+read, not proof that all required pagination, budget modes, or other platforms
+were covered. The adapter returns only a private candidate signal, never a
+complete provider read. Independent review of the real worker and exact
+account's provider responses is required before any stronger evidence claim.
+Results are transaction snapshots and can be stale immediately; they cannot
+fence or approve provider writes.
+
 ## What is still needed
 
 - A trustworthy, role-authorized way to create and review scoped attestations,
@@ -67,8 +104,9 @@ experimental ceilings, not approved operational policy. They need review.
 - Concurrency, expiration, retry, provider failure, scale and privacy review,
   plus real-provider readback before any claim about production coverage.
   Verify actual PostgreSQL simultaneous transactions, locks, deadlock handling,
-  rollback and races independently before activation. The local single-connection
-  tests do not establish concurrent behavior or validate a future verifier.
+  rollback and races independently before activation. Synthetic PostgreSQL
+  concurrency checks cover membership invalidation and isolation behavior only; they do not validate a future verifier or any
+  writer and provider race.
 - A separate decision and design for calculating amounts or blocking a write.
   A read can become stale immediately; this candidate is never an authorizer.
 

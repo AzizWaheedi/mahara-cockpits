@@ -42,11 +42,17 @@ beforeAll(async () => {
   await db.exec(
     "create role anon; create role authenticated; create role service_role;",
   );
+  // Synthetic representations of only the source columns consumed by the held adapter.
+  await db.exec(`
+    create table public.cockpit_board_clients(location_id text primary key, clickup_id text, ad_account_ids text[] not null);
+    create table public.cockpit_meta_account_state(account_id text primary key, fetched_at timestamptz not null, run_id uuid);
+    create table public.cockpit_meta_budget_account_days(account_id text not null, day date not null, source text not null, verified boolean not null, last_read timestamptz not null, run_id uuid, primary key(account_id,day));
+  `);
   await db.exec(migration);
 });
 beforeEach(async () => {
   await db.exec(
-    "truncate cockpit_budget_inventory_private.scopes cascade; truncate cockpit_budget_inventory_private.account_generations; update cockpit_budget_inventory_private.gate set enabled=false;",
+    "truncate cockpit_budget_inventory_private.scopes cascade; truncate cockpit_budget_inventory_private.account_generations; truncate public.cockpit_board_clients, public.cockpit_meta_account_state, public.cockpit_meta_budget_account_days; update cockpit_budget_inventory_private.gate set enabled=false;",
   );
 });
 afterAll(async () => {
@@ -311,4 +317,60 @@ test("rolling back a conflicting membership also rolls back the generation", asy
   await db.exec("update cockpit_budget_inventory_private.gate set enabled=true; insert into cockpit_budget_inventory_private.scopes(client_key) values ('another-example')");
   await db.exec("begin; insert into cockpit_budget_inventory_private.accounts(client_key,platform,account_key) values ('another-example','meta','123456'); rollback");
   expect((await status()).state).toBe("ready_for_attested_scope");
+});
+
+
+const metaEvidence = async (client: string, account: string) => {
+  const result = await db.query<{ e: Record<string, unknown> }>(
+    "select cockpit_budget_inventory_private.meta_board_evidence($1,$2) as e", [client, account],
+  );
+  return result.rows[0].e;
+};
+const seedBoardSnapshot = async () => {
+  await db.exec(`
+    insert into public.cockpit_board_clients values ('location-one','example-client',array['123456']);
+    insert into public.cockpit_meta_account_state values ('123456',now(),'00000000-0000-4000-8000-000000000001');
+    insert into public.cockpit_meta_budget_account_days values ('123456',current_date,'snapshot',true,now(),'00000000-0000-4000-8000-000000000001');
+  `);
+};
+test("Meta evidence remains disabled and is inaccessible to runtime roles", async () => {
+  await seedBoardSnapshot();
+  expect(await metaEvidence('example-client','123456')).toEqual({ state: 'disabled' });
+  for (const role of ['anon','authenticated','service_role']) {
+    const r = await db.query<{allowed:boolean}>("select has_function_privilege($1, 'cockpit_budget_inventory_private.meta_board_evidence(text,text)', 'execute') as allowed",[role]);
+    expect(r.rows[0].allowed).toBe(false);
+  }
+});
+test("Meta snapshot is evidence of recency only, never provider completeness", async () => {
+  await seedBoardSnapshot();
+  await db.exec("update cockpit_budget_inventory_private.gate set enabled=true");
+  const evidence = await metaEvidence('example-client','123456');
+  expect(evidence).toMatchObject({state:'incomplete',snapshot_freshness:'recent',provider_read_complete:false});
+  expect(JSON.stringify(evidence)).not.toContain('123456');
+  expect((await db.query<{n:number}>("select count(*)::int n from cockpit_budget_inventory_private.coverage")).rows[0].n).toBe(0);
+});
+test("Meta evidence refuses cross-client, unlinked, duplicate and shared board mappings", async () => {
+  await seedBoardSnapshot();
+  await db.exec("update cockpit_budget_inventory_private.gate set enabled=true; insert into public.cockpit_board_clients values ('location-two','other-client',array['999999'])");
+  expect(await metaEvidence('other-client','123456')).toEqual({state:'unavailable'});
+  expect(await metaEvidence('example-client','999999')).toEqual({state:'unavailable'});
+  expect(await metaEvidence('example-client','act_123456')).toEqual({state:'unavailable'});
+  await db.exec("update public.cockpit_board_clients set ad_account_ids=array['123456'] where clickup_id='other-client'");
+  expect(await metaEvidence('example-client','123456')).toEqual({state:'unavailable'});
+  expect(await metaEvidence('other-client','123456')).toEqual({state:'unavailable'});
+  await db.exec("update public.cockpit_board_clients set clickup_id='example-client' where location_id='location-two'");
+  expect(await metaEvidence('example-client','123456')).toEqual({state:'unavailable'});
+});
+test("Meta evidence rejects stale, future, missing, history-only and mismatched snapshots", async () => {
+  await seedBoardSnapshot();
+  await db.exec("update cockpit_budget_inventory_private.gate set enabled=true; update public.cockpit_meta_budget_account_days set last_read=now()-interval '6 minutes'");
+  expect(await metaEvidence('example-client','123456')).toMatchObject({state:'incomplete',snapshot_freshness:'stale',provider_read_complete:false});
+  await db.exec("update public.cockpit_meta_budget_account_days set last_read=now()+interval '1 minute'");
+  expect((await metaEvidence('example-client','123456')).snapshot_freshness).toBe('inconsistent');
+  await db.exec("update public.cockpit_meta_budget_account_days set last_read=now(),run_id='00000000-0000-4000-8000-000000000002'");
+  expect((await metaEvidence('example-client','123456')).snapshot_freshness).toBe('inconsistent');
+  await db.exec("update public.cockpit_meta_budget_account_days set source='activity'");
+  expect((await metaEvidence('example-client','123456')).snapshot_freshness).toBe('missing');
+  await db.exec("delete from public.cockpit_meta_account_state");
+  expect((await metaEvidence('example-client','123456')).snapshot_freshness).toBe('missing');
 });
