@@ -25,10 +25,13 @@ import {
 /** A refusal or failure, in the server's words. */
 export class RequestError extends Error {
   code: string | null;
-  constructor(message: string, code: string | null = null) {
+  /** Whether this particular attempt was refused inside Postgres or never sent. */
+  outcome: "unknown" | "rejected" | "not_sent";
+  constructor(message: string, code: string | null = null, outcome: RequestError["outcome"] = "unknown") {
     super(message);
     this.name = "RequestError";
     this.code = code;
+    this.outcome = outcome;
   }
 }
 
@@ -106,13 +109,22 @@ export async function callRequests<T>(
   client: SupabaseClient,
   name: string,
   args: Record<string, unknown> = {},
+  /** Bound bearer for a single request, never logged or stored. */
+  boundToken?: string,
 ): Promise<T> {
   let answer: RpcAnswer;
   try {
-    answer = (await client.rpc(name, args)) as RpcAnswer;
+    const query = client.rpc(name, args);
+    if (boundToken) {
+      if (typeof query.setHeader !== "function")
+        throw new RequestError(PLAIN_ERRORS.other, null, "not_sent");
+      query.setHeader("Authorization", `Bearer ${boundToken}`);
+    }
+    answer = (await query) as RpcAnswer;
   } catch (e) {
     // The raw text goes to the console for whoever debugs it, not the screen.
-    console.warn(`${name} could not reach the database`, e);
+    if (e instanceof RequestError && e.outcome === "not_sent") throw e;
+    if (!boundToken) console.warn(`${name} could not reach the database`, e);
     throw new RequestError(PLAIN_ERRORS.unreachable);
   }
   if (answer.error) {
@@ -127,8 +139,8 @@ export async function callRequests<T>(
       message &&
       !RAW_DATABASE.test(message)
     )
-      throw new RequestError(message, code);
-    console.warn(`${name} refused`, code, message);
+      throw new RequestError(message, code, ["P0001", "P0002", "22023", "42501", "55000"].includes(code) ? "rejected" : "unknown");
+    if (!boundToken) console.warn(`${name} refused`, code, message);
     throw new RequestError(plainError(code, message), code);
   }
   if (answer.data === null || answer.data === undefined)
@@ -224,6 +236,58 @@ export const submitRequest = (client: SupabaseClient, input: SubmitInput) =>
     p_source: input.source,
     p_replaces_task_id: input.replacesTaskId ?? null,
   });
+
+/** Bind a replacement to the authenticated seat shown when Send was pressed.
+ * An auth change may finish an already-sent request, but it cannot make the
+ * shared client silently send it as a different person. */
+export async function submitReplacementForSeat(
+  client: SupabaseClient,
+  expectedSeatId: string,
+  input: SubmitInput,
+  stillMounted: () => boolean,
+): Promise<SubmitResult> {
+  let changed = false;
+  let dispatched = false;
+  let boundToken: string | null = null;
+  let unsubscribe: () => void = () => {};
+  try {
+    const listener = client.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || (session && session.user.id !== expectedSeatId) ||
+          (event === "SIGNED_IN" && boundToken && session?.access_token !== boundToken)) changed = true;
+    });
+    unsubscribe = () => listener.data.subscription.unsubscribe();
+    const initial = await client.auth.getSession();
+    const session = initial.data.session;
+    if (initial.error || !session || session.user.id !== expectedSeatId || !session.access_token || changed)
+      throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
+    boundToken = session.access_token;
+    const verified = await client.auth.getUser(session.access_token);
+    if (verified.error || verified.data.user?.id !== expectedSeatId || changed)
+      throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
+    const current = await client.auth.getSession();
+    if (current.error || current.data.session?.user.id !== expectedSeatId ||
+        current.data.session.access_token !== session.access_token || changed || !stillMounted())
+      throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
+    dispatched = true;
+    const result = await callRequests<SubmitResult>(client, "cockpit_request_submit", {
+      p_request_id: input.requestId, p_type_key: input.typeKey,
+      p_client_task_id: input.clientTaskId, p_answers: input.answers,
+      p_due_on: input.dueOn, p_priority: input.priority, p_source: input.source,
+      p_replaces_task_id: input.replacesTaskId ?? null,
+    }, session.access_token);
+    // A response may arrive after sign-out, even when the same user signs
+    // back in before React unmounts the old view. Keep its outcome unknown
+    // to this view so it checks the original request rather than showing it.
+    if (changed || !stillMounted()) throw new RequestError(PLAIN_ERRORS.signedOut);
+    return result;
+  } catch (error) {
+    if (!dispatched && !(error instanceof RequestError))
+      throw new RequestError(PLAIN_ERRORS.signedOut, null, "not_sent");
+    throw error;
+  } finally {
+    unsubscribe();
+  }
+}
 
 /** Cancels a request that has not reached ClickUp. */
 export const cancelRequest = (
