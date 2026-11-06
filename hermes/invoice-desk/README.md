@@ -26,6 +26,17 @@ audit log records who. Nothing is sent to the client.
    finds that plan instead of making a second one. A key that may not create
    plans, or a plan that does not match the invoice, fails the invoice with a
    sentence; Whop down leaves it for the next run.
+   Ecom (the main link, `desk/ecom.py`) and Tap (`desk/tap.py`) follow the same
+   discipline in KWD at the day's USD/KWD rate, with two more rules (both
+   since 5 Nov 2026):
+   - after an unknown outcome, the invoice an earlier try made is kept when
+     only the day's rate moved (within 3%), recording its KWD amount and the
+     rate it implies; anything further off fails with "Tell Muhammed before
+     trying again or switching", because switching would leave that link open;
+   - a link already recorded on the invoice (it failed at a later step, then
+     Try again) is read back first (`GET /invoices/{id}` for Ecom, where a
+     deleted invoice answers 404). Expired, cancelled or deleted fails with
+     "Cancel this invoice and make a new one", so a dead link never goes out.
 4. It finds the folder: the one saved for the client, else exactly one Drive
    folder named `Mahara - <client>`, else `<client> - Workspace`. A single exact
    match is saved for next time. None, or two, fails the invoice with a

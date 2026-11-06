@@ -6,7 +6,11 @@ import {
   ContentSkeleton,
   RouteSkeleton,
 } from "../src/components/RouteSkeleton";
+import { AdsSkeleton } from "../src/components/skeletons/AdsSkeleton";
+import { CeoSkeleton } from "../src/components/skeletons/CeoSkeleton";
+import { ClientsSkeleton } from "../src/components/skeletons/ClientsSkeleton";
 import { PAGE_SKELETONS } from "../src/components/skeletons/routes";
+import { TodaySkeleton } from "../src/components/skeletons/TodaySkeleton";
 
 const LABEL = "Loading the cockpit";
 
@@ -122,5 +126,30 @@ describe("RouteSkeleton", () => {
     expect(html.indexOf('classList.toggle("dark"')).toBeLessThan(
       html.indexOf('type="module"'),
     );
+  });
+});
+
+describe("remembered page skeletons", () => {
+  const PICTURES: { name: string; html: () => string }[] = [
+    { name: "today", html: () => renderToStaticMarkup(<TodaySkeleton />) },
+    { name: "ads", html: () => renderToStaticMarkup(<AdsSkeleton />) },
+    { name: "clients", html: () => renderToStaticMarkup(<ClientsSkeleton />) },
+    { name: "ceo", html: () => renderToStaticMarkup(<CeoSkeleton />) },
+  ];
+
+  test("a first visit draws the static page, not a replay", () => {
+    for (const picture of PICTURES) {
+      const html = picture.html();
+      expect(html).toContain(`data-page-skeleton="${picture.name}"`);
+      expect(html).not.toContain("data-remembered");
+    }
+  });
+
+  test("the signed-in layout records each page's shape", () => {
+    const source = readFileSync(
+      new URL("../src/components/AppLayout.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("<LayoutRecorder");
   });
 });

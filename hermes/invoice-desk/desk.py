@@ -67,10 +67,19 @@ def ecom_doctor(cfg: Config) -> bool:
         return line(False, "ECOM_LIVE_API_TOKEN or ECOM_LIVE_MID is missing")
     try:
         api = Ecom(cfg.ecom_token, cfg.ecom_mid)
-        http.get_json(f"{api.api}?page=1&take=1", headers=api.headers)
-        return line(True, "Ecom live invoice list is readable (read-only)")
+        rows = (http.get_json(f"{api.api}?page=1&take=1", headers=api.headers) or {}).get("data") or []
     except Exception as exc:
         return line(False, f"Ecom invoice list failed: {http.scrub(exc)[:160]}")
+    if not rows:
+        return line(True, "Ecom live invoice list is readable (read-only); no invoice yet to read back")
+    try:
+        # The read a recorded link gets before it is printed again.
+        one = api.get(str(rows[0].get("id") or ""))
+        if not one or one.get("id") != rows[0].get("id"):
+            return line(False, "Ecom did not read back the newest invoice by its id")
+        return line(True, "Ecom live invoice list and one invoice read back by id (read-only)")
+    except Exception as exc:
+        return line(False, f"Ecom invoice read failed: {http.scrub(exc)[:160]}")
 
 
 def tap_doctor(cfg: Config) -> bool:

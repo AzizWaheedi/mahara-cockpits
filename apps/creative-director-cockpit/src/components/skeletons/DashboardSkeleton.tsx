@@ -11,6 +11,7 @@ import {
   Trophy,
 } from "lucide-react";
 import type { ElementType, ReactNode } from "react";
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export const DASHBOARD_SKELETON_PATHS = ["/dashboard"];
@@ -288,7 +289,7 @@ export function CreativePerformanceSectionSkeleton() {
  * the header, the parts strip, the morning, scripting, videos and
  * touchpoints, so nothing moves when the snapshot arrives.
  */
-export function DashboardSkeleton() {
+function DashboardSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -478,3 +479,8 @@ export function DashboardSkeleton() {
     </div>
   );
 }
+
+export const DashboardSkeleton = rememberedSkeleton(
+  "dashboard",
+  DashboardSkeletonStatic,
+);

@@ -1,5 +1,6 @@
 import { readHeldHeight } from "@/components/HeldHeight";
 import { PageHeader, SectionCard, StatTile } from "@/components/kit";
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -138,7 +139,7 @@ export function RequestsSectionSkeleton({
   );
 }
 
-export function TodaySkeleton() {
+function TodaySkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -298,3 +299,5 @@ export function TodaySkeleton() {
     </div>
   );
 }
+
+export const TodaySkeleton = rememberedSkeleton("today", TodaySkeletonStatic);

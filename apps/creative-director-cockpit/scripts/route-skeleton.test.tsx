@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { createElement, type ReactElement } from "react";
+import { type ComponentType, createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import {
   ContentSkeleton,
   RouteSkeleton,
 } from "../src/components/RouteSkeleton";
+import { ClientDatabaseSkeleton } from "../src/components/skeletons/ClientDatabaseSkeleton";
+import { DashboardSkeleton } from "../src/components/skeletons/DashboardSkeleton";
 import { PAGE_SKELETONS } from "../src/components/skeletons/routes";
 
 /**
@@ -107,6 +109,31 @@ describe("ContentSkeleton", () => {
       expect(count(html, 'role="status"')).toBe(1);
       expect(count(html, 'aria-busy="true"')).toBe(1);
     });
+  });
+});
+
+describe("remembered layout", () => {
+  const REMEMBERED: [string, ComponentType][] = [
+    ["dashboard", DashboardSkeleton],
+    ["clients", ClientDatabaseSkeleton],
+  ];
+
+  test("each page skeleton draws its own picture with no remembered record", () => {
+    for (const [name, Skeleton] of REMEMBERED) {
+      const html = renderToStaticMarkup(createElement(Skeleton));
+
+      expect(html).toContain(`data-page-skeleton="${name}"`);
+      expect(html).not.toContain("data-remembered");
+    }
+  });
+
+  test("the layout records the settled shape of each page", () => {
+    const source = readFileSync(
+      new URL("../src/components/AppLayout.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("<LayoutRecorder");
   });
 });
 

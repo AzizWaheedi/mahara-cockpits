@@ -13,6 +13,7 @@ import { HermesChat } from "./HermesChat";
 import { useLaunchNotices } from "./launch/ClientAlerts";
 import { MobileTabBar } from "./MobileTabBar";
 import { OfflineBanner } from "./OfflineBanner";
+import { LayoutRecorder } from "./RememberedSkeleton";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { AlertsBell } from "./tasks/AlertsBell";
 import { TaskFocusHost } from "./tasks/TaskFocus";
@@ -34,7 +35,7 @@ function LayoutContent() {
   // CEO seats; everyone else's bell carries task alerts only.
   const launchNotices = useLaunchNotices();
   const outlet = useOutlet();
-  const location = useLocation();
+  const { pathname } = useLocation();
   const reduced = useReducedMotion();
   const { open, isMobile } = useSidebar();
   const inset = useRef<HTMLDivElement>(null);
@@ -47,7 +48,7 @@ function LayoutContent() {
       try {
         const { error } = await client.rpc("cockpit_submit_issue_report", {
           p_app: "media-buyer",
-          p_page: location.pathname,
+          p_page: pathname,
           // The boundary sends { title, detail }; reading `message` filed
           // every crash as "App error" with no page or stack (2026-10-13).
           p_text: `${r?.title ?? ""}\n${r?.detail ?? ""}`.trim() || "App error",
@@ -58,7 +59,7 @@ function LayoutContent() {
         console.error("Failed to report issue:", err);
       }
     },
-    [client, location.pathname],
+    [client, pathname],
   );
   useLayoutEffect(() => {
     if (previousOpen.current === open) return;
@@ -81,6 +82,7 @@ function LayoutContent() {
   }, [open, isMobile, reduced]);
   return (
     <>
+      <LayoutRecorder pathname={pathname} />
       <AppSidebar />
       <SidebarInset ref={inset}>
         {/* No top bar: the rail holds the navigation, the theme and the
@@ -95,7 +97,7 @@ function LayoutContent() {
           <RouteErrorBoundary report={handleReport}>
             <AnimatePresence initial={false} mode="wait">
               <motion.div
-                key={location.pathname}
+                key={pathname}
                 initial={{ opacity: 0, y: reduced ? 0 : 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{
