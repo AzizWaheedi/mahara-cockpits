@@ -621,5 +621,116 @@ class TestShipFirstRelease(unittest.TestCase):
         self.assertFalse(self.verify(evidence, original)[0])
 
 
+class TestScopedReadiness(unittest.TestCase):
+    def test_choose_scope_own_app_file_is_app(self):
+        self.assertEqual(
+            vcr.choose_scope("media-buyer", ["apps/media-buyer-cockpit/src/a.tsx"]),
+            ("app", []),
+        )
+
+    def test_choose_scope_own_app_with_docs_and_root_markdown_is_app(self):
+        changed = [
+            "apps/media-buyer-cockpit/src/a.tsx",
+            "docs/x.md",
+            "README.md",
+        ]
+        self.assertEqual(vcr.choose_scope("media-buyer", changed), ("app", []))
+
+    def test_choose_scope_other_app_only_is_app(self):
+        self.assertEqual(
+            vcr.choose_scope("media-buyer", ["apps/sales-cockpit/src/b.ts"]),
+            ("app", []),
+        )
+
+    def test_choose_scope_empty_change_list_is_app(self):
+        self.assertEqual(vcr.choose_scope("media-buyer", []), ("app", []))
+
+    def test_choose_scope_shared_paths_force_full(self):
+        for path in [
+            "supabase/migrations/1.sql",
+            "scripts/ship.sh",
+            "package.json",
+            "bun.lock",
+        ]:
+            with self.subTest(path=path):
+                scope, reasons = vcr.choose_scope("media-buyer", [path])
+                self.assertEqual(scope, "full")
+                self.assertIn(path, reasons)
+
+    def test_choose_scope_unknown_app_is_full(self):
+        scope, reasons = vcr.choose_scope("foo", [])
+        self.assertEqual(scope, "full")
+        self.assertTrue(reasons)
+
+    def test_select_tests_full_returns_all_suites(self):
+        self.assertEqual(vcr.select_tests("media-buyer", "full"), vcr.RELEVANT_TEST_FILES)
+
+    def test_select_tests_app_keeps_own_shared_and_cross_app_suites_in_order(self):
+        own_prefix = "apps/media-buyer-cockpit/"
+        other_app = [
+            tf for tf in vcr.RELEVANT_TEST_FILES
+            if tf.startswith("apps/") and not tf.startswith(own_prefix)
+        ]
+        cross_app = other_app[:2]
+        self.assertEqual(len(cross_app), 2, "fixture needs two cross-app suites")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for tf in other_app:
+                path = root / tf
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    "media-buyer-cockpit" if tf in cross_app else "nothing",
+                    encoding="utf-8",
+                )
+            selected = vcr.select_tests("media-buyer", "app", root)
+
+        expected = [
+            tf for tf in vcr.RELEVANT_TEST_FILES
+            if not tf.startswith("apps/") or tf.startswith(own_prefix) or tf in cross_app
+        ]
+        self.assertEqual(selected, expected, "selection must keep the original order")
+        for tf in vcr.RELEVANT_TEST_FILES:
+            if not tf.startswith("apps/") or tf.startswith(own_prefix):
+                self.assertIn(tf, selected)
+            elif tf in cross_app:
+                self.assertIn(tf, selected)
+            else:
+                self.assertNotIn(tf, selected, f"{tf} tests another app and must drop")
+
+    def test_select_tests_app_without_repo_root_keeps_every_suite(self):
+        self.assertEqual(
+            vcr.select_tests("media-buyer", "app", None),
+            vcr.RELEVANT_TEST_FILES,
+        )
+
+    def test_select_tests_app_keeps_other_app_suite_when_file_is_missing(self):
+        own_prefix = "apps/media-buyer-cockpit/"
+        other_app = [
+            tf for tf in vcr.RELEVANT_TEST_FILES
+            if tf.startswith("apps/") and not tf.startswith(own_prefix)
+        ]
+        missing = other_app[0]
+        present = other_app[1:]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for tf in present:
+                path = root / tf
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("nothing", encoding="utf-8")
+            selected = vcr.select_tests("media-buyer", "app", root)
+
+        self.assertIn(missing, selected, "an unreadable cross-app suite must be kept")
+        for tf in present:
+            self.assertNotIn(tf, selected)
+
+    def test_resolve_scope_invalid_base_falls_back_to_full(self):
+        scope, reasons, changed = vcr.resolve_scope(Path("."), "media-buyer", "abc")
+        self.assertEqual(scope, "full")
+        self.assertEqual(reasons, ["production commit unknown"])
+        self.assertEqual(changed, [])
+
+
 if __name__ == "__main__":
     unittest.main()
