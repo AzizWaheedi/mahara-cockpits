@@ -1,5 +1,6 @@
 -- OFFLINE PROTOTYPE ONLY. Not a migration; do not apply to a live database.
-ALTER TABLE public.cockpit_request_types ADD COLUMN retained_context_policy text NOT NULL DEFAULT 'legacy' CHECK (retained_context_policy IN ('legacy','retained_v1')), ADD COLUMN retained_context_ever_enabled boolean NOT NULL DEFAULT false;
+ALTER TABLE public.cockpit_request_types ADD COLUMN retained_context_policy text NOT NULL DEFAULT 'legacy' CHECK (retained_context_policy IN ('legacy','retained_v1')), ADD COLUMN retained_context_ever_enabled boolean NOT NULL DEFAULT false, ADD COLUMN legacy_snapshot_cutoff integer NOT NULL DEFAULT 0 CHECK (legacy_snapshot_cutoff >= 0);
+UPDATE public.cockpit_request_types SET legacy_snapshot_cutoff=version;
 
 CREATE OR REPLACE FUNCTION public.cockpit_request_plan(p_type public.cockpit_request_types, p_request uuid, p_client_task text,
   p_client_name text, p_answers jsonb, p_due date, p_priority text, p_requester_label text, p_replaces text)
@@ -112,6 +113,9 @@ DECLARE t public.cockpit_request_types; v_row jsonb;
 BEGIN
   SELECT v."row" INTO v_row FROM public.cockpit_request_type_versions v WHERE v.key = p_key AND v.version = p_version;
   IF v_row IS NOT NULL THEN
+    IF NOT (v_row ? 'retained_context_policy') AND p_key IN ('card_missing','whatsapp_connection') AND p_version > coalesce((SELECT legacy_snapshot_cutoff FROM public.cockpit_request_types WHERE key=p_key),0) THEN
+      RAISE EXCEPTION 'The saved request policy is missing. Review before replay.' USING ERRCODE = '55000';
+    END IF;
     IF v_row ? 'retained_context_policy' AND (jsonb_typeof(v_row->'retained_context_policy') IS DISTINCT FROM 'string' OR v_row->>'retained_context_policy' NOT IN ('legacy','retained_v1')) THEN
       RAISE EXCEPTION 'The saved request policy is invalid. Review before replay.' USING ERRCODE = '55000';
     END IF;
@@ -191,6 +195,9 @@ BEGIN
         END IF;
       END IF;
     END LOOP;
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.legacy_snapshot_cutoff IS DISTINCT FROM OLD.legacy_snapshot_cutoff THEN
+    RAISE EXCEPTION 'The legacy snapshot cutoff is immutable.' USING ERRCODE='22023';
   END IF;
   IF TG_OP = 'UPDATE' THEN
     NEW.retained_context_ever_enabled := OLD.retained_context_ever_enabled OR NEW.retained_context_ever_enabled OR NEW.retained_context_policy = 'retained_v1';
@@ -335,6 +342,16 @@ BEGIN
     SELECT * INTO t FROM public.cockpit_request_types WHERE key = p_type_key FOR SHARE;
   END IF;
   IF t.key IS NULL THEN RAISE EXCEPTION 'That request type does not exist. Reload the form.' USING ERRCODE = '22023'; END IF;
+  IF p_policy_guard = 'retained_v1' THEN
+    SELECT * INTO v_existing FROM public.cockpit_requests WHERE id=p_request_id AND requester_member_id::text=v_seat->>'memberId';
+    IF v_existing.id IS NOT NULL THEN
+      IF v_existing.type_key IS DISTINCT FROM p_type_key OR v_existing.type_version IS DISTINCT FROM p_expected_version OR (public.cockpit_request_type_at(v_existing.type_key,v_existing.type_version)).retained_context_policy IS DISTINCT FROM 'retained_v1' OR jsonb_typeof(v_answers) IS DISTINCT FROM 'object' OR octet_length(v_answers::text) > 32768 OR v_existing.content_hash IS DISTINCT FROM public.cockpit_request_hash(p_type_key,p_client_task_id,v_answers,coalesce(p_due_on,v_existing.due_on),coalesce(nullif(btrim(p_priority),''),v_existing.priority),p_replaces_task_id) THEN
+        RAISE EXCEPTION 'This request was already sent with other answers. Reload the form and send again.' USING ERRCODE='22023';
+      END IF;
+      SELECT coalesce(jsonb_agg(public.cockpit_request_part_row(p, v_seat) ORDER BY p.created_at, public.cockpit_request_part_rank(v_existing.type_key,p.part),p.part),'[]'::jsonb) INTO v_parts FROM public.cockpit_request_parts p WHERE p.request_id=v_existing.id;
+      RETURN jsonb_build_object('id',v_existing.id,'state',v_existing.state,'reused',true,'duplicateOf',NULL,'note',CASE WHEN public.cockpit_request_held(v_existing) THEN v_gate->>'note' END,'held',public.cockpit_request_held(v_existing),'parts',v_parts);
+    END IF;
+  END IF;
   IF NOT t.enabled THEN
     RAISE EXCEPTION 'This request type is turned off. Pick another or ask the systems manager.' USING ERRCODE = '22023';
   END IF;
