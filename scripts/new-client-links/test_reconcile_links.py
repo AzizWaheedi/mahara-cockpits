@@ -20,7 +20,10 @@ def fixture():
                        "parents": [] if name == "folderLink" else ["fake_folder"]}
     return {"complete_task_fields": True, "source_task_id": "test123",
             "source_execution_id": "a" * 32,
-            "task": {"id": "test123", "date_updated": "100", "custom_fields": [{"id": "unrelated", "value": [1, 2]}]},
+            "task": {"id": "test123", "date_updated": "100", "custom_fields": [
+                {"id": "unrelated", "value": [1, 2]},
+                *[{"id": "synthetic_" + name} for name in r.FIELDS],
+            ]},
             "make_output": {"success": True, **urls}, "drive_metadata": files,
             "field_schema": {name: {"id": "synthetic_" + name, "type": "url"} for name in r.FIELDS}}
 
@@ -33,18 +36,21 @@ class ReconciliationTests(unittest.TestCase):
         self.assertTrue(r.check(p, s["task"], "before")["verified"])
         done = copy.deepcopy(s["task"])
         done["date_updated"] = "101"
-        done["custom_fields"] += [{"id": s["field_schema"][k]["id"], "value": v} for k, v in p["changes"].items()]
+        for field in done["custom_fields"]:
+            for name, value in p["changes"].items():
+                if field["id"] == s["field_schema"][name]["id"]:
+                    field["value"] = value
         self.assertTrue(r.check(p, done, "after")["verified"])
         self.assertEqual(r.create_plan({**s, "task": done})["changes"], {})
 
     def test_different_existing_value_refuses(self):
         s = fixture()
-        s["task"]["custom_fields"].append({"id": s["field_schema"]["folderLink"]["id"], "value": "https://different.example/"})
+        next(f for f in s["task"]["custom_fields"] if f["id"] == s["field_schema"]["folderLink"]["id"])["value"] = "https://different.example/"
         with self.assertRaises(r.Refusal): r.create_plan(s)
 
     def test_same_existing_value_is_not_changed(self):
         s = fixture()
-        s["task"]["custom_fields"].append({"id": s["field_schema"]["folderLink"]["id"], "value": s["make_output"]["folderLink"]})
+        next(f for f in s["task"]["custom_fields"] if f["id"] == s["field_schema"]["folderLink"]["id"])["value"] = s["make_output"]["folderLink"]
         self.assertNotIn("folderLink", r.create_plan(s)["changes"])
 
     def test_concurrent_change_refuses_before(self):
@@ -52,8 +58,26 @@ class ReconciliationTests(unittest.TestCase):
         current["date_updated"] = "101"
         with self.assertRaises(r.Refusal): r.check(p, current, "before")
         current["date_updated"] = "100"
-        current["custom_fields"].append({"id": s["field_schema"]["folderLink"]["id"], "value": "different"})
+        next(f for f in current["custom_fields"] if f["id"] == s["field_schema"]["folderLink"]["id"])["value"] = "different"
         with self.assertRaises(r.Refusal): r.check(p, current, "before")
+
+    def test_omitted_field_is_not_assumed_unset(self):
+        for name in r.FIELDS:
+            s = fixture()
+            plan = r.create_plan(s)
+            s["task"]["custom_fields"] = [f for f in s["task"]["custom_fields"] if f["id"] != s["field_schema"][name]["id"]]
+            with self.subTest(field=name, phase="plan"), self.assertRaises(r.Refusal):
+                r.create_plan(s)
+            for phase in ("before", "after"):
+                with self.subTest(field=name, phase=phase), self.assertRaises(r.Refusal):
+                    r.check(plan, s["task"], phase)
+
+    def test_present_field_with_null_or_empty_value_is_unset(self):
+        for empty in (None, ""):
+            s = fixture()
+            target = next(f for f in s["task"]["custom_fields"] if f["id"] == s["field_schema"]["folderLink"]["id"])
+            target["value"] = empty
+            self.assertEqual(len(r.create_plan(s)["changes"]), 4)
 
     def test_incomplete_after_refuses(self):
         s = fixture(); p = r.create_plan(s)

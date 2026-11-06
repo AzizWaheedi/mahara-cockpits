@@ -57,7 +57,11 @@ def card_fields(task, ids):
         if field["id"] in ids.values() and value is not None and not isinstance(value, str):
             raise Refusal("Unexpected custom field value type")
         values[field["id"]] = value or None
-    return {name: values.get(field_id) for name, field_id in ids.items()}
+    # An omitted field may be inapplicable, not empty. Require each target
+    # field object to be present even when its value is null or omitted.
+    if any(field_id not in values for field_id in ids.values()):
+        raise Refusal("A target custom field is missing from the task response")
+    return {name: values[field_id] for name, field_id in ids.items()}
 
 
 def file_id(link, name):

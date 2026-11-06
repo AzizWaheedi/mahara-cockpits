@@ -30,7 +30,9 @@ supplied locally. JSON keys are exact and no messages or client details should
 be printed. Use the complete current ClickUp task response, including all
 custom fields and `date_updated`. Confirm completeness separately before
 setting `complete_task_fields` to `true`; a partial response is not evidence
-that a value is absent.
+that a value is absent. All four target field objects must also be present in
+the task response: an omitted object can mean the field does not apply. An
+object without a `value`, or with a null or empty value, is treated as unset.
 
 ```json
 {
