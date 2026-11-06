@@ -59,6 +59,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -305,7 +306,45 @@ function Seal({
  * Ask a team: the request form (CONTRACT.md 6.4). Shared byte for byte by
  * the five cockpits; it reads the seat through each app's own taskSeat.ts.
  */
-export function RequestForm({
+/** A late result is safe only for the same committed seat, ticket and session. */
+export function requestViewMatches(
+  expected: { seatId: string | null; ticketId: string | null; generation: number },
+  current: { seatId: string | null; ticketId: string | null; generation: number },
+): boolean {
+  return expected.seatId === current.seatId && expected.ticketId === current.ticketId && expected.generation === current.generation;
+}
+
+export function RequestForm(props: RequestFormProps) {
+  const { client, seatId } = useTaskSeat();
+  const generation = useRef(0);
+  const observedToken = useRef<string | null>(null);
+  const ticketId = props.replacesTaskId ?? null;
+  const committedIdentity = useRef({ seatId, ticketId });
+  useLayoutEffect(() => { committedIdentity.current = { seatId, ticketId }; }, [seatId, ticketId]);
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  useEffect(() => {
+    if (!client) return;
+    const subscription = client.auth.onAuthStateChange((event, session) => {
+      const token = session?.access_token ?? null;
+      if (event === "SIGNED_OUT" || (event === "SIGNED_IN" && (!token || token !== observedToken.current))) {
+        generation.current += 1;
+        setSessionEpoch(generation.current);
+      }
+      if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED" || event === "SIGNED_IN" || event === "SIGNED_OUT") {
+        observedToken.current = token;
+      }
+    });
+    return () => subscription.data.subscription.unsubscribe();
+  }, [client]);
+  return <RequestFormInner key={JSON.stringify([seatId, sessionEpoch, ticketId])}
+    {...props} stillCurrent={() => requestViewMatches(
+      { seatId, ticketId, generation: sessionEpoch },
+      { ...committedIdentity.current, generation: generation.current },
+    )} />;
+}
+
+function RequestFormInner({
+  stillCurrent,
   source,
   presetClient,
   presetType,
@@ -317,7 +356,7 @@ export function RequestForm({
   replacesIfOpen = false,
   compact = false,
   onSent,
-}: RequestFormProps) {
+}: RequestFormProps & { stillCurrent: () => boolean }) {
   const seat = useTaskSeat();
   const client = seat.client;
   const [types, setTypes] = useState<Load<TypesRead>>({ status: "loading" });
@@ -372,6 +411,11 @@ export function RequestForm({
   // One id per request: a retry of the same press reuses it (2.5 step 3).
   const requestId = useRef(newRequestId());
   const inFlight = useRef(false);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const formRef = useRef<HTMLDivElement>(null);
   const plateRef = useRef<HTMLHeadingElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -740,6 +784,7 @@ export function RequestForm({
       try {
         result = await submitRequest(client, body);
       } catch (e) {
+        if (!mounted.current || !stillCurrent()) return;
         // Filed again, and its old form ticket was routed meanwhile: the
         // server wrote nothing, so the same request id goes on its own.
         if (
@@ -751,6 +796,7 @@ export function RequestForm({
         alone = true;
         result = await submitRequest(client, { ...body, replacesTaskId: null });
       }
+      if (!mounted.current || !stillCurrent()) return;
       if (result.state === "duplicate") {
         focusNext.current = "dup";
         setDuplicate(result);
@@ -766,6 +812,7 @@ export function RequestForm({
         onSent?.(result);
       }
     } catch (e) {
+      if (!mounted.current || !stillCurrent()) return;
       const words = errorWords(e);
       const key = fieldOfSentence(type, words);
       if (key) {
@@ -774,7 +821,7 @@ export function RequestForm({
       } else setFormError(words);
     } finally {
       inFlight.current = false;
-      setSending(false);
+      if (mounted.current && stillCurrent()) setSending(false);
     }
   }
 

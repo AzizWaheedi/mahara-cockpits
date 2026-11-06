@@ -83,7 +83,12 @@ setSystemTime(new Date(NOW));
 let fake: Fake = createRequestsFake({ seat: "csm", now: () => NOW });
 /** Answers a call before the store does, once per name; null passes it on. */
 let before: (name: string, args: any) => Answer | null = () => null;
-db.rpc = async (name: string, args: any = {}) => {
+function mockQuery(run: () => Promise<Answer> | Answer): any {
+  const promise: any = Promise.resolve().then(run);
+  promise.setHeader = () => promise;
+  return promise;
+}
+db.rpc = (name: string, args: any = {}) => mockQuery(async () => {
   if (name === "cockpit_adopt_member") return { data: true, error: null };
   if (name === "cockpit_get_my_access")
     return {
@@ -103,7 +108,7 @@ db.rpc = async (name: string, args: any = {}) => {
   if (first) return first;
   if (fake.handles(name)) return fake.call(name, args);
   return { data: null, error: { message: `No answer for ${name}` } };
-};
+});
 
 // --- A DOM. ------------------------------------------------------------------
 const { Window } = await import("happy-dom");
@@ -163,12 +168,12 @@ console.error = (...args: unknown[]) => {
 };
 
 const { createRoot } = await import("react-dom/client");
-const { act, createElement: h } = await import("react");
+const { act, createElement: h, useLayoutEffect } = await import("react");
 const { MemoryRouter } = await import("react-router");
 const { SupabaseAuthProvider } = await import(
   "../src/auth/SupabaseAuthProvider"
 );
-const { RequestForm } = await import("../src/components/tasks/RequestForm");
+const { RequestForm, requestViewMatches } = await import("../src/components/tasks/RequestForm");
 
 const container = win.document.createElement("div");
 win.document.body.appendChild(container);
@@ -1083,6 +1088,191 @@ describe("the request form", () => {
     );
     // Not a routed old ticket: nothing about one.
     expect(page()).not.toContain("old ticket");
+  });
+
+  test("a regular card request with a preset continues to prefill its editable details", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    await render({ presetType: "card_missing", presetDetails: "Existing request notes." });
+    expect(field("details").value).toBe("Existing request notes.");
+    expect(page()).not.toContain("Saved ticket context");
+  });
+
+  test("a pending old-ticket submission cannot call back into the next ticket after a switch", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void;
+    let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => name === "cockpit_request_submit"
+      ? await new Promise<Answer>(resolve => { release = resolve; }) : previousRpc(name, args));
+    try {
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "First context", replacesTaskId: "fictionalold1", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(release).toBeDefined();
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "Second context", replacesTaskId: "fictionalold2" });
+      release({ data: { id: "fictional", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(field("details").value).toBe("Second context");
+    } finally { db.rpc = previousRpc; }
+  });
+
+  test("a result released during the next ticket commit cannot call the old form", async () => {
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void;
+    let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => name === "cockpit_request_submit"
+      ? await new Promise<Answer>(resolve => { release = resolve; }) : previousRpc(name, args));
+    function ResolveAtCommit() {
+      useLayoutEffect(() => { release({ data: { id: "fictional-old-result", state: "sending", held: false, parts: [] }, error: null }); }, []);
+      return null;
+    }
+    try {
+      await render({ presetType: "general_tech", presetDetails: "First fictional ticket", replacesTaskId: "fictional-first", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(release).toBeDefined();
+      await act(async () => {
+        root.render(h(SupabaseAuthProvider, null, h(MemoryRouter, { initialEntries: ["/requests"] },
+          h(RequestForm, { source: "requests_page", presetType: "general_tech", presetDetails: "Second fictional ticket", replacesTaskId: "fictional-second" } as any),
+          h(ResolveAtCommit))));
+      });
+      await settle();
+      expect(callbacks).toBe(0);
+      expect(field("details").value).toBe("Second fictional ticket");
+    } finally { db.rpc = previousRpc; }
+  });
+
+  test("late results require the committed ticket, account and auth generation to match", () => {
+    const old = { seatId: "fictional-seat-a", ticketId: "fictional-ticket-a", generation: 1 };
+    expect(requestViewMatches(old, { ...old })).toBe(true);
+    expect(requestViewMatches(old, { ...old, ticketId: "fictional-ticket-b" })).toBe(false);
+    expect(requestViewMatches(old, { ...old, seatId: "fictional-seat-b" })).toBe(false);
+    expect(requestViewMatches(old, { ...old, generation: 2 })).toBe(false);
+  });
+
+  test("a late old-ticket refusal after switching cannot start a standalone retry", async () => {
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void;
+    let attempts = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return previousRpc(name, args);
+      attempts++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    try {
+      await render({ presetType: "general_tech", presetDetails: "First context", replacesTaskId: "fictionalold1", replacesIfOpen: true });
+      await click(button("Send request"));
+      await render({ presetType: "general_tech", presetDetails: "Second context", replacesTaskId: "fictionalold2" });
+      release({ data: null, error: { code: "55000", message: "That old ticket was already routed." } });
+      await flush();
+      expect(attempts).toBe(1);
+      expect(field("details").value).toBe("Second context");
+    } finally { db.rpc = previousRpc; }
+  });
+
+  test("a real auth event while a replacement is in flight cannot deliver its result to the new seat", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const prior = { rpc: db.rpc, getSession: db.auth.getSession, getUser: db.auth.getUser, onAuthStateChange: db.auth.onAuthStateChange };
+    const listeners = new Set<(event: string, session: any) => void>();
+    let session: any = { user: USER, access_token: "fictional-token-a" };
+    db.auth.onAuthStateChange = (listener: (event: string, session: any) => void) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    };
+    db.auth.getSession = async () => ({ data: { session }, error: null });
+    db.auth.getUser = async (token?: string) => ({ data: { user: token === "fictional-token-a" ? USER : session?.user ?? null }, error: null });
+    let release!: (result: Answer) => void; let sent = 0; let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return prior.rpc(name, args);
+      sent++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    try {
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, replacesTaskId: "fictional-auth-ticket", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(sent).toBe(1);
+      await act(async () => { session = null; for (const listener of [...listeners]) listener("SIGNED_OUT", null); });
+      await flush();
+      await act(async () => { session = { user: { ...USER, id: "auth-other-test" }, access_token: "fictional-token-b" }; for (const listener of [...listeners]) listener("SIGNED_IN", session); });
+      await flush();
+      release({ data: { id: "fictional-old-result", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(sent).toBe(1);
+      expect(page()).not.toContain("fictional-old-result");
+    } finally {
+      db.rpc = prior.rpc; db.auth.getSession = prior.getSession; db.auth.getUser = prior.getUser; db.auth.onAuthStateChange = prior.onAuthStateChange;
+    }
+  });
+
+  test("same user reauthenticating cannot receive the previous session's result", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const prior = { rpc: db.rpc, getSession: db.auth.getSession, getUser: db.auth.getUser, onAuthStateChange: db.auth.onAuthStateChange };
+    const listeners = new Set<(event: string, session: any) => void>();
+    let session: any = { user: USER, access_token: "fictional-token-old" };
+    db.auth.onAuthStateChange = (listener: (event: string, session: any) => void) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    };
+    db.auth.getSession = async () => ({ data: { session }, error: null });
+    db.auth.getUser = async () => ({ data: { user: USER }, error: null });
+    let release!: (result: Answer) => void; let sent = 0; let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return prior.rpc(name, args);
+      sent++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    try {
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, replacesTaskId: "fictional-same-user-ticket", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(sent).toBe(1);
+      await act(async () => {
+        session = null; for (const listener of [...listeners]) listener("SIGNED_OUT", null);
+        session = { user: USER, access_token: "fictional-token-new" }; for (const listener of [...listeners]) listener("SIGNED_IN", session);
+        release({ data: { id: "fictional-old-session-result", state: "sending", held: false, parts: [] }, error: null });
+        await Promise.resolve();
+      });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(page()).not.toContain("fictional-old-session-result");
+    } finally {
+      db.rpc = prior.rpc; db.auth.getSession = prior.getSession; db.auth.getUser = prior.getUser; db.auth.onAuthStateChange = prior.onAuthStateChange;
+    }
+  });
+
+  test("a token refresh or duplicate sign-in does not reset the current form", async () => {
+    const prior = db.auth.onAuthStateChange;
+    const listeners = new Set<(event: string, session: any) => void>();
+    db.auth.onAuthStateChange = (listener: (event: string, session: any) => void) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    };
+    try {
+      await render({ presetType: "general_tech" });
+      await type(field("details"), "Fictional work in progress");
+      const original = { user: USER, access_token: "fictional-original" };
+      const refreshed = { user: USER, access_token: "fictional-refreshed" };
+      await act(async () => {
+        for (const listener of [...listeners]) listener("INITIAL_SESSION", original);
+        for (const listener of [...listeners]) listener("TOKEN_REFRESHED", refreshed);
+        for (const listener of [...listeners]) listener("SIGNED_IN", refreshed);
+      });
+      await flush();
+      expect(field("details").value).toBe("Fictional work in progress");
+    } finally { db.auth.onAuthStateChange = prior; }
   });
 
   test("a carried due day already past starts on the type's due day; Ask for something else carries nothing", async () => {
