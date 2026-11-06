@@ -182,6 +182,7 @@ Every link you open in a day, grouped into cards: how the cockpit works, the Bra
 - "How to use this cockpit": the menu row near the bottom. It opens the cockpit's written guide in ClickUp in a new tab.
 - "Team meetings": opens the team meetings page on the portal.
 - "Ask a team": opens the portal page for asking another team for help. It files the request in ClickUp for you.
+- When routing an old card or WhatsApp ticket with a details question, "Review the original ticket" opens the ClickUp original. The saved context is a first-import excerpt and can be stale; additional notes are separate.
 - "Client performance": opens the portal board that shows every client's performance.
 - "Admin": shown to admins. It opens the portal admin view.
 - The other cockpit doors: "Media buyer", "Client success", "Editor desk" and "Sales" appear only for people who hold that role or are admins. Each one opens that cockpit.

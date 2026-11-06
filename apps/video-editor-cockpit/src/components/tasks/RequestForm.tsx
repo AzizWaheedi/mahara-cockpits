@@ -73,6 +73,8 @@ import {
   readRequestClients,
   readRequests,
   readRequestTypes,
+  RequestError,
+  submitReplacementForSeat,
   submitRequest,
 } from "@/lib/requestsClient";
 import {
@@ -221,6 +223,7 @@ type PendingReplacement = {
   requestId: string;
   pending: Promise<SubmitResult> | null;
   completed: SubmitResult | null;
+  mayHaveCommitted: boolean;
 };
 // In this page session only, keep uncertain replacement IDs per signed-in
 // account and client instance. Never persist their payloads to storage/logs.
@@ -249,7 +252,7 @@ export function submitReplacementOnce(
   let op = operations.get(body.replacesTaskId);
   if (op && op.signature !== signature) return Promise.reject(new ReplacementBusy());
   if (!op) {
-    op = { signature, requestId: body.requestId, pending: null, completed: null };
+    op = { signature, requestId: body.requestId, pending: null, completed: null, mayHaveCommitted: false };
     operations.set(body.replacesTaskId, op);
   }
   if (op.completed) return Promise.resolve(op.completed);
@@ -257,7 +260,17 @@ export function submitReplacementOnce(
   const current = op;
   const pending = Promise.resolve().then(() => send({ ...snapshot, requestId: current.requestId }));
   current.pending = pending;
-  void pending.then(result => { current.completed = result; current.pending = null; }, () => { current.pending = null; });
+  void pending.then(result => {
+    current.pending = null;
+    if (result.state === "duplicate" && !current.mayHaveCommitted) operations!.delete(body.replacesTaskId!);
+    else current.completed = result;
+  }, error => {
+    current.pending = null;
+    const definitelyNotApplied = error instanceof RequestError &&
+      (error.outcome === "rejected" || error.outcome === "not_sent");
+    if (definitelyNotApplied && !current.mayHaveCommitted) operations!.delete(body.replacesTaskId!);
+    else current.mayHaveCommitted = true;
+  });
   return pending;
 }
 
@@ -811,10 +824,8 @@ function RequestFormInner({
           return;
         }
         result = guardedReplacement
-          ? await submitReplacementOnce(client, seat.seatId!, body, value => {
-              if (!mounted.current) return Promise.reject(new Error("Request view closed before send."));
-              return submitRequest(client, value);
-            })
+          ? await submitReplacementOnce(client, seat.seatId!, body, value =>
+              submitReplacementForSeat(client, seat.seatId!, value, () => mounted.current))
           : await submitRequest(client, body);
       } catch (e) {
         if (!mounted.current) return;

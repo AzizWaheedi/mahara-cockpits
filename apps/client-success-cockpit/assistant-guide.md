@@ -186,6 +186,7 @@ How to:
 - "How to use this cockpit": opens this cockpit's SOP in a new tab.
 - "Team meetings": opens the portal's team meetings page.
 - "Ask a team": opens the portal's requests page, where you ask another team for work.
+- When routing an old card or WhatsApp ticket with a details question, "Review the original ticket" opens the ClickUp original. The saved context is a first-import excerpt and can be stale; additional notes are separate.
 - "Client performance": opens the portal's client performance page.
 - "Admin" and "Data": admin doors in the side rail. Only an admin sees them.
 - "Media buyer", "Creative director", "Editor desk" and "Sales": doors to the other cockpits. Each shows only to a seat that has that role or to an admin.
