@@ -3687,6 +3687,96 @@ describe("the old form's tickets in All Tasks", () => {
     const plain = await submit(SM, { type: "general_csm", answers: { details: "Nothing old here." } });
     expect((await queueRows(plain.id))[0].payload.descriptionMarkdown).not.toContain("old ClickUp form");
   });
+
+  test("offline draft preserves distinct old ticket context for both kickoff request types", async () => {
+    // Install the guarded candidate in the synthetic database only.
+    const draft = migration("20261106101734_preserve_routed_ticket_context.sql");
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      const liveShape = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
+      expect(liveShape[0].hash).toBe("96677a21b5d8fd7478b419d244c8b2b3");
+      await asOwner(); await db.exec(draft);
+      await q(`UPDATE public.cockpit_request_types SET fields = fields || '[{"key":"details","label":"What happened?","kind":"details","clickup_field_id":null,"required":false,"options":null,"help":null}]'::jsonb WHERE key IN ('card_missing','whatsapp_connection')`);
+      for (const type of ["card_missing", "whatsapp_connection"]) {
+        for (const [suffix, text] of [["blank", ""], ["same", "Original fictional context."], ["new", "A separate fictional note."], ["longer", "Original fictional context. Additional information."]]) {
+          const taskId = `cudraft${type === "card_missing" ? "c" : "w"}${suffix}`;
+          await svc("SELECT public.cockpit_request_import($1::jsonb) r", [JSON.stringify([{ ...tasks[1], taskId, url: `https://app.clickup.com/t/${taskId}`, description: "Original fictional context." }])]);
+          const sent = await submit(SM, { type, client: ACME, answers: { details: text }, replaces: taskId });
+          const rows = await queueRows(sent.id);
+          const desc = rows[0].payload.descriptionMarkdown as string;
+          expect(desc.match(/Original fictional context\./g)).toHaveLength(suffix === "longer" ? 2 : 1);
+          expect(desc).toContain("Asked on the old ClickUp form:\nOriginal fictional context.");
+          expect(desc.includes("Additional details:\nA separate fictional note.")).toBe(suffix === "new");
+          if (suffix === "longer") expect(desc).toContain("Additional details:\nOriginal fictional context. Additional information.");
+        }
+      }
+      const deniedId = "cufictionaldenied";
+      await svc("SELECT public.cockpit_request_import($1::jsonb) r", [JSON.stringify([{ ...tasks[1], taskId: deniedId, url: `https://app.clickup.com/t/${deniedId}`, description: "A private fictional excerpt." }])]);
+      await svc("SELECT public.cockpit_clickup_requests_state(true,'fictional','apply','{}'::text[],'{}'::jsonb) r");
+      await db.exec("SAVEPOINT denied_route");
+      await actor(db, CALL);
+      let denial = "";
+      try { await db.query(submitSql, submitArgs({ type: "card_missing", client: ACME, answers: {}, replaces: deniedId })); }
+      catch (e) { denial = (e as Error).message; }
+      await db.exec("ROLLBACK TO SAVEPOINT denied_route"); await asOwner();
+      expect(denial).toBe("Only that team, an editor, an admin or the CEO can route this old ticket.");
+    } finally {
+      await db.exec("ROLLBACK"); await asOwner();
+    }
+  });
+
+  test("the guarded planner migration rejects a changed function without changing settings", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      const sql = migration("20261106101734_preserve_routed_ticket_context.sql");
+      const before = await q("SELECT key, fields, version FROM public.cockpit_request_types WHERE key IN ('card_missing','whatsapp_connection') ORDER BY key");
+      await db.exec(sql);
+      await db.exec("SAVEPOINT changed_function");
+      await expect(db.exec(sql)).rejects.toThrow("Request planner differs from the reviewed definition");
+      await db.exec("ROLLBACK TO SAVEPOINT changed_function");
+      expect(await q("SELECT key, fields, version FROM public.cockpit_request_types WHERE key IN ('card_missing','whatsapp_connection') ORDER BY key")).toEqual(before);
+      const after = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
+      expect(after[0].hash).toBe("9920281946cbc5f20740407340593c85");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("the guarded planner migration refuses unexpected function privileges", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) TO authenticated");
+      await db.exec("SAVEPOINT unexpected_grant");
+      await expect(db.exec(migration("20261106101734_preserve_routed_ticket_context.sql")))
+        .rejects.toThrow("Request planner differs from the reviewed definition");
+      await db.exec("ROLLBACK TO SAVEPOINT unexpected_grant");
+      const f = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
+      expect(f[0].hash).toBe("96677a21b5d8fd7478b419d244c8b2b3");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("a sweep after the migration rebuilds only missing queued payloads using the saved type version", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      const row = (await q("SELECT fields, version FROM public.cockpit_request_types WHERE key='card_missing'"))[0];
+      const fields = [...row.fields, { key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null }];
+      await one(SM, "SELECT public.cockpit_request_type_save('card_missing',$1::jsonb,$2) r", [JSON.stringify({ fields }), row.version]);
+      const ids = ["cufictionalkeep", "cufictionalrepair"];
+      for (const taskId of ids) {
+        await svc("SELECT public.cockpit_request_import($1::jsonb) r", [JSON.stringify([{ ...tasks[1], taskId, url: `https://app.clickup.com/t/${taskId}`, description: "A saved fictional excerpt." }])]);
+      }
+      const kept = await submit(SM, { type: "card_missing", client: ACME, answers: {}, replaces: ids[0] });
+      const repair = await submit(SM, { type: "card_missing", client: ACME, answers: {}, replaces: ids[1] });
+      const keepBefore = await queueOf(kept.id);
+      const repairBefore = await queueOf(repair.id);
+      expect(keepBefore.payload.descriptionMarkdown).not.toContain("A saved fictional excerpt.");
+      expect(repairBefore.payload.descriptionMarkdown).not.toContain("A saved fictional excerpt.");
+      await q("DELETE FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [repairBefore.id]);
+      await q("UPDATE public.cockpit_request_parts SET queue_id=NULL, state='queued' WHERE request_id=$1", [repair.id]);
+      await asOwner(); await db.exec(migration("20261106101734_preserve_routed_ticket_context.sql"));
+      expect(await svc<number>("SELECT public.cockpit_request_sweep() r")).toBeGreaterThanOrEqual(1);
+      expect((await queueOf(kept.id)).payload).toEqual(keepBefore.payload);
+      expect((await queueOf(repair.id)).payload.descriptionMarkdown).toContain("Asked on the old ClickUp form:\nA saved fictional excerpt.");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
 });
 
 describe("the request lists", () => {

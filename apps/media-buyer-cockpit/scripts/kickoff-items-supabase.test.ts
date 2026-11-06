@@ -833,6 +833,23 @@ describe("Yes: one tap through the unchanged submit", () => {
     });
   });
 
+  test("offline draft leaves one-tap kickoff intact for both optional details types", async () => {
+    await rolledBack(async () => {
+      await ex(migration("20261106101734_preserve_routed_ticket_context.sql"));
+      await q(`UPDATE public.cockpit_request_types SET fields = fields || '[{"key":"details","label":"What happened?","kind":"details","clickup_field_id":null,"required":false,"options":null,"help":null}]'::jsonb WHERE key IN ('card_missing','whatsapp_connection')`);
+      for (const item of ["funded_card", "whatsapp_sync"]) {
+        const id = uid();
+        const result = await raise(CSM_A, ACME, item, id);
+        expect(result.raised).toBe(true);
+        const request = await requestOf(id);
+        expect(request.answers.details).toBe(itemOf(await read(CSM_A, ACME), item)!.details);
+        const queued = await q("SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE source_id = $1", [id]);
+        expect(queued).toHaveLength(1);
+        expect(queued[0].payload.descriptionMarkdown).toContain(request.answers.details);
+      }
+    });
+  });
+
   test("a retry of the same press is reused; a second press with another id refuses; the lock serialises presses", async () => {
     await rolledBack(async () => {
       const id = uid();

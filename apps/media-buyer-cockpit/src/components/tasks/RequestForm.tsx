@@ -123,6 +123,7 @@ import {
   type SentLane,
   type SentModel,
   type SubmitResult,
+  type SubmitInput,
   searchCountWords,
   searchLeads,
   searchTypes,
@@ -215,6 +216,51 @@ export type RequestFormProps = {
   onSent?: (result: SubmitResult) => void;
 };
 
+type PendingReplacement = {
+  signature: string;
+  requestId: string;
+  pending: Promise<SubmitResult> | null;
+  completed: SubmitResult | null;
+};
+// In this page session only, keep uncertain replacement IDs per signed-in
+// account and client instance. Never persist their payloads to storage/logs.
+const replacementOperations = new WeakMap<object, Map<string, Map<string, PendingReplacement>>>();
+class ReplacementBusy extends Error {}
+
+/** Join only the exact same payload; an uncertain different edit must be reviewed. */
+export function submitReplacementOnce(
+  client: object,
+  seatId: string,
+  body: SubmitInput,
+  send: (body: SubmitInput) => Promise<SubmitResult>,
+): Promise<SubmitResult> {
+  if (!seatId || !body.replacesTaskId) return Promise.reject(new ReplacementBusy());
+  const snapshot = { ...body, answers: { ...body.answers } };
+  let seats = replacementOperations.get(client);
+  if (!seats) { seats = new Map(); replacementOperations.set(client, seats); }
+  let operations = seats.get(seatId);
+  if (!operations) { operations = new Map(); seats.set(seatId, operations); }
+  const signature = JSON.stringify({
+    typeKey: snapshot.typeKey, clientTaskId: snapshot.clientTaskId,
+    answers: Object.keys(snapshot.answers).sort().map(k => [k, snapshot.answers[k]]),
+    dueOn: snapshot.dueOn, priority: snapshot.priority, source: snapshot.source,
+    replacesTaskId: snapshot.replacesTaskId,
+  });
+  let op = operations.get(body.replacesTaskId);
+  if (op && op.signature !== signature) return Promise.reject(new ReplacementBusy());
+  if (!op) {
+    op = { signature, requestId: body.requestId, pending: null, completed: null };
+    operations.set(body.replacesTaskId, op);
+  }
+  if (op.completed) return Promise.resolve(op.completed);
+  if (op.pending) return op.pending;
+  const current = op;
+  const pending = Promise.resolve().then(() => send({ ...snapshot, requestId: current.requestId }));
+  current.pending = pending;
+  void pending.then(result => { current.completed = result; current.pending = null; }, () => { current.pending = null; });
+  return pending;
+}
+
 type Load<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }
@@ -305,7 +351,14 @@ function Seal({
  * Ask a team: the request form (CONTRACT.md 6.4). Shared byte for byte by
  * the five cockpits; it reads the seat through each app's own taskSeat.ts.
  */
-export function RequestForm({
+export function RequestForm(props: RequestFormProps) {
+  // A different replacement ticket must start with that ticket's own context
+  // and request id, rather than retaining edits from the previous ticket or account.
+  const { seatId } = useTaskSeat();
+  return <RequestFormInner key={JSON.stringify([seatId, props.replacesTaskId ?? null])} {...props} />;
+}
+
+function RequestFormInner({
   source,
   presetClient,
   presetType,
@@ -342,6 +395,10 @@ export function RequestForm({
   const [sentAt, setSentAt] = useState<string | null>(null);
   // Filed again, and its old form ticket was routed meanwhile.
   const [sentAlone, setSentAlone] = useState(false);
+  // "Ask for something else" starts a new request and must not retain the
+  // old ticket association. The wrapper remounts for a different old ticket.
+  const [replacementTaskId, setReplacementTaskId] = useState(replacesTaskId ?? null);
+  const activeReplacement = replacementTaskId;
   // The sent view's reads: the last one, and whether the two minutes ran out.
   const [checks, setChecks] = useState<{
     at: string | null;
@@ -372,6 +429,11 @@ export function RequestForm({
   // One id per request: a retry of the same press reuses it (2.5 step 3).
   const requestId = useRef(newRequestId());
   const inFlight = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const formRef = useRef<HTMLDivElement>(null);
   const plateRef = useRef<HTMLHeadingElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -470,10 +532,13 @@ export function RequestForm({
       setPriority(
         PRIORITIES.find(p => p.key === kept.priority)?.key ?? next.priority,
       );
-      setAnswers(startAnswers(next, kept.details, kept.answers));
+      const separateOriginal = Boolean(activeReplacement &&
+        ["card_missing", "whatsapp_connection"].includes(next.key) &&
+        next.fields.some(f => f.kind === "details"));
+      setAnswers(startAnswers(next, separateOriginal ? undefined : kept.details, kept.answers));
       setPresetOff(null);
     },
-    [presetClient],
+    [presetClient, activeReplacement],
   );
 
   // The preset type, once the types are read. A type that is not on the
@@ -733,13 +798,30 @@ export function RequestForm({
         dueOn: dueOn || null,
         priority,
         source,
-        replacesTaskId: replacesTaskId ?? null,
+        replacesTaskId: activeReplacement,
       };
       let alone = false;
       let result: SubmitResult;
+      const guardedReplacement = Boolean(activeReplacement &&
+        ["card_missing", "whatsapp_connection"].includes(type.key) &&
+        type.fields.some(f => f.kind === "details"));
       try {
-        result = await submitRequest(client, body);
+        if (guardedReplacement && !seat.seatId) {
+          setFormError("Check your sign-in before sending this request.");
+          return;
+        }
+        result = guardedReplacement
+          ? await submitReplacementOnce(client, seat.seatId!, body, value => {
+              if (!mounted.current) return Promise.reject(new Error("Request view closed before send."));
+              return submitRequest(client, value);
+            })
+          : await submitRequest(client, body);
       } catch (e) {
+        if (!mounted.current) return;
+        if (e instanceof ReplacementBusy) {
+          setFormError("This ticket has another request in progress or awaiting confirmation. Check the original request before changing these details.");
+          return;
+        }
         // Filed again, and its old form ticket was routed meanwhile: the
         // server wrote nothing, so the same request id goes on its own.
         if (
@@ -748,9 +830,16 @@ export function RequestForm({
           errorWords(e) !== REQUEST_SENTENCES.oldTicketRouted
         )
           throw e;
+        if (activeReplacement &&
+            ["card_missing", "whatsapp_connection"].includes(type.key) &&
+            type.fields.some(f => f.kind === "details")) {
+          setFormError("That old ticket was already routed. Review the original ticket before sending another request.");
+          return;
+        }
         alone = true;
         result = await submitRequest(client, { ...body, replacesTaskId: null });
       }
+      if (!mounted.current) return;
       if (result.state === "duplicate") {
         focusNext.current = "dup";
         setDuplicate(result);
@@ -766,6 +855,7 @@ export function RequestForm({
         onSent?.(result);
       }
     } catch (e) {
+      if (!mounted.current) return;
       const words = errorWords(e);
       const key = fieldOfSentence(type, words);
       if (key) {
@@ -774,7 +864,7 @@ export function RequestForm({
       } else setFormError(words);
     } finally {
       inFlight.current = false;
-      setSending(false);
+      if (mounted.current) setSending(false);
     }
   }
 
@@ -783,6 +873,7 @@ export function RequestForm({
     focusNext.current = "search";
     // Something else: nothing of the request this form started from.
     carried.current = {};
+    setReplacementTaskId(null);
     setSent(null);
     setDuplicate(null);
     setSentAlone(false);
@@ -933,6 +1024,9 @@ export function RequestForm({
     type && !type.fields.some(f => f.kind === "details")
       ? (carried.current.details ?? null)
       : null;
+  const separateOriginal = Boolean(type && activeReplacement &&
+    ["card_missing", "whatsapp_connection"].includes(type.key) &&
+    type.fields.some(f => f.kind === "details"));
   // The answers given so far, kept on screen when requests stop being open
   // to the seat partway through (review BT-7): a client the person picked
   // and every question with an answer.
@@ -1077,6 +1171,7 @@ export function RequestForm({
                           value={answers[f.key] ?? ""}
                           onChange={v => setAnswer(f.key, v)}
                           error={errors[f.key] ?? null}
+                          extraDescriptionId={separateOriginal && f.kind === "details" ? `${baseId}-retained-context` : undefined}
                         />
                       ))}
                     </div>
@@ -1088,10 +1183,20 @@ export function RequestForm({
                       {keptWords}
                     </p>
                     <p className="rq-help">
-                      {replacesTaskId
+                      {activeReplacement
                         ? REQUEST_SENTENCES.keptRouted
                         : REQUEST_SENTENCES.keptNotSent}
                     </p>
+                  </div>
+                ) : null}
+                {separateOriginal ? (
+                  <div className="rq-field">
+                    <p className="rq-label">Saved ticket context</p>
+                    {carried.current.details ? <p className="rq-quote" dir="auto">{carried.current.details}</p> : null}
+                    <p className="rq-help" id={`${baseId}-retained-context`}>The saved excerpt from the first import, up to 4,000 characters, will be included in the new task if present. It may not reflect later edits; review the original ticket. The details above are additional notes; clearing them does not remove the saved excerpt. If the notes exactly match the saved excerpt after trimming, they appear only once.</p>
+                    {activeReplacement && /^[a-zA-Z0-9]+$/.test(activeReplacement) ? (
+                      <a href={`https://app.clickup.com/t/${activeReplacement}`} target="_blank" rel="noopener noreferrer">Review the original ticket</a>
+                    ) : null}
                   </div>
                 ) : null}
                 <hr className="rq-sep" />
@@ -2452,6 +2557,7 @@ function Question({
   value,
   onChange,
   error,
+  extraDescriptionId,
 }: {
   type: TypeView;
   field: FieldView;
@@ -2459,6 +2565,7 @@ function Question({
   value: string;
   onChange: (v: string) => void;
   error: string | null;
+  extraDescriptionId?: string;
 }) {
   if (field.kind === "select" && choiceControl(field) !== "select")
     return (
@@ -2478,6 +2585,7 @@ function Question({
       value={value}
       onChange={onChange}
       error={error}
+      extraDescriptionId={extraDescriptionId}
     />
   );
 }
@@ -2618,12 +2726,14 @@ function FieldInput({
   value,
   onChange,
   error,
+  extraDescriptionId,
 }: {
   field: FieldView;
   baseId: string;
   value: string;
   onChange: (v: string) => void;
   error: string | null;
+  extraDescriptionId?: string;
 }) {
   const id = `${baseId}-${field.key}`;
   const missingChoice =
@@ -2636,7 +2746,7 @@ function FieldInput({
     "data-field": field.key,
     "aria-invalid": error ? true : undefined,
     "aria-required": field.required || undefined,
-    "aria-describedby": error || help ? `${id}-note` : undefined,
+    "aria-describedby": [error || help ? `${id}-note` : null, extraDescriptionId].filter(Boolean).join(" ") || undefined,
   } as const;
   let input: ReactNode;
   if (field.kind === "longtext" || field.kind === "details")
