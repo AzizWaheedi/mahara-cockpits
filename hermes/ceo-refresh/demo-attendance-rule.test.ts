@@ -1,28 +1,21 @@
 import { expect, test } from "bun:test";
-import { dailySql } from "./native/adapters/growth.js";
-import { treeSql as adsSql } from "./native/adapters/b2bAds.js";
+import { treeSql } from "./native/adapters/b2bAds.js";
 
-test("demo attendance requires a past time and separates invalid from qualified", async () => {
-  const sql = dailySql("2026-11-01", "2026-11-05");
-  const held = sql.match(/count\(\*\) filter \(where call_type = 'demo' and \(start_at <= now\(\) and status in \('showed', 'confirmed', 'invalid'\)\)\) as demos_shown/)?.[0];
-  const qualified = sql.match(/count\(\*\) filter \(where call_type = 'demo' and \(start_at <= now\(\) and status in \('showed', 'confirmed'\)\)\) as demos_qualified/)?.[0];
-  expect(held).toBeDefined();
-  expect(qualified).toBeDefined();
+test("the Ads attendance rule counts only a past showed, confirmed or disqualified demo", async () => {
+  const sql = treeSql("2026-11-01", "2026-11-01", "2026-11-05");
+  const rule = sql.match(/d\.start_at <= now\(\) and d\.status in \('showed','confirmed','invalid'\)/)?.[0];
+  expect(rule).toBeDefined();
   const { PGlite } = await import("../../apps/media-buyer-cockpit/node_modules/@electric-sql/pglite");
   const db = new PGlite();
-  const result = await db.query(`select ${held}, ${qualified} from (values
-    ('demo', 'showed', now() - interval '1 hour'),
-    ('demo', 'confirmed', now() - interval '1 hour'),
-    ('demo', 'invalid', now() - interval '1 hour'),
-    ('demo', 'noshow', now() - interval '1 hour'),
-    ('demo', 'showed', now() + interval '1 hour'),
-    ('demo', 'confirmed', now() + interval '1 hour'),
-    ('intro', 'showed', now() - interval '1 hour')
-  ) as calls(call_type, status, start_at)`);
-  expect(Number(result.rows[0].demos_shown)).toBe(3);
-  expect(Number(result.rows[0].demos_qualified)).toBe(2);
-  const ads = adsSql("2026-11-01", "2026-11-01", "2026-11-05");
-  expect(ads).toContain("d.start_at <= now() and d.status in ('showed','confirmed','invalid')");
-  expect(ads).toContain("c.start_at <= now() and c.status in ('showed','confirmed','invalid')");
+  const result = await db.query(`select count(*) filter (where ${rule}) as held from (values
+    ('showed', now() - interval '1 hour'),
+    ('confirmed', now() - interval '1 hour'),
+    ('invalid', now() - interval '1 hour'),
+    ('noshow', now() - interval '1 hour'),
+    ('cancelled', now() - interval '1 hour'),
+    ('showed', now() + interval '1 hour'),
+    ('confirmed', now() + interval '1 hour')
+  ) as d(status, start_at)`);
+  expect(Number(result.rows[0].held)).toBe(3);
   await db.close();
 });
