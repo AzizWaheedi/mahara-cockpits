@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadMessage } from "../components/Conversation";
 import type { Asset } from "./assets";
-import type { CallRow, LeadRow } from "./calls";
+import { type CallRow, type LeadRow, lineAddress } from "./calls";
 import type { ClientFormSent } from "./clientForm";
 import type { GoalRow } from "./goals";
 import {
@@ -846,17 +846,78 @@ export function useCoachReviews(by: {
 }
 
 /**
- * Speed to lead's inputs: the ROAS-tagged leads created in the window and
- * every call with a sales rep, either direction, from the window's start to
- * now (a lead's first call can come any time after the window closes; Aziz,
- * 2026-09-21: "lead created, then to the first call with that lead").
+ * The sales seats' Maqsam addresses, for calls.ts salesLineCall: every
+ * seat's and B2B's roster's, from cockpit_sales_line_agents (migration
+ * 20261105s). Until that update is in, what row security lets this person
+ * read instead: a manager reads every seat, so the list is whole (`exact`);
+ * a rep reads their own seat and the roster, so another seat with no roster
+ * row is missing from it, and the page says so.
+ */
+async function readLineAgents(): Promise<{
+  data: { line: string[]; exact: boolean } | null;
+  error: { message: string } | null;
+}> {
+  const rpc = await supabase.rpc("cockpit_sales_line_agents");
+  if (!rpc.error && Array.isArray(rpc.data))
+    return {
+      data: {
+        line: (rpc.data as unknown[]).map(a => lineAddress(String(a ?? ""))),
+        exact: true,
+      },
+      error: null,
+    };
+  const [people, reps, manager] = await Promise.all([
+    supabase
+      .from("cockpit_sales_people")
+      .select("maqsam_email")
+      .not("maqsam_email", "is", null)
+      .limit(500),
+    supabase
+      .from("cockpit_sales_reps")
+      .select("maqsam_email")
+      .not("maqsam_email", "is", null)
+      .limit(500),
+    supabase.rpc("cockpit_sales_manager"),
+  ]);
+  if (people.error || reps.error)
+    return { data: null, error: people.error ?? reps.error };
+  return {
+    data: {
+      line: [...(people.data ?? []), ...(reps.data ?? [])].map(r =>
+        lineAddress((r as { maqsam_email: string | null }).maqsam_email),
+      ),
+      exact: !manager.error && manager.data === true,
+    },
+    error: null,
+  };
+}
+
+/**
+ * Speed to lead's inputs: the ROAS-tagged leads created in the window, every
+ * Maqsam call from the window's start to now, either direction (a lead's
+ * first call can come any time after the window closes; Aziz, 2026-09-21:
+ * "lead created, then to the first call with that lead"), and the sales
+ * seats' Maqsam addresses that say which calls a sales seat made
+ * (calls.ts salesLineCall). Since 2026-11-05 a seat with no row on B2B's
+ * roster counts by its Maqsam address, so the read no longer drops calls
+ * with no rep id; the rule leaves out anyone else's.
  */
 export function useSpeedToLead(
   fromIso: string,
   toIso: string,
-): Loaded<{ leads: LeadRow[]; calls: CallRow[] }> {
-  return useQuery<{ leads: LeadRow[]; calls: CallRow[] }>(async () => {
-    const [leads, calls] = await Promise.all([
+): Loaded<{
+  leads: LeadRow[];
+  calls: CallRow[];
+  line: string[];
+  lineExact: boolean;
+}> {
+  return useQuery<{
+    leads: LeadRow[];
+    calls: CallRow[];
+    line: string[];
+    lineExact: boolean;
+  }>(async () => {
+    const [leads, calls, line] = await Promise.all([
       readAll<LeadRow>((from, to) =>
         supabase
           .from("cockpit_sales_leads")
@@ -873,16 +934,26 @@ export function useSpeedToLead(
           .select(
             "occurred_at,agent_email,direction,state,duration_s,ringing_s,lead_phone8,contact_id,sales_rep_id",
           )
-          .not("sales_rep_id", "is", null)
           .gte("occurred_at", fromIso)
           .order("call_id")
           .range(from, to),
       ),
+      readLineAgents(),
     ]);
-    if (leads.error || calls.error)
-      return { data: null, error: leads.error ?? calls.error };
+    if (leads.error || calls.error || line.error || !line.data)
+      return {
+        data: null,
+        error: leads.error ??
+          calls.error ??
+          line.error ?? { message: "the sales seats' Maqsam addresses" },
+      };
     return {
-      data: { leads: leads.data ?? [], calls: calls.data ?? [] },
+      data: {
+        leads: leads.data ?? [],
+        calls: calls.data ?? [],
+        line: line.data.line.filter(a => a.includes("@")),
+        lineExact: line.data.exact,
+      },
       error: null,
     };
   }, [fromIso, toIso]);

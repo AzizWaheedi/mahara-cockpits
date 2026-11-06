@@ -16,6 +16,7 @@ export const DIALS_CAP = 5000;
  */
 export function NumbersDials({
   speed,
+  speedPartial = false,
   gaps,
   stats,
   rows,
@@ -27,6 +28,12 @@ export function NumbersDials({
   self,
 }: {
   speed: SpeedToLead | null;
+  /**
+   * The sales seats' Maqsam addresses were read only as far as this person
+   * may (before the 5 November database update): another seat's calls may
+   * be missing from speed to lead.
+   */
+  speedPartial?: boolean;
   gaps: CallGaps | null;
   stats: DialStats | null;
   /** How many calls the read returned, to tell a full read from a cut one. */
@@ -132,12 +139,15 @@ export function NumbersDials({
                       ? `${speed.called} of ${speed.leads} leads called · ${speed.never} never called`
                       : `${speed.called} leads you called first`,
                     `${speed.within5} within 5 min (${speed.within5Working} within 5 working minutes)`,
+                    speedPartial
+                      ? "Calls by other seats with no B2B rep row are not known here until the 5 November database update"
+                      : null,
                   ]
                     .filter(Boolean)
                     .join(" · ")
                 : undefined
             }
-            hint="Aziz's rule, as on the CEO cockpit: from a lead coming in (the ROAS-tagged leads of this window) to the first Maqsam call with them by a sales rep, either direction and whatever its outcome, read up to now. A call counts for the lead its whole number belongs to. Median on the clock and in working hours (10:00 to 18:00, Saturday to Thursday). The leads never called are counted beside it, not inside it. For one rep, the leads whose first call was theirs."
+            hint="The CEO's rule, as on the CEO cockpit: from a lead coming in (the ROAS-tagged leads of this window) to the first Maqsam call with them by a sales seat, either direction and whatever its outcome, read up to now. A sales seat's call is one B2B ties to a rep on its roster, or one made from a seat's Maqsam address (the Team page), so a seat with no B2B rep row counts too. A call counts for the lead its whole number belongs to. Median on the clock and in working hours (10:00 to 18:00, Saturday to Thursday). The leads never called are counted beside it, not inside it. For one rep, the leads whose first call was theirs."
           />
           <StatTile
             variant="plain"

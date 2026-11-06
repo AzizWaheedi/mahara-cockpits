@@ -301,6 +301,27 @@ export const APPOINTMENTS: Row[] = [
     quality_role: "setter",
     no_demo_reason: "not_decision_maker",
   },
+  // The setter's one queue (2026-11-05). An intro an hour and a half ago
+  // that nobody marked: the dialer's "Mark the intro" item.
+  appt("a18", 18, "intro", rel(-1.5), "u-sara", "confirmed"),
+  // Booked this morning for two hours from now, not confirmed: called from
+  // two and a half hours before.
+  {
+    ...appt("a19", 16, "intro", rel(2), "u-sara", "confirmed"),
+    booked_at: rel(-6),
+  },
+  // In seventy minutes; the confirmation call rang out: the voice note is next.
+  {
+    ...appt(
+      "a20",
+      17,
+      "intro",
+      new Date(Date.now() + 70 * 60_000).toISOString(),
+      "u-sara",
+      "confirmed",
+    ),
+    booked_at: rel(-30),
+  },
 ];
 
 /** cockpit_sales_funnel for the harness's Numbers page (a month like October 2026's). */
@@ -1029,70 +1050,135 @@ export function dialItems(as: "setter" | "closer", start: number): Row[] {
         last_dial_at: iso(now - 3 * D),
       }),
     ];
-  const tail = [9, 14, 15, 16, 17, 18, 19].map(i =>
+  const tail = [14, 19].map(i =>
     queueItem(i, { tier: 3, why: "Never called" }),
   );
+  const a = (id: string, type: "intro" | "demo", booked: number | null) => ({
+    id,
+    type,
+    start_at: iso(startOf(id)),
+    booked_at: booked === null ? null : iso(booked),
+    assigned_user_id: type === "demo" ? "u-omar" : "u-sara",
+    confirmed: false,
+  });
   return [
+    // His intro at its minute: first in Call now, whatever else is due
+    // (2026-11-05: an explicit rule, not deadline order).
+    queueItem(3, {
+      tier: 0,
+      kind: "intro",
+      code: "intro_now",
+      why: `Intro call now, booked for ${kwClock(startOf("a4"))}`,
+      appointment: { ...a("a4", "intro", now - 2 * D), confirmed: true },
+    }),
     queueItem(0, {
       tier: 0,
+      code: "new_lead",
       why: "New lead, call now",
       created_at: iso(now - 40_000),
+      due_since: iso(now - 40_000),
+      voice_note: voiceNote(0, "new", null, false),
+    }),
+    // An older lead who booked an intro four minutes ago: call them now.
+    queueItem(9, {
+      tier: 0,
+      code: "just_booked",
+      why: `Booked an intro for tomorrow at ${kwClock(startOf("a10"))}, call now`,
+      last_dial_at: iso(now - 6 * D),
+      due_since: iso(now - 4 * MIN),
+      just_booked: {
+        appointment_id: "a10",
+        start_at: iso(startOf("a10")),
+        booked_at: iso(now - 4 * MIN),
+      },
+      appointment: a("a10", "intro", now - 4 * MIN),
+      voice_note: voiceNote(9, "booked", startOf("a10"), false),
     }),
     queueItem(1, {
       tier: 0,
+      code: "missed_call_now",
       why: "Called us, missed it",
       inbound_call_at: iso(now - 90_000),
       last_dial_at: iso(now - 3 * D),
       step: 1,
       last_outcome: "no_answer",
+      due_since: iso(now - 90_000),
     }),
     queueItem(2, {
       tier: 0,
+      code: "callback_now",
       why: `Call back at ${kwClock(now + 4 * MIN)}, as agreed`,
       callback_at: iso(now + 4 * MIN),
       last_dial_at: iso(now - 2 * H),
       last_outcome: "callback",
+      due_since: iso(now + 4 * MIN),
     }),
-    queueItem(3, {
+    // A new lead nobody answered three minutes ago: the second call, now.
+    queueItem(15, {
       tier: 0,
-      kind: "intro",
-      why: `Intro call now, booked for ${kwClock(startOf("a4"))}`,
-      appointment: {
-        id: "a4",
-        type: "intro",
-        start_at: iso(startOf("a4")),
-        booked_at: iso(now - 2 * D),
-        assigned_user_id: "u-sara",
-        confirmed: true,
-      },
+      code: "second_try",
+      why: "Second try now",
+      created_at: iso(now - 9 * MIN),
+      last_dial_at: iso(now - 3 * MIN),
+      last_outcome: "no_answer",
+      misses: 1,
+      due_since: iso(now - MIN),
+      voice_step: "new",
+      voice_note: voiceNote(15, "new", null, true),
+    }),
+    // Not confirmed, two hours out: called from two and a half hours before.
+    queueItem(16, {
+      tier: 0,
+      kind: "confirm",
+      code: "confirm",
+      why: `Confirm the intro today at ${kwClock(startOf("a19"))}`,
+      appointment: a("a19", "intro", Date.parse(rel(-6))),
+      voice_note: voiceNote(16, "confirm", startOf("a19"), false),
+    }),
+    // The confirmation call rang out twenty minutes ago: the voice note is
+    // next, then the call again sixty minutes before.
+    queueItem(17, {
+      tier: 1,
+      code: "voice_note",
+      why: "No answer to the confirmation: send a voice note",
+      last_dial_at: iso(now - 20 * MIN),
+      voice_step: "confirm",
+      appointment: a("a20", "intro", Date.parse(rel(-30))),
+      voice_note: voiceNote(17, "confirm", startOf("a20"), true),
+    }),
+    // His intro past its twenty minutes with no mark: marked here.
+    queueItem(18, {
+      tier: 1,
+      code: "mark_call",
+      why: `Mark the intro booked for today at ${kwClock(startOf("a18"))}`,
+      last_dial_at: iso(now - 2 * D),
+      mark_call: { ...APPOINTMENTS.find(x => x.appointment_id === "a18") },
     }),
     queueItem(4, {
       tier: 1,
       kind: "confirm",
+      code: "confirm_early",
       why: `Confirm the demo tomorrow at ${kwClock(startOf("a5"))}`,
-      appointment: {
-        id: "a5",
-        type: "demo",
-        start_at: iso(startOf("a5")),
-        booked_at: iso(now - 3 * D),
-        assigned_user_id: "u-omar",
-        confirmed: false,
-      },
+      appointment: a("a5", "demo", now - 3 * D),
     }),
     queueItem(6, {
       tier: 1,
+      code: "missed_call_today",
       why: "Called us, missed it",
       inbound_call_at: iso(now - 3 * H),
     }),
     queueItem(7, {
       tier: 1,
+      code: "reply_today",
       why: "Wrote back today",
       inbound_at: iso(now - 2 * H),
       last_dial_at: iso(now - D),
+      due_since: iso(now - 2 * H),
     }),
     // LEADS[5] is on do not disturb: the dialer shows it and will not call.
     queueItem(5, {
       tier: 2,
+      code: "retry",
       why: "Next try is due",
       step: 1,
       last_dial_at: iso(now - D),
@@ -1100,11 +1186,121 @@ export function dialItems(as: "setter" | "closer", start: number): Row[] {
     }),
     queueItem(8, {
       tier: 2,
+      code: "intro_noshow",
       why: "Missed the intro, rebook it",
       last_dial_at: iso(now - 2 * D),
     }),
+    // Wrote three days ago and nobody answered: lower down, not dropped.
+    queueItem(20, {
+      tier: 2,
+      code: "reply_waiting",
+      why: "Still waiting on you",
+      inbound_at: iso(now - 3 * D),
+      last_dial_at: iso(now - 5 * D),
+      due_since: iso(now - 3 * D),
+    }),
+    // Cancelled their intro yesterday: rebook it.
+    queueItem(21, {
+      tier: 2,
+      code: "intro_cancelled",
+      why: "Cancelled the intro, rebook it",
+      last_dial_at: iso(now - 4 * D),
+    }),
     ...tail,
   ];
+}
+
+/**
+ * The voice note's facts for LEADS[i] (sales-api dialer.ts voiceFacts): the
+ * form's answers, the call in Kuwait time and on the lead's clock, the
+ * rep's first name. `due`: a call in this step went unanswered.
+ */
+function voiceNote(
+  i: number,
+  step: "new" | "booked" | "confirm",
+  start: number | null,
+  due: boolean,
+): Row {
+  const l = LEADS[i];
+  const theirs =
+    l.country === "AE" && start !== null
+      ? `${kwClock(start + H)} their time`
+      : null;
+  const kuwait = start === null ? null : kwWords(start);
+  return {
+    due,
+    step,
+    first_name: String(l.name).split(/\s+/)[0],
+    company: l.company,
+    country: (
+      {
+        SA: "Saudi Arabia",
+        KW: "Kuwait",
+        AE: "United Arab Emirates",
+        QA: "Qatar",
+      } as Record<string, string>
+    )[String(l.country)],
+    services: null,
+    revenue: l.revenue,
+    goal: l.revenue_goal,
+    challenge: l.challenge,
+    projects_12m: null,
+    ready_to_invest: l.readiness,
+    decision_maker: l.decision_maker,
+    call:
+      start === null
+        ? null
+        : { type: "intro", start_at: iso(start), kuwait, theirs },
+    language: "ar",
+    rep: { first_name: "Sara", first_name_ar: "سارة" },
+    missing: [
+      "what they do",
+      "projects signed in the last 12 months (the form does not ask)",
+    ],
+  };
+}
+
+/** "Sat 26 Sep, 10:20" in Kuwait time, as sales-api kuwaitWords says it. */
+function kwWords(ms: number): string {
+  const d = new Date(ms + 3 * H);
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()];
+  const mon = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ][d.getUTCMonth()];
+  return `${day} ${d.getUTCDate()} ${mon}, ${kwClock(ms)}`;
+}
+
+/**
+ * Today's speed to lead for the dialer's strip (dial.queue speed): seven new
+ * sales leads, five called, three of them inside five minutes, two still
+ * waiting, the oldest for 38 minutes.
+ */
+export function speedToday(): Row {
+  return {
+    leads: 7,
+    called: 5,
+    within5: 3,
+    median_min: 4.5,
+    not_called: 2,
+    oldest_waiting: {
+      contact_id: LEADS[19].contact_id,
+      name: LEADS[19].name,
+      minutes: 38,
+    },
+    calls_as_of: iso(Date.now() - 2 * MIN),
+    not_known: [],
+  };
 }
 
 /** Saves HighLevel has not taken: one it refused, one still waiting. */

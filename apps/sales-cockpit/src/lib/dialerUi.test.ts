@@ -564,3 +564,35 @@ describe("server sentences on screen", () => {
     expect(plainError(null)).toBe("");
   });
 });
+
+describe("the strip with missed calls keeps his intro first (2026-11-05)", () => {
+  test("a missed call from a minute ago does not go above the intro at its minute", () => {
+    const now = Date.parse("2026-09-26T12:58:00Z");
+    const e = urgentFor(
+      [
+        item({
+          contact_id: "m",
+          why: "Called us, missed it",
+          inbound_call_at: new Date(now - 60_000).toISOString(),
+        }),
+        item({
+          contact_id: "i",
+          kind: "intro",
+          appointment: {
+            id: "a",
+            type: "intro",
+            start_at: "2026-09-26T13:05:00Z",
+            booked_at: null,
+            assigned_user_id: null,
+            confirmed: false,
+          },
+        }),
+      ],
+      now,
+    );
+    expect(e.map(x => x.contact_id)).toEqual(["i", "m"]);
+  });
+  test("a save of Not ready yet reads in plain words", () => {
+    expect(outcomeWords("not_ready")).toBe("Not ready yet");
+  });
+});

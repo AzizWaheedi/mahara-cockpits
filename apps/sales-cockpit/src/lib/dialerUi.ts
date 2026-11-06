@@ -14,6 +14,7 @@ import {
   type QueueItem,
   type UrgentEvent,
   urgentEvents,
+  urgentOrder,
 } from "./dialer";
 import { ago, clock, dayLabel } from "./format";
 import { OVERDUE_MS, roomDeadline } from "./roomClock";
@@ -117,9 +118,7 @@ export function urgentFor(items: DialItem[], now: number): UrgentEvent[] {
       callback: false,
     });
   }
-  return [...urgentEvents(rest, now), ...missed].sort(
-    (a, b) => a.deadline - b.deadline || a.key.localeCompare(b.key),
-  );
+  return [...urgentEvents(rest, now), ...missed].sort(urgentOrder);
 }
 
 /**
@@ -265,6 +264,7 @@ const OUTCOME_WORDS: Record<string, string> = {
   callback: "Call back",
   booked: "Booked",
   not_interested: "Not interested",
+  not_ready: "Not ready yet",
   disqualified: "Disqualified",
   wrong_number: "Wrong number",
   handled: "Handled",

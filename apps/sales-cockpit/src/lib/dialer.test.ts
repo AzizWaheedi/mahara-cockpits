@@ -132,3 +132,58 @@ describe("appointment work in the strip", () => {
     expect(countdown(e[1], now)).toBe("Due in 92 min");
   });
 });
+
+describe("the setter's one queue in the strip (2026-11-05)", () => {
+  const now = Date.parse("2026-09-26T12:58:00Z"); // 15:58 Kuwait
+  const intro = item({
+    contact_id: "i",
+    kind: "intro",
+    code: "intro_now",
+    appointment: {
+      id: "a",
+      type: "intro",
+      start_at: "2026-09-26T13:00:00Z",
+      booked_at: null,
+      assigned_user_id: null,
+      confirmed: false,
+    },
+  });
+  test("his intro is first at its minute, even beside a new lead whose two minutes end sooner", () => {
+    const e = urgentEvents(
+      [
+        item({ contact_id: "n", created_at: "2026-09-26T12:57:30Z" }),
+        item({ contact_id: "r", inbound_at: "2026-09-26T12:56:30Z" }),
+        intro,
+      ],
+      now,
+    );
+    expect(e.map(x => x.contact_id)).toEqual(["i", "r", "n"]);
+    expect(e[0]?.pinned).toBe(true);
+  });
+  test("a lead's own booking has a new lead's two minutes; the second try is due at its time", () => {
+    const e = urgentEvents(
+      [
+        item({
+          contact_id: "b",
+          code: "just_booked",
+          why: "Booked an intro for tomorrow at 10:00, call now",
+          due_since: "2026-09-26T12:57:00Z",
+        }),
+        item({
+          contact_id: "s",
+          code: "second_try",
+          why: "Second try now",
+          created_at: "2026-09-26T12:50:00Z",
+          due_since: "2026-09-26T12:58:00Z",
+        }),
+      ],
+      now,
+    );
+    expect(e.map(x => [x.contact_id, x.title])).toEqual([
+      ["s", "Second try"],
+      ["b", "Booked an intro"],
+    ]);
+    expect(countdown(e[0], now)).toBe("Due now");
+    expect(countdown(e[1], now)).toBe("Dial within 1:00");
+  });
+});

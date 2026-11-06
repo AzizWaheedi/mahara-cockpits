@@ -86,6 +86,7 @@ import {
   type ItemKind,
   type MaqsamCall,
   matchCall,
+  mergeMisses,
   nextMorning,
   OUTCOMES,
   type Outcome,
@@ -95,6 +96,17 @@ import {
   roomJoinedFor,
   routePhone,
   slotOffered,
+  speedToday,
+  lineAddress,
+  stageConfirms,
+  burstAnchor,
+  FIRST_CALL_NEW,
+  firstTry,
+  unpairedCalls,
+  quickRetryDue,
+  voiceFacts,
+  type VoiceStep,
+  type Ranked,
 } from "./dialer.ts";
 import { callAttended, callReviewed, dayBounds, reviewVersion, type ReviewCall } from "./dayReview.ts";
 import { makeDemoHandoffs } from "./demoHandoffs.ts";
@@ -3899,21 +3911,75 @@ const ms = (v: unknown) => {
  * own state, the open calls and the replies are read fresh on every request,
  * so an outcome someone saves moves the lead at once.
  */
-let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[]; missed: Row[] } | null = null;
+type Heavy = { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[]; missed: Row[] };
+let heavy: Heavy | null = null;
 const HEAVY_FOR = 20_000;
 const LEAD_COLS =
-  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags,country";
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags,country,opp_updated_at";
 
-type DialFacts = { last: number; reached: boolean; tries: number[] };
+/** Every outbound call to a lead: the last, whether one was answered, the unanswered ones, and all of them. */
+type DialFacts = { last: number; reached: boolean; tries: number[]; all: number[] };
 
 function mergeDials(a: DialFacts | undefined, b: DialFacts | undefined): DialFacts | null {
   if (!a) return b ?? null;
   if (!b) return a;
-  return { last: Math.max(a.last, b.last), reached: a.reached || b.reached, tries: [...a.tries, ...b.tries] };
+  return { last: Math.max(a.last, b.last), reached: a.reached || b.reached, tries: [...a.tries, ...b.tries], all: [...a.all, ...b.all] };
 }
 
-async function heavyReads(now: number) {
+/**
+ * Replies waiting on a person (Aziz, 2026-11-05: the setter's one queue).
+ * Two copies are read together: the conversations copy Messages uses (every
+ * minute; 20261029j needs_reply: the lead's last message after any written
+ * reply by a person and any "No reply needed" mark), for the last seven
+ * days, and the inbox copy (every three minutes, the 100 newest
+ * conversations, last message theirs) for the last day. An inbox reply the
+ * rep since marked "No reply needed" does not count. Either copy may be
+ * unread (the other stands, said in the log); both unread is an error.
+ */
+async function waitingReplies(now: number): Promise<{ rows: Row[]; source: "both" | "conversations" | "inbox" }> {
+  const day = enc(new Date(now - 86_400_000).toISOString());
+  const unread = (what: string) => (e: unknown) => {
+    console.error(`${what} unread`, redact(String((e as Error)?.message ?? e)));
+    return null;
+  };
+  const [conv, cleared, inbox] = await Promise.all([
+    svc(
+      `cockpit_sales_conversations?needs_reply=eq.true&last_in_at=gte.${enc(new Date(now - 7 * 86_400_000).toISOString())}&select=contact_id,last_in_at,last_in_channel,phone,tags&order=last_in_at.desc&limit=2000`,
+    ).catch(unread("conversations")),
+    svc(`cockpit_sales_conversations?cleared_at=gte.${day}&select=contact_id,cleared_at&limit=2000`).catch(unread("cleared conversations")),
+    svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${day}`).catch(
+      unread("inbox"),
+    ),
+  ]);
+  if (conv === null && inbox === null) throw new Error("Neither copy of the lead's messages could be read.");
+  const clearedAt = new Map<string, number>();
+  for (const r of cleared ?? []) {
+    const t = ms(r.cleared_at);
+    const k = String(r.contact_id ?? "");
+    if (k && t && (clearedAt.get(k) ?? 0) < t) clearedAt.set(k, t);
+  }
+  const rows: Row[] = [
+    ...(conv ?? []).map(r => ({ contact_id: r.contact_id, at: r.last_in_at, channel: r.last_in_channel ?? null, phone: r.phone ?? null, tags: r.tags ?? null })),
+    ...(inbox ?? [])
+      .filter(r => (ms(r.last_message_at) ?? 0) > (clearedAt.get(String(r.contact_id ?? "")) ?? 0))
+      .map(r => ({ contact_id: r.contact_id, at: r.last_message_at, channel: null, phone: null, tags: null })),
+  ];
+  return { rows, source: conv && inbox ? "both" : conv ? "conversations" : "inbox" };
+}
+
+/** The heavy read under way, so two callers at once (the queue and its speed strip) share one read. */
+let heavyPending: Promise<Heavy> | null = null;
+
+async function heavyReads(now: number): Promise<Heavy> {
   if (heavy && now - heavy.at < HEAVY_FOR) return heavy;
+  if (heavyPending) return heavyPending;
+  heavyPending = readHeavy(now).finally(() => {
+    heavyPending = null;
+  });
+  return heavyPending;
+}
+
+async function readHeavy(now: number): Promise<Heavy> {
   const since30 = new Date(now - 30 * 86_400_000).toISOString();
   const since60 = new Date(now - 60 * 86_400_000).toISOString();
   const since1 = new Date(now - 86_400_000).toISOString();
@@ -3955,11 +4021,17 @@ type QueueCandidate = Candidate &
   CloserFacts & { demo_rep: string | null; phone8: string | null; step: number; last_outcome: string | null };
 
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
-async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
+async function candidates(now: number): Promise<{
+  list: QueueCandidate[];
+  seats: Row[];
+  replies: { rows: Row[]; source: "both" | "conversations" | "inbox" };
+  touchesRead: boolean;
+}> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries, roomHeld, roomJoins, roomTalks] = await Promise.all([
+  const twoHours = enc(new Date(now - 2 * 3_600_000).toISOString());
+  const [states, replies, attempts, h, confirmations, hotList, roles, seats, introTries, roomHeld, roomJoins, roomTalks, leadMisses, touches, repBookings] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
-    svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
+    waitingReplies(now),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
     heavyReads(now),
     svc(`cockpit_sales_confirmations?select=appointment_id,result,at,start_at&start_at=gte.${soon}&order=at.desc&limit=2000`),
@@ -3968,7 +4040,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     // 2026-09-27 migration is in.
     svc("cockpit_sales_hot?select=*&removed_at=is.null&limit=2000"),
     stageRoles(),
-    svc("cockpit_sales_people?select=email,ghl_user_id,role&active=eq.true&via_portal=eq.true&limit=500"),
+    svc("cockpit_sales_people?select=email,ghl_user_id,role,name,name_ar&active=eq.true&via_portal=eq.true&limit=500"),
     // Intro calls that rang out in the last hour: the intro waits a few
     // minutes before it comes back (dialer.ts introWaiting).
     svc(`cockpit_sales_attempts?select=appointment_id,saved_at&state=eq.saved&item_kind=eq.intro&outcome=eq.no_answer&saved_at=gte.${soon}&limit=2000`),
@@ -3998,7 +4070,38 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       console.error("room talks unread", redact(String((e as Error)?.message ?? e)));
       return [] as Row[];
     }),
+    // Lead calls nobody answered in the last two hours, as the dialer saved
+    // them: the burst's second try and its voice note (dialer.ts secondTry).
+    svc(
+      `cockpit_sales_attempts?select=contact_id,saved_at&state=eq.saved&item_kind=eq.lead&outcome=eq.no_answer&saved_at=gte.${twoHours}&limit=2000`,
+    ),
+    // Voice notes recorded in the last two days (20261105w). Unread (the
+    // table not there yet): every voice note is still due, said in the log.
+    svc(`cockpit_sales_touches?select=contact_id,at&kind=eq.voice_note&at=gte.${enc(new Date(now - 2 * 86_400_000).toISOString())}&limit=2000`).catch(e => {
+      console.error("voice notes unread", redact(String((e as Error)?.message ?? e)));
+      return null;
+    }),
+    // Intros a rep booked from the cockpit in the last two hours: not the
+    // lead's own booking, so never "Booked an intro, call now".
+    svc(`cockpit_sales_bookings?select=appointment_id&appointment_id=not.is.null&created_at=gte.${twoHours}&limit=500`).catch(e => {
+      console.error("cockpit bookings unread", redact(String((e as Error)?.message ?? e)));
+      return [] as Row[];
+    }),
   ]);
+  const inbox = replies.rows;
+  const savedMissBy = new Map<string, number[]>();
+  for (const r of leadMisses) {
+    const k = String(r.contact_id ?? "");
+    const t = ms(r.saved_at);
+    if (k && t) savedMissBy.set(k, [...(savedMissBy.get(k) ?? []), t]);
+  }
+  const voiceBy = new Map<string, number>();
+  for (const r of touches ?? []) {
+    const k = String(r.contact_id ?? "");
+    const t = ms(r.at);
+    if (k && t && (voiceBy.get(k) ?? 0) < t) voiceBy.set(k, t);
+  }
+  const repBooked = new Set(repBookings.map(r => String(r.appointment_id ?? "")).filter(Boolean));
   const talkedBy = new Map<string, number>();
   for (const r of roomTalks) {
     const k = String(r.contact_id ?? "");
@@ -4030,6 +4133,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       .filter(s => s.ghl_user_id && ["setter", "closer", "both"].includes(String(s.role)))
       .map(s => [String(s.ghl_user_id), String(s.email)] as const),
   );
+  const roleOf = new Map(seats.map(s => [String(s.email), String(s.role ?? "")] as const));
   const leads = [...h.leads];
   // Beyond the last 30 days' leads and anyone with a call in the window
   // (heavyReads): on the hot list, who wrote in the last day, or with a
@@ -4050,7 +4154,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const stateBy = new Map(states.map(s => [String(s.contact_id), s]));
   const inboxBy = new Map<string, number>();
   for (const i of inbox) {
-    const t = ms(i.last_message_at);
+    const t = ms(i.at);
     const k = String(i.contact_id ?? "");
     if (k && t && (!inboxBy.has(k) || (inboxBy.get(k) ?? 0) < t)) inboxBy.set(k, t);
   }
@@ -4079,12 +4183,13 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     const k = d.contact_id ? `c:${d.contact_id}` : d.lead_phone8 ? `p:${d.lead_phone8}` : "";
     const t = ms(d.occurred_at);
     if (!k || !t) continue;
-    const cur = dialBy.get(k) ?? { last: 0, reached: false, tries: [] };
+    const cur = dialBy.get(k) ?? { last: 0, reached: false, tries: [], all: [] };
     const answered = d.state === "completed";
     dialBy.set(k, {
       last: Math.max(cur.last, t),
       reached: cur.reached || answered,
       tries: answered ? cur.tries : [...cur.tries, t],
+      all: [...cur.all, t],
     });
   }
   // A lead's own confirmation, and the last try that reached no one, per
@@ -4095,16 +4200,21 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const confirmedAt = (id: string, start: unknown): boolean =>
     (confirmsBy.get(id) ?? []).some(c => confirmationCounts(c, { start_at: start }));
   const lastTry = new Map<string, number>();
+  // The last try that was a call nobody answered (not a message sent): the
+  // confirmation's voice note follows only that (dialer.ts voiceNoteDue).
+  const lastMiss = new Map<string, number>();
   for (const c of confirmations) {
     const id = String(c.appointment_id);
     if (c.result === "confirmed" || c.result === "reschedule") confirmsBy.set(id, [...(confirmsBy.get(id) ?? []), c]);
     const t = ms(c.at);
     if ((c.result === "no_answer" || c.result === "message_sent") && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
+    if (c.result === "no_answer" && t && (lastMiss.get(id) ?? 0) < t) lastMiss.set(id, t);
   }
   for (const r of introTries) {
     const id = String(r.appointment_id ?? "");
     const t = ms(r.saved_at);
     if (id && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
+    if (id && t && (lastMiss.get(id) ?? 0) < t) lastMiss.set(id, t);
   }
   const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
   // An active client (tagged client in HighLevel) is never in the queue
@@ -4196,7 +4306,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     const lastOutcomeAt = ms(st.last_outcome_at);
     // A call-back booked on HighLevel's Callback or Follow Up calendar is a
     // call-back like one set in the dialer, until an outcome is saved after it.
-    const bookedBack =
+    const backRow =
       mine
         .filter(
           a =>
@@ -4205,17 +4315,50 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
             (ms(a.start_at) ?? 0) >= now - 86_400_000 &&
             (ms(a.start_at) ?? 0) > (lastOutcomeAt ?? 0),
         )
-        .map(a => ms(a.start_at) ?? 0)
-        .sort((x, y) => x - y)[0] ?? null;
-    const callbackAt = [ms(st.callback_at), bookedBack].filter((x): x is number => x !== null).sort((x, y) => x - y)[0] ?? null;
+        .sort((x, y) => (ms(x.start_at) ?? 0) - (ms(y.start_at) ?? 0))[0] ?? null;
+    const bookedBack = backRow ? (ms(backRow.start_at) ?? 0) : null;
+    const stateBack = ms(st.callback_at);
+    const callbackAt = [stateBack, bookedBack].filter((x): x is number => x !== null).sort((x, y) => x - y)[0] ?? null;
+    // Whose call-back it is (the owner rule, 2026-11-05): the rep who set it
+    // in the dialer, or the working seat whose calendar it is on.
+    const callbackOwner =
+      callbackAt === null
+        ? null
+        : callbackAt === stateBack && st.callback_by && working.has(String(st.callback_by))
+          ? String(st.callback_by)
+          : callbackAt === bookedBack && backRow
+            ? (ownerOf.get(String(backRow.assigned_user_id ?? "")) ?? null)
+            : null;
     const missedAt =
       Math.max(missedBy.get(`c:${id}`) ?? 0, l.phone8 ? (missedBy.get(`p:${l.phone8}`) ?? 0) : 0) || null;
-    // A reply, a missed call from them, or a call-back booked after the lead
-    // was closed opens them up again.
+    // The lead's own intro booking of the last hour (Aziz, 2026-11-05: call
+    // them then and there): not one a rep made from the cockpit, nor one a
+    // rep made on the phone (a call or a saved outcome in the half hour
+    // before it, critic 5).
+    const lastBooking = mine
+      .filter(
+        a =>
+          a.call_type === "intro" &&
+          (ms(a.start_at) ?? 0) > now &&
+          !["cancelled", "invalid"].includes(String(a.status ?? "")) &&
+          (ms(a.booked_at) ?? 0) >= now - 3_600_000,
+      )
+      .sort((x, y) => (ms(y.booked_at) ?? 0) - (ms(x.booked_at) ?? 0))[0];
+    const bookedMs = lastBooking ? ms(lastBooking.booked_at) : null;
+    const onThePhone = (t: number) =>
+      (dial?.all ?? []).some(x => x >= t - 30 * 60_000 && x <= t) ||
+      (lastOutcomeAt !== null && lastOutcomeAt >= t - 30 * 60_000 && lastOutcomeAt <= t + 120_000);
+    const justBooked =
+      lastBooking && bookedMs !== null && !repBooked.has(String(lastBooking.appointment_id)) && !onThePhone(bookedMs)
+        ? { id: String(lastBooking.appointment_id), start: ms(lastBooking.start_at) ?? 0, booked: bookedMs }
+        : null;
+    // A reply, a missed call from them, a call-back booked, or their own
+    // intro booking after the lead was closed opens them up again.
     const reopened =
       Boolean(inboundAt && closedAt && inboundAt > closedAt) ||
       Boolean(missedAt && closedAt && missedAt > closedAt) ||
-      Boolean(bookedBack && closedAt && bookedBack > closedAt);
+      Boolean(bookedBack && closedAt && bookedBack > closedAt) ||
+      Boolean(justBooked && closedAt && justBooked.booked > closedAt);
     const bookedPast = st.closed === "booked" && !future;
     // A talk in a video room after the dialer's last outcome, when that was
     // Maqsam's No answer (stress2 round 6): the lead was reached, so the
@@ -4231,6 +4374,63 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     });
     const closed = talk.closed && !reopened && !bookedPast ? talk.closed : null;
     const lastDial = Math.max(dial?.last ?? 0, lastOutcomeAt ?? 0) || null;
+    // The lead's latest intro, when it was cancelled in the last week (or is
+    // still ahead and cancelled): "Cancelled the intro, rebook it".
+    const lastIntro = mine
+      .filter(a => a.call_type === "intro" && (ms(a.start_at) ?? 0) >= now - 7 * 86_400_000)
+      .sort((x, y) => (ms(y.start_at) ?? 0) - (ms(x.start_at) ?? 0))[0];
+    const cancelledIntroAt = lastIntro && lastIntro.status === "cancelled" ? ms(lastIntro.start_at) : null;
+    // Their latest intro or demo past its twenty minutes that nobody marked:
+    // the latest of each kind too, since the setter marks intros and the
+    // closer demos (a demo booked straight after the intro never hides it).
+    const owedAll = mine
+      .filter(
+        a =>
+          (a.call_type === "intro" || a.call_type === "demo") &&
+          (ms(a.start_at) ?? 0) < now - 20 * 60_000 &&
+          (ms(a.start_at) ?? 0) >= now - 7 * 86_400_000 &&
+          !["cancelled", "noshow", "invalid", "showed"].includes(String(a.status ?? "")),
+      )
+      .sort((x, y) => (ms(y.start_at) ?? 0) - (ms(x.start_at) ?? 0));
+    const owed = owedAll[0];
+    const owedIntro = owedAll.find(a => a.call_type === "intro");
+    const owedDemo = owedAll.find(a => a.call_type === "demo");
+    const toAppt = (a: Row | undefined): Appt | null =>
+      a
+        ? {
+            id: String(a.appointment_id),
+            type: (a.call_type === "demo" ? "demo" : "intro") as Appt["type"],
+            start: ms(a.start_at) ?? 0,
+            booked: ms(a.booked_at),
+            status: (a.status as string) ?? null,
+            assigned: (a.assigned_user_id as string) ?? null,
+            confirmed: false,
+            last_try: null,
+          }
+        : null;
+    // The burst's unanswered tries of the last two hours, one per call.
+    const missTimes = mergeMisses(
+      savedMissBy.get(id) ?? [],
+      (dial?.tries ?? []).filter(t => t >= now - 2 * 3_600_000),
+    );
+    // The lead's first call since it came in, when nobody picked it up: a
+    // lead from the night or the weekend gets its burst from that call
+    // (dialer.ts burstAnchor). Maqsam's outbound calls, the dialer's
+    // unanswered saves, and its last saved outcome.
+    const sinceIn = (t: number) => created !== null && t >= created;
+    const firstTryAt =
+      created !== null && now - created <= FIRST_CALL_NEW + 3_600_000
+        ? firstTry(
+            [
+              ...(dial?.all ?? []).filter(sinceIn).map(t => ({ at: t, miss: (dial?.tries ?? []).includes(t) })),
+              ...(savedMissBy.get(id) ?? []).filter(sinceIn).map(t => ({ at: t, miss: true })),
+              ...(lastOutcomeAt !== null && sinceIn(lastOutcomeAt) ? [{ at: lastOutcomeAt, miss: st.last_outcome === "no_answer" }] : []),
+            ],
+            created,
+          )
+        : null;
+    const ownerEmail = ownerOf.get(String(l.assigned_to ?? "")) ?? null;
+    const stageAt = ms(l.opp_updated_at);
     return {
       contact_id: id,
       name: (l.name as string) ?? null,
@@ -4265,7 +4465,19 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       hot: Boolean(hot),
       // A leaver's hot lead is anyone's to follow up.
       hot_owner: hot && working.has(String(hot.owner_email ?? "")) ? String(hot.owner_email) : null,
-      owner: ownerOf.get(String(l.assigned_to ?? "")) ?? null,
+      owner: ownerEmail,
+      owner_role: ownerEmail ? (roleOf.get(ownerEmail) ?? null) : null,
+      callback_owner: callbackOwner,
+      just_booked: justBooked,
+      miss_times: missTimes,
+      voice_note_at: voiceBy.get(id) ?? null,
+      cancelled_intro_at: cancelledIntroAt,
+      unmarked: toAppt(owed),
+      unmarked_intro: toAppt(owedIntro),
+      unmarked_demo: toAppt(owedDemo),
+      first_try_at: firstTryAt,
+      closed_at: closed ? closedAt : null,
+      voice_known: touches !== null,
       inbound_call_at: missedAt,
       hot_next_at: hot ? ms(hot.next_at) : null,
       appt: current
@@ -4276,8 +4488,17 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
             booked: ms(current.booked_at),
             status: (current.status as string) ?? null,
             assigned: (current.assigned_user_id as string) ?? null,
-            confirmed: confirmedAt(String(current.appointment_id), current.start_at),
+            // The lead's own yes: a confirmation saved in the cockpit, or the
+            // CONFIRMED stage entered after the booking (never HighLevel's
+            // status: every calendar confirms on booking).
+            confirmed:
+              confirmedAt(String(current.appointment_id), current.start_at) ||
+              stageConfirms(role, (l.stage_name as string) ?? null, stageAt, {
+                type: current.call_type === "demo" ? "demo" : "intro",
+                booked: ms(current.booked_at),
+              }),
             last_try: lastTry.get(String(current.appointment_id)) ?? null,
+            last_miss: lastMiss.get(String(current.appointment_id)) ?? null,
             room_joined: roomJoinedFor(joinsByAppt.get(String(current.appointment_id)) ?? [], {
               id: String(current.appointment_id),
               start: ms(current.start_at) ?? 0,
@@ -4289,7 +4510,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
         : null,
     };
   });
-  return { list };
+  return { list, seats, replies, touchesRead: touches !== null };
 }
 
 /**
@@ -4327,11 +4548,105 @@ async function today(who: Who, now: number) {
   };
 }
 
+/** Items whose screen offers the voice-note script (the burst, a confirmation, a voice note due). */
+const VOICE_CODES = new Set(["new_lead", "just_booked", "second_try", "voice_note", "confirm", "confirm_last"]);
+
+/** The step a voice note after this item would follow. */
+function voiceStepOf(r: Ranked, now: number): VoiceStep | null {
+  if (r.voice_step) return r.voice_step;
+  if (!VOICE_CODES.has(r.code)) return null;
+  if (r.kind === "confirm" || r.code === "confirm" || r.code === "confirm_last") return "confirm";
+  if (r.code === "just_booked") return "booked";
+  return burstAnchor(r, now)?.step ?? "new";
+}
+
+/**
+ * The sales seats' Maqsam addresses (dialer.ts salesLineCall): every seat's
+ * and B2B's roster's, kept five minutes in this instance (a seat's address
+ * changes on the Team page, rarely).
+ */
+let lineCache: { at: number; line: Set<string> } | null = null;
+const LINE_FOR = 5 * 60_000;
+async function lineAgents(now: number): Promise<Set<string>> {
+  if (lineCache && now - lineCache.at < LINE_FOR) return lineCache.line;
+  const [people, reps] = await Promise.all([
+    svc("cockpit_sales_people?select=maqsam_email&maqsam_email=not.is.null&limit=500"),
+    svc("cockpit_sales_reps?select=maqsam_email&maqsam_email=not.is.null&limit=500"),
+  ]);
+  const line = new Set([...people, ...reps].map(r => lineAddress(r.maqsam_email)).filter(a => a.includes("@")));
+  lineCache = { at: now, line };
+  return line;
+}
+
+/** Today's Maqsam calls, both directions, with who made them: kept as long as the heavy reads. */
+let todayCalls: { at: number; day: string; rows: Row[] } | null = null;
+
+/**
+ * Today's speed to lead for the setter's strip (Aziz, 2026-11-05): the
+ * Numbers page's rule (lib/calls.ts), the first call by a sales seat in
+ * either direction (B2B's rep id, or a seat's Maqsam address, so the
+ * setter's calls count), plus the dialer's own placed calls, which reach
+ * Maqsam's copy a few minutes later. What could not be read is named,
+ * never counted as zero.
+ */
+async function speedNow(now: number): Promise<Row> {
+  const day = new Date(kuwaitAt(now, 0)).toISOString();
+  const dayStart = enc(day);
+  const [h, dials, line, own, copied] = await Promise.all([
+    heavyReads(now),
+    todayCalls && todayCalls.day === day && now - todayCalls.at < HEAVY_FOR
+      ? Promise.resolve(todayCalls.rows)
+      : svcAll(
+          `cockpit_sales_dials?select=call_id,contact_id,lead_phone8,occurred_at,agent_email,sales_rep_id&occurred_at=gte.${dayStart}&order=call_id`,
+        ).then(rows => {
+          todayCalls = { at: now, day, rows };
+          return rows;
+        }),
+    lineAgents(now).catch(e => {
+      console.error("speed: seats' Maqsam addresses unread", redact(String((e as Error)?.message ?? e)));
+      return null;
+    }),
+    // Only calls Maqsam took (placed, or saved or let go after it gave a
+    // reference or a call record): a call it refused, or one let go while
+    // still dialing, never rang, so it is not the lead's first call.
+    svc(
+      `cockpit_sales_attempts?select=contact_id,started_at&manual=eq.false&state=in.(placed,saved,released)&or=(state.eq.placed,maqsam_ref.not.is.null,maqsam_call_id.not.is.null)&started_at=gte.${dayStart}&limit=2000`,
+    ).catch(e => {
+      console.error("speed: dialer calls unread", redact(String((e as Error)?.message ?? e)));
+      return null;
+    }),
+    svc("cockpit_sales_dials?select=mirrored_at&order=mirrored_at.desc&limit=1").catch(e => {
+      console.error("speed: copy time unread", redact(String((e as Error)?.message ?? e)));
+      return null;
+    }),
+  ]);
+  const calls = [
+    ...dials,
+    ...(own ?? []).map(a => ({ contact_id: a.contact_id, occurred_at: a.started_at, seat: true })),
+  ];
+  const leads = h.leads.map(l => ({
+    contact_id: String(l.contact_id),
+    name: (l.name as string) ?? null,
+    phone8: (l.phone8 as string) ?? null,
+    lead_created_at: l.lead_created_at,
+    lead_class: l.lead_class,
+  }));
+  return {
+    ...speedToday(leads, calls, now, line ?? new Set()),
+    calls_as_of: (copied?.[0]?.mirrored_at as string) ?? null,
+    not_known: [
+      ...(own === null ? ["the dialer's own calls today"] : []),
+      ...(line === null ? ["the calls of seats with no B2B rep row (their Maqsam addresses could not be read)"] : []),
+      ...(copied === null ? ["how fresh Maqsam's copy is"] : []),
+    ],
+  };
+}
+
 async function dialQueue(who: Who, b: Row) {
   const now = Date.now();
   const as = String(b.as ?? (who.role === "closer" ? "closer" : "setter"));
   const me = String(who.email);
-  const [{ list }, day, open, unsynced] = await Promise.all([
+  const [{ list, seats, replies, touchesRead }, day, open, unsynced, speed] = await Promise.all([
     candidates(now),
     today(who, now),
     svc(`cockpit_sales_attempts?select=*&rep_email=eq.${enc(me)}&state=in.(dialing,placed)&order=started_at.desc&limit=1`),
@@ -4339,6 +4654,10 @@ async function dialQueue(who: Who, b: Row) {
     svc(
       `cockpit_sales_attempts?select=id,contact_id,outcome,saved_at,crm_note,crm_error&rep_email=eq.${enc(me)}&state=eq.saved&crm_note=in.(pending,failed)&saved_at=gte.${enc(new Date(now - 86_400_000).toISOString())}&order=saved_at.desc&limit=50`,
     ),
+    speedNow(now).catch(e => {
+      console.error("speed unread", redact(String((e as Error)?.message ?? e)));
+      return null;
+    }),
   ]);
   // A note still pending after two minutes is not coming by itself.
   const stuck = unsynced.filter(
@@ -4377,10 +4696,76 @@ async function dialQueue(who: Who, b: Row) {
     if (String(c.phone ?? "").trim()) undialable.other += 1;
     else undialable.no_phone += 1;
   }
+  // Replies waiting on a person from leads the dialer cannot call (DMs with
+  // no phone, numbers abroad): Messages' work, counted so the screen links there.
+  const byId = new Map(list.map(c => [c.contact_id, c] as const));
+  const elsewhere = { count: 0, oldest_at: null as string | null, source: replies.source };
+  const counted = new Set<string>();
+  for (const r of replies.rows) {
+    const id = String(r.contact_id ?? "");
+    const c = byId.get(id);
+    // One per lead; a row known only by the inbox copy (no tags, no phone)
+    // counts when the lead is in the queue's list.
+    if (!id || counted.has(id) || (!c && !Array.isArray(r.tags))) continue;
+    if (isClient(r) || c?.signed || c?.dnd) continue;
+    if (routePhone(c?.phone ?? r.phone).ok) continue;
+    counted.add(id);
+    elsewhere.count += 1;
+    const at = ms(r.at);
+    if (at && (!elsewhere.oldest_at || at < Date.parse(elsewhere.oldest_at))) elsewhere.oldest_at = new Date(at).toISOString();
+  }
+  const shown = ranked.slice(0, Math.min(80, Number(b.limit ?? 25)));
+  // The voice note's facts for the items that may need one, and the call to
+  // mark for a mark item, read for the shown items only.
+  const voiceIds = [...new Set(shown.filter(r => voiceStepOf(r, now)).map(r => r.contact_id))];
+  const markIds = [...new Set(shown.map(r => r.mark?.id).filter((x): x is string => Boolean(x)))];
+  const [factRows, markRows] = await Promise.all([
+    voiceIds.length
+      ? svc(
+          `cockpit_sales_leads?contact_id=in.(${voiceIds.map(enc).join(",")})&select=contact_id,name,company,country,services,revenue,revenue_goal,readiness,decision_maker,challenge`,
+        ).catch(e => {
+          console.error("voice note facts unread", redact(String((e as Error)?.message ?? e)));
+          return [] as Row[];
+        })
+      : Promise.resolve([] as Row[]),
+    markIds.length
+      ? svc(`cockpit_sales_calendar?appointment_id=in.(${markIds.map(enc).join(",")})&select=*`).catch(e => {
+          console.error("calls to mark unread", redact(String((e as Error)?.message ?? e)));
+          return [] as Row[];
+        })
+      : Promise.resolve([] as Row[]),
+  ]);
+  const factsBy = new Map(factRows.map(r => [String(r.contact_id), r] as const));
+  const markBy = new Map(markRows.map(r => [String(r.appointment_id), r] as const));
+  const seat = seats.find(s => String(s.email) === me) ?? { name: who.name ?? null, name_ar: null };
+  const voiceFor = (r: Ranked) => {
+    const step = voiceStepOf(r, now);
+    const lead = step ? factsBy.get(r.contact_id) : undefined;
+    if (!step || !lead) return null;
+    const call =
+      step === "confirm" && r.appt
+        ? { type: r.appt.type, start: r.appt.start }
+        : r.just_booked
+          ? { type: "intro" as const, start: r.just_booked.start }
+          : r.appt && r.appt.start > now
+            ? { type: r.appt.type, start: r.appt.start }
+            : null;
+    return {
+      due: r.voice_step !== null,
+      // False before 20261105w: "not due" then says nothing about whether one went.
+      known: touchesRead,
+      ...voiceFacts(step, lead, call, { name: seat.name ?? who.name, name_ar: seat.name_ar }),
+    };
+  };
   return {
     as,
     counts,
     undialable,
+    // Today's speed to lead for the strip; null when it could not be read.
+    speed,
+    messages: elsewhere,
+    // False: the voice notes could not be read, so each shows as still due.
+    voice_notes_known: touchesRead,
     saved_work: stuck.map(a => ({
       attempt_id: String(a.id),
       contact_id: String(a.contact_id),
@@ -4392,10 +4777,20 @@ async function dialQueue(who: Who, b: Row) {
     })),
     open: open[0] ?? null,
     today: day,
-    queue: ranked.slice(0, Math.min(80, Number(b.limit ?? 25))).map(r => {
+    queue: shown.map(r => {
       // rankFor* keep every field of the lead they were given.
       const c = r as typeof r & Partial<CloserFacts> & { step: number; last_outcome: string | null };
       return {
+        code: r.code,
+        due_since: iso(r.due_since),
+        voice_step: r.voice_step,
+        voice_note: voiceFor(r),
+        just_booked: r.just_booked
+          ? { appointment_id: r.just_booked.id, start_at: iso(r.just_booked.start), booked_at: iso(r.just_booked.booked) }
+          : null,
+        // The call to mark (the rep's own, past its twenty minutes): its
+        // calendar row, as the mark controls and the after-call rating read it.
+        mark_call: r.mark ? (markBy.get(r.mark.id) ?? null) : null,
         contact_id: r.contact_id,
         name: r.name,
         phone: r.phone,
@@ -4609,12 +5004,16 @@ async function saveOutcome(
     /** A manual save's own id, so saving it again after a dropped connection is the same save. */
     requestId?: string | null;
   } = {},
-): Promise<{ attempt: Row; state: Row; stage_move?: Row | null } | null> {
+): Promise<{ attempt: Row; state: Row; stage_move?: Row | null; next_step?: Row | null; hot_offer?: Row | null } | null> {
   const now = Date.now();
   const kind: ItemKind = extra.kind ?? "lead";
   const effect = appointmentEffect(kind, outcome);
   if (!effect) throw new Refusal("That outcome does not fit this call.");
   if ((effect.mark || effect.confirmation) && !extra.appointmentId) throw new Refusal("Which appointment?");
+  // "Not ready yet" is stored with the 2026-11-05 database update; before
+  // it, the save is refused before anything (a mark included) is written.
+  if (outcome === "not_ready" && !(await setterUpdateIn()))
+    throw new Refusal("Not ready yet needs the database update of 5 November first. Save it as Handled with a note for now.", 409);
   const appt = extra.appointmentId
     ? ((await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(extra.appointmentId)}&select=*`))[0] ?? null)
     : null;
@@ -4640,11 +5039,18 @@ async function saveOutcome(
     });
   }
   const st = (await svc(`cockpit_sales_queue_state?contact_id=eq.${enc(contactId)}&select=*`))[0];
+  // A new lead's or a fresh booking's call nobody answered (Aziz's Loom:
+  // call immediately, twice): the first comes back in two minutes and the
+  // ladder does not move; the second is the ladder's first step.
+  const burst = kind === "lead" && outcome === "no_answer" ? await burstNow(contactId, now, a) : null;
+  const quick = burst ? quickRetryDue(burst.anchor, burst.earlier, now) : null;
   const next = effect.ladder
-    ? afterOutcome(outcome as Outcome, Number(st?.step ?? 0), now, callbackAt, {
-        due: ms(st?.due_at),
-        callback: ms(st?.callback_at),
-      })
+    ? quick !== null
+      ? { step: Number(st?.step ?? 0), due: quick, closed: null, callback: null }
+      : afterOutcome(outcome as Outcome, Number(st?.step ?? 0), now, callbackAt, {
+          due: ms(st?.due_at),
+          callback: ms(st?.callback_at),
+        })
     : null;
   // Every outcome a person saves leaves a note in the CRM; an unanswered
   // call with nothing written does not.
@@ -4773,7 +5179,168 @@ async function saveOutcome(
     },
   );
   const moving = wantMove && (rolesFor(null).length > 0 || next?.closed === "unreachable");
-  return { attempt: saved, state, stage_move: moving ? { state: "pending" } : null };
+  // What comes next on the screen: the voice note after a burst or
+  // confirmation call nobody answered, the hot list after a held intro.
+  const after = await nextSteps(who, {
+    contactId,
+    outcome,
+    kind,
+    appt,
+    burst: burst?.anchor ?? null,
+    quick: quick !== null,
+    now,
+  }).catch(e => {
+    console.error("next step unread", redact(String((e as Error)?.message ?? e)));
+    return {};
+  });
+  // Each only after the outcome it follows (a no-answer, a held intro), so a
+  // booking's or a move's answer (book.create, book.move) keeps exactly the
+  // fields it had.
+  return { attempt: saved, state, stage_move: moving ? { state: "pending" } : null, ...after };
+}
+
+/** Whether the 2026-11-05 database update is in (its voice-note table answers); kept a minute. */
+let setterUpdate: { at: number; in: boolean } | null = null;
+async function setterUpdateIn(): Promise<boolean> {
+  if (setterUpdate && Date.now() - setterUpdate.at < 60_000) return setterUpdate.in;
+  const ok = await svc("cockpit_sales_touches?select=id&limit=1").then(
+    () => true,
+    () => false,
+  );
+  setterUpdate = { at: Date.now(), in: ok };
+  return ok;
+}
+
+/**
+ * The lead's "call now, twice" burst at this moment: its anchor (arrival or
+ * their own intro booking, in the last hour; for a lead that came in while
+ * nobody was calling, up to three days ago, its first call when nobody
+ * picked it up) and the unanswered tries since it before this one (the
+ * dialer's saves and Maqsam's record, one per call). This call's own Maqsam
+ * record is the one at or after the attempt's start (by its Maqsam id when
+ * known); a save made with no attempt is paired with the Maqsam call that
+ * started before it (dialer.ts unpairedCalls), not judged by a time window.
+ */
+async function burstNow(
+  contactId: string,
+  now: number,
+  attempt: Row | null = null,
+): Promise<{ anchor: { at: number; step: "new" | "booked" } | null; earlier: number }> {
+  const hour = now - 3_600_000;
+  const [lead, booking] = await Promise.all([
+    svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=lead_created_at,phone8`).then(r => r[0] ?? null),
+    svc(
+      `cockpit_sales_appointments?contact_id=eq.${enc(contactId)}&call_type=eq.intro&start_at=gt.${enc(new Date(now).toISOString())}&status=not.in.(cancelled,invalid)&select=appointment_id,start_at,booked_at&order=booked_at.desc.nullslast&limit=1`,
+    ).then(r => r[0] ?? null),
+  ]);
+  const created = lead ? ms(lead.lead_created_at) : null;
+  const booked = booking ? ms(booking.booked_at) : null;
+  const justBooked =
+    booking && booked !== null && booked >= hour ? { id: String(booking.appointment_id), start: ms(booking.start_at) ?? 0, booked } : null;
+  // Everything since the lead came in when that was in the last three days
+  // (the first-call burst), else the last hour (every anchor is in it).
+  const from = created !== null && now - created <= FIRST_CALL_NEW + 3_600_000 ? Math.min(created, hour) : hour;
+  const since = enc(new Date(from).toISOString());
+  const theirs = lead?.phone8 ? `(contact_id.eq."${contactId}",lead_phone8.eq."${String(lead.phone8)}")` : `(contact_id.eq."${contactId}")`;
+  const [saves, calls] = await Promise.all([
+    svc(`cockpit_sales_attempts?contact_id=eq.${enc(contactId)}&state=eq.saved&saved_at=gte.${since}&select=id,saved_at,outcome&limit=200`),
+    svc(`cockpit_sales_dials?direction=eq.outbound&occurred_at=gte.${since}&or=${enc(theirs)}&select=call_id,occurred_at,state&limit=200`),
+  ]);
+  const started = attempt ? ms(attempt.started_at) : null;
+  const callId = attempt?.maqsam_call_id ? String(attempt.maqsam_call_id) : null;
+  const isThis = (r: Row) =>
+    (callId !== null && String(r.call_id ?? "") === callId) || (started !== null && (ms(r.occurred_at) ?? 0) >= started - 5_000);
+  const otherSaves = saves
+    .filter(r => !attempt || String(r.id) !== String(attempt.id))
+    .map(r => ({ at: ms(r.saved_at), miss: r.outcome === "no_answer" }))
+    .filter((r): r is { at: number; miss: boolean } => r.at !== null);
+  const maqsam = calls
+    .map(r => ({ at: ms(r.occurred_at), miss: r.state !== "completed", self: isThis(r) }))
+    .filter((r): r is { at: number; miss: boolean; self: boolean } => r.at !== null);
+  const missSaves = otherSaves.filter(r => r.miss).map(r => r.at);
+  const maqsamMisses = maqsam.filter(r => r.miss && !r.self).map(r => r.at);
+  // Every earlier miss, one per call. With no attempt, this save is paired
+  // too, so the Maqsam call it follows is this call, not an earlier one.
+  const unpaired = started !== null || callId !== null ? unpairedCalls(missSaves, maqsamMisses) : unpairedCalls([...missSaves, now], maqsamMisses);
+  const earlierMisses = [...missSaves, ...unpaired];
+  const first = firstTry(
+    [...otherSaves, ...maqsam.filter(r => !r.self).map(r => ({ at: r.at, miss: r.miss })), { at: started ?? now, miss: true }],
+    created,
+  );
+  const anchor = burstAnchor({ created_at: created, just_booked: justBooked, first_try_at: first, booked_at: booking ? ms(booking.start_at) : null }, now);
+  if (!anchor) return { anchor: null, earlier: 0 };
+  // An answered call or another outcome since it began ends the burst: the
+  // ladder, and no "tried to call you" note (dialer.ts secondTry, voiceNoteDue).
+  const spoke = otherSaves.some(r => !r.miss && r.at >= anchor.at) || maqsam.some(r => !r.miss && !r.self && r.at >= anchor.at);
+  if (spoke) return { anchor: null, earlier: 0 };
+  return { anchor, earlier: earlierMisses.filter(t => t >= anchor.at).length };
+}
+
+/**
+ * After a save: the voice note when a burst call (a new lead, a fresh
+ * booking) or a confirmation call rang out and no voice note went since,
+ * with the facts for its script (dialer.ts voiceFacts); the hot list after
+ * an intro was held (Aziz's Loom: showed, no demo, then the hot list).
+ */
+async function nextSteps(
+  who: Who,
+  s: {
+    contactId: string;
+    outcome: AnyOutcome;
+    kind: ItemKind;
+    appt: Row | null;
+    burst: { at: number; step: "new" | "booked" } | null;
+    quick: boolean;
+    now: number;
+  },
+): Promise<{ next_step?: Row | null; hot_offer?: Row | null }> {
+  const id = enc(s.contactId);
+  const start = s.appt ? ms(s.appt.start_at) : null;
+  const step: VoiceStep | null =
+    s.outcome !== "no_answer"
+      ? null
+      : s.kind === "confirm" && start !== null && start > s.now
+        ? "confirm"
+        : s.kind === "lead" && s.burst
+          ? s.burst.step
+          : null;
+  let next_step: Row | null = null;
+  if (step) {
+    const since = step === "confirm" && start !== null ? start - 150 * 60_000 : (s.burst?.at ?? s.now);
+    const [lead, seat, sent, booking] = await Promise.all([
+      svc(`cockpit_sales_leads?contact_id=eq.${id}&select=contact_id,name,company,country,services,revenue,revenue_goal,readiness,decision_maker,challenge`).then(r => r[0] ?? null),
+      svc(`cockpit_sales_people?email=eq.${enc(String(who.email))}&select=name,name_ar`).then(r => r[0] ?? null),
+      svc(`cockpit_sales_touches?contact_id=eq.${id}&kind=eq.voice_note&at=gte.${enc(new Date(since).toISOString())}&select=at&limit=1`).catch(() => null),
+      step === "confirm"
+        ? Promise.resolve(null)
+        : svc(
+            `cockpit_sales_appointments?contact_id=eq.${id}&call_type=eq.intro&start_at=gt.${enc(new Date(s.now).toISOString())}&status=not.in.(cancelled,invalid)&select=start_at&order=start_at&limit=1`,
+          ).then(r => r[0] ?? null),
+    ]);
+    const call =
+      step === "confirm" && s.appt && start !== null
+        ? { type: (s.appt.call_type === "demo" ? "demo" : "intro") as "intro" | "demo", start }
+        : booking
+          ? { type: "intro" as const, start: ms(booking.start_at) ?? 0 }
+          : null;
+    // A voice note already sent in this step is not asked for again, and
+    // none is asked for while the voice notes cannot be read (before
+    // 20261105w): "I sent the voice note" could not be recorded.
+    if (lead && sent !== null && !sent.length)
+      next_step = {
+        kind: "voice_note",
+        // The burst's first miss comes back in two minutes for its second try.
+        second_try_at: s.quick ? new Date(s.now + 2 * 60_000).toISOString() : null,
+        facts: voiceFacts(step, lead, call, { name: seat?.name ?? who.name, name_ar: seat?.name_ar }),
+      };
+  }
+  const out: { next_step?: Row | null; hot_offer?: Row | null } = s.outcome === "no_answer" ? { next_step } : {};
+  if (s.outcome === "showed" && s.appt && s.appt.call_type !== "demo") {
+    const live = (await svc(`cockpit_sales_hot?contact_id=eq.${id}&removed_at=is.null&select=status`))[0];
+    // null: on the hot list already (the page says so instead of offering it).
+    out.hot_offer = !live || !stillHot(live) ? { action: "dial.hot", next_at: new Date(nextMorning(s.now)).toISOString() } : null;
+  }
+  return out;
 }
 
 /** The line a saved outcome leaves in HighLevel's notes. */
@@ -4945,7 +5512,7 @@ async function dialResyncStuck(_who: Who, _b: Row) {
 }
 
 /** Outcomes whose story the next person needs in a line of notes. */
-const NEEDS_NOTE: readonly string[] = ["callback", "not_interested", "disqualified", "wrong_number", "handled", "showed", "cancelled", "booked"];
+const NEEDS_NOTE: readonly string[] = ["callback", "not_interested", "not_ready", "disqualified", "wrong_number", "handled", "showed", "cancelled", "booked"];
 
 function outcomeInput(b: Row): { outcome: AnyOutcome; note: string; callbackAt: number | null } {
   const outcome = String(b.outcome) as AnyOutcome;
@@ -5082,7 +5649,8 @@ async function dialStatus(who: Who, b: Row) {
       null,
       { auto: true, kind, appointmentId: kind === "lead" ? null : ((a.appointment_id as string) ?? null) },
     );
-    if (out) return { attempt: out.attempt, state: out.state, call: callSummary(c), auto_saved: true };
+    if (out)
+      return { attempt: out.attempt, state: out.state, call: callSummary(c), auto_saved: true, next_step: out.next_step ?? null };
   }
   return { attempt: a, call: callSummary(c), auto_saved: false };
 }
@@ -5099,6 +5667,97 @@ async function dialRelease(who: Who, b: Row) {
   });
   await audit(who, "dial.release", "cockpit_sales_attempts", id, a, { state: "released" });
   return {};
+}
+
+/**
+ * The rep sent the lead a voice note from their own phone (Aziz,
+ * 2026-11-05). Nothing is sent from here: the cockpit records that it went,
+ * so the queue counts it as that step's try (dialer.ts voiceNoteDue). Saved
+ * once per lead per ten minutes: a second tap returns the first.
+ */
+async function dialTouch(who: Who, b: Row) {
+  const kind = String(b.kind ?? "voice_note");
+  if (kind !== "voice_note") throw new Refusal("Only a voice note can be recorded here.");
+  const contact = cleanText(b.contact_id, 80);
+  if (!contact) throw new Refusal("Which lead?");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,dnd,tags`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  if (lead.dnd) throw new Refusal("This lead asked not to be contacted (do not disturb is on in HighLevel).", 409);
+  const client = await readClient(svc, contact, lead);
+  if (client.client) throw new Refusal(clientRefusal(client), 409, { code: "client" });
+  const step = ["new", "booked", "confirm"].includes(String(b.step)) ? String(b.step) : null;
+  const appointmentId = cleanText(b.appointment_id, 80) || null;
+  if (appointmentId) {
+    const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}&select=contact_id`))[0];
+    if (!appt || String(appt.contact_id) !== contact) throw new Refusal("That appointment is not this lead's.", 409);
+  }
+  const requestId = /^[0-9a-f-]{36}$/i.test(String(b.request_id ?? "")) ? String(b.request_id) : null;
+  const read = async (q: string) => {
+    try {
+      return (await svc(q))[0] ?? null;
+    } catch (e) {
+      if (/42P01|PGRST205|does not exist|schema cache/i.test(String((e as Error)?.message ?? e)))
+        throw new Refusal("Recording voice notes needs the database update of 5 November first.", 409);
+      throw e;
+    }
+  };
+  if (requestId) {
+    const twin = await read(`cockpit_sales_touches?request_id=eq.${enc(requestId)}&select=*`);
+    if (twin) return { touch: twin, repeated: true };
+  }
+  const recent = await read(
+    `cockpit_sales_touches?contact_id=eq.${enc(contact)}&kind=eq.voice_note&at=gte.${enc(new Date(Date.now() - 10 * 60_000).toISOString())}&select=*&order=at.desc&limit=1`,
+  );
+  if (recent) return { touch: recent, repeated: true };
+  let row: Row | undefined;
+  try {
+    row = (await svc("cockpit_sales_touches", {
+      method: "POST",
+      body: {
+        contact_id: contact,
+        kind,
+        step,
+        appointment_id: appointmentId,
+        rep_email: who.email,
+        note: cleanText(b.note, 500) || null,
+        request_id: requestId,
+        at: new Date(Date.now()).toISOString(),
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e);
+    if (requestId && /23505|duplicate/.test(msg)) {
+      const twin = await read(`cockpit_sales_touches?request_id=eq.${enc(requestId)}&select=*`);
+      if (twin) return { touch: twin, repeated: true };
+    }
+    if (/42P01|PGRST205|does not exist|schema cache/i.test(msg))
+      throw new Refusal("Recording voice notes needs the database update of 5 November first.", 409);
+    throw e;
+  }
+  if (!row) throw new Refusal("The voice note was not saved. Try again.", 502);
+  await audit(who, "dial.touch", "cockpit_sales_touches", String(row.id), null, row, { kind, step });
+  return { touch: row };
+}
+
+/**
+ * After a held intro with no demo: onto the hot list in one action, its
+ * follow-up the next working morning by call (Aziz's Loom: showed but no
+ * demo, then the hot list). hot.save does the writing, the checks and the
+ * audit row; a lead already on the list is left as it is.
+ */
+async function dialHot(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  if (!contact) throw new Refusal("Which lead?");
+  const live = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&removed_at=is.null&select=*`))[0];
+  if (live && stillHot(live)) return { hot: live, repeated: true };
+  return await hotSave(who, {
+    contact_id: contact,
+    next_at: new Date(nextMorning(Date.now())).toISOString(),
+    next_how: "call",
+    note: cleanText(b.note, 4000) || "Held the intro, no demo booked yet.",
+    ...(live ? { status: "nurturing" } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -8449,6 +9108,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "dial.save": dialSave,
   "dial.status": dialStatus,
   "dial.release": dialRelease,
+  "dial.touch": dialTouch,
+  "dial.hot": dialHot,
   "book.slots": bookSlots,
   "book.check": bookCheck,
   "book.links": bookLinks,
