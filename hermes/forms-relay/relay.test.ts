@@ -19,7 +19,7 @@ import {
   SAY,
   TEST_CARD,
 } from "./relay.ts";
-import { doctor, ENV_KEYS, readApply, readEnv } from "./worker.ts";
+import { doctor, ENV_KEYS, hasDispatchCredential, readApply, readEnv } from "./worker.ts";
 
 const VALUES = {
   DISPATCH_OWNER: "invented-org",
@@ -52,6 +52,7 @@ function world(
     dispatch?: Answer;
     counts?: Row | "throw";
     apply?: boolean;
+    dispatchCredentialPresent?: boolean;
   } = {},
 ) {
   const rpcs: { name: string; args: Row }[] = [];
@@ -61,6 +62,7 @@ function world(
     apply: opts.apply ?? true,
     config: CONFIG,
     configProblems: [],
+    dispatchCredentialPresent: opts.dispatchCredentialPresent ?? true,
     db: {
       rpc: async (name: string, args: Row = {}) => {
         rpcs.push({ name, args });
@@ -131,6 +133,21 @@ describe("the config", () => {
 });
 
 describe("a run", () => {
+  test("a missing dispatch credential leaves queued rows and attempts untouched", async () => {
+    const w = world({ rows: [row(2, "github_dispatch")], dispatchCredentialPresent: false });
+    const report = await runOnce(w.deps);
+    expect(report).toMatchObject({ ok: false, note: SAY.missingCredential, counts: { claimed: 0, failed: 0 } });
+    expect(w.rpcs).toEqual([]);
+    expect(w.dispatched).toEqual([]);
+    expect(w.healths[0]).toMatchObject({ key: "forms-relay", ok: false });
+  });
+
+  test("the dry run still counts waiting rows without a dispatch credential", async () => {
+    const w = world({ apply: false, counts: { queued: 1 }, dispatchCredentialPresent: false });
+    expect((await runOnce(w.deps)).note).toBe(SAY.dry(1, "dispatch keys client_name, clickup_id"));
+    expect(w.rpcs.map(x => x.name)).toEqual(["cockpit_form_relay_counts"]);
+    expect(w.dispatched).toEqual([]);
+  });
   test("switched off: nothing claimed; counts and keys only, never a value", async () => {
     const w = world({ apply: false, counts: { queued: 2, sent: 4 } });
     const r = await runOnce(w.deps);
@@ -392,6 +409,12 @@ describe("the ledger", () => {
 });
 
 describe("the doctor and the files", () => {
+  test("credential readiness requires a nonblank dispatch key", () => {
+    expect(hasDispatchCredential({})).toBe(false);
+    expect(hasDispatchCredential({ GITHUB_DISPATCH_TOKEN: "   " })).toBe(false);
+    expect(hasDispatchCredential({ GITHUB_DISPATCH_TOKEN: "fictional-token" })).toBe(true);
+  });
+
   test("keys by name with no Google key, the switch only from its file, the config's gaps, reads only", async () => {
     expect([...ENV_KEYS]).toEqual([
       "SUPABASE_URL",

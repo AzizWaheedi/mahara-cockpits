@@ -27,6 +27,11 @@ export const ENV_KEYS = [
   "GITHUB_DISPATCH_TOKEN",
 ] as const;
 
+/** A presence check only; never treat it as proof of GitHub authorization. */
+export function hasDispatchCredential(env: Env): boolean {
+  return Boolean(env.GITHUB_DISPATCH_TOKEN?.trim());
+}
+
 /** KEY=VALUE lines (or a JSON object for a .json runtime file), first value of a key wins. */
 export function parseFile(path: string): Record<string, string> {
   const text = readFileSync(path, "utf8");
@@ -191,6 +196,7 @@ async function main() {
     apply,
     config: config.config,
     configProblems: config.problems,
+    dispatchCredentialPresent: hasDispatchCredential(read.env),
     db,
     github: github ?? {
       dispatch: async () => ({ ok: false, status: 0, definite: true }),
