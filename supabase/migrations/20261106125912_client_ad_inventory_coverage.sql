@@ -20,6 +20,14 @@ CREATE TABLE cockpit_budget_inventory_private.scopes (
   evidence_ref text CHECK (evidence_ref IS NULL OR evidence_ref ~ '^[A-Za-z0-9:_-]{1,128}$'),
   CHECK (attested_accounts IS NULL OR jsonb_typeof(attested_accounts) = 'array')
 );
+-- Never remove a generation row when membership becomes empty: deleting and
+-- later re-adding an account must not revive an old attestation or read.
+CREATE TABLE cockpit_budget_inventory_private.account_generations (
+  platform text NOT NULL,
+  account_key text NOT NULL,
+  revision bigint NOT NULL CHECK (revision > 0),
+  PRIMARY KEY (platform, account_key)
+);
 CREATE TABLE cockpit_budget_inventory_private.accounts (
   client_key text NOT NULL REFERENCES cockpit_budget_inventory_private.scopes(client_key) ON DELETE CASCADE,
   platform text NOT NULL CHECK (platform ~ '^[a-z][a-z0-9_-]{0,39}$'),
@@ -29,6 +37,7 @@ CREATE TABLE cockpit_budget_inventory_private.accounts (
   owner_evidence_ref text CHECK (owner_evidence_ref IS NULL OR owner_evidence_ref ~ '^[A-Za-z0-9:_-]{1,128}$'),
   owner_verified_at timestamptz,
   owner_verified_until timestamptz,
+  owner_revision bigint CHECK (owner_revision > 0),
   -- Only canonical IDs for these named platforms can participate in a
   -- ready status. Future adapters must prove these rules against the provider.
   CHECK (platform NOT IN ('meta', 'tiktok') OR account_key ~ '^[1-9][0-9]{0,31}$'),
@@ -44,6 +53,7 @@ CREATE TABLE cockpit_budget_inventory_private.coverage (
   provider_source text CHECK (provider_source IS NULL OR provider_source ~ '^[a-z][a-z0-9_-]{0,39}$'),
   read_evidence_ref text CHECK (read_evidence_ref IS NULL OR read_evidence_ref ~ '^[A-Za-z0-9:_-]{1,128}$'),
   observed_at timestamptz NOT NULL,
+  account_revision bigint NOT NULL CHECK (account_revision > 0),
   PRIMARY KEY (client_key, platform, account_key),
   FOREIGN KEY (client_key, platform, account_key)
     REFERENCES cockpit_budget_inventory_private.accounts(client_key, platform, account_key) ON DELETE CASCADE
@@ -53,8 +63,37 @@ CREATE TABLE cockpit_budget_inventory_private.coverage (
 CREATE INDEX accounts_platform_account_client_idx
   ON cockpit_budget_inventory_private.accounts(platform, account_key, client_key);
 
+-- Runs in the membership transaction: the change and generation bump either
+-- commit together or roll back together. It has invoker privileges; no
+-- runtime writer is granted here, and a future writer must protect the table.
+CREATE FUNCTION cockpit_budget_inventory_private.bump_membership_generation()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+BEGIN
+  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+    INSERT INTO cockpit_budget_inventory_private.account_generations(platform,account_key,revision)
+      VALUES (OLD.platform,OLD.account_key,1)
+      ON CONFLICT (platform,account_key) DO UPDATE
+      SET revision = cockpit_budget_inventory_private.account_generations.revision + 1;
+  END IF;
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    INSERT INTO cockpit_budget_inventory_private.account_generations(platform,account_key,revision)
+      VALUES (NEW.platform,NEW.account_key,1)
+      ON CONFLICT (platform,account_key) DO UPDATE
+      SET revision = cockpit_budget_inventory_private.account_generations.revision + 1;
+  END IF;
+  RETURN NULL;
+END $$;
+CREATE TRIGGER accounts_membership_insert_delete AFTER INSERT OR DELETE
+  ON cockpit_budget_inventory_private.accounts FOR EACH ROW
+  EXECUTE FUNCTION cockpit_budget_inventory_private.bump_membership_generation();
+CREATE TRIGGER accounts_membership_identity_update AFTER UPDATE OF client_key,platform,account_key
+  ON cockpit_budget_inventory_private.accounts FOR EACH ROW
+  WHEN (OLD.client_key IS DISTINCT FROM NEW.client_key OR OLD.platform IS DISTINCT FROM NEW.platform OR OLD.account_key IS DISTINCT FROM NEW.account_key)
+  EXECUTE FUNCTION cockpit_budget_inventory_private.bump_membership_generation();
+
 ALTER TABLE cockpit_budget_inventory_private.gate ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cockpit_budget_inventory_private.scopes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cockpit_budget_inventory_private.account_generations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cockpit_budget_inventory_private.accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cockpit_budget_inventory_private.coverage ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON ALL TABLES IN SCHEMA cockpit_budget_inventory_private FROM PUBLIC, anon, authenticated, service_role;
@@ -79,15 +118,17 @@ BEGIN
      OR s.valid_until <= t OR s.valid_until > s.attested_at + interval '30 days' THEN
     RETURN jsonb_build_object('state', 'unknown', 'reason', 'Inventory scope has not been verified or is out of date.');
   END IF;
-  SELECT count(*)::integer, coalesce(jsonb_agg(jsonb_build_array(a.platform, a.account_key)
+  SELECT count(*)::integer, coalesce(jsonb_agg(jsonb_build_array(a.platform, a.account_key, g.revision)
          ORDER BY a.platform, a.account_key), '[]'::jsonb),
          count(*) FILTER (WHERE NOT a.owner_verified OR a.owner_verifier_kind IS NULL
            OR nullif(btrim(a.owner_evidence_ref), '') IS NULL OR a.owner_verified_at IS NULL OR a.owner_verified_at > t
            OR a.owner_verified_until IS NULL OR a.owner_verified_until <= t
-           OR a.owner_verified_until > a.owner_verified_at + interval '30 days')::integer,
+           OR a.owner_verified_until > a.owner_verified_at + interval '30 days'
+           OR a.owner_revision IS DISTINCT FROM g.revision)::integer,
          count(*) FILTER (WHERE c.client_key IS NULL OR NOT c.provider_read_complete
            OR c.provider_source IS DISTINCT FROM a.platform OR nullif(btrim(c.read_evidence_ref), '') IS NULL
-           OR c.observed_at > t OR c.observed_at < t - interval '5 minutes')::integer,
+           OR c.observed_at > t OR c.observed_at < t - interval '5 minutes'
+           OR c.observed_at < a.owner_verified_at OR c.account_revision IS DISTINCT FROM g.revision)::integer,
          count(*) FILTER (WHERE EXISTS (
            SELECT 1 FROM cockpit_budget_inventory_private.accounts other
            WHERE other.platform = a.platform AND other.account_key = a.account_key
@@ -96,6 +137,7 @@ BEGIN
          count(*) FILTER (WHERE a.platform NOT IN ('meta', 'tiktok', 'google', 'snap'))::integer
     INTO n, actual, owner_missing, unread, conflicted, unsupported
   FROM cockpit_budget_inventory_private.accounts a
+  LEFT JOIN cockpit_budget_inventory_private.account_generations g USING (platform, account_key)
   LEFT JOIN cockpit_budget_inventory_private.coverage c USING (client_key, platform, account_key)
   WHERE a.client_key = p_client_key;
   IF n = 0 OR s.attested_accounts <> actual THEN
@@ -110,3 +152,4 @@ BEGIN
     'warning', 'This is limited to the attested inventory; omitted accounts or platforms may exist.');
 END $$;
 REVOKE ALL ON FUNCTION cockpit_budget_inventory_private.coverage_status(text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION cockpit_budget_inventory_private.bump_membership_generation() FROM PUBLIC, anon, authenticated, service_role;

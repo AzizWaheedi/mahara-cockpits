@@ -18,10 +18,15 @@ verified ownership and a fresh complete provider read.
 ## What the candidate records
 
 An explicit whole-scope attestation has a source kind, evidence reference,
-time, expiry and an exact, ordered set of `(platform, account)` pairs. Account
+time, expiry and an exact, ordered set of `(platform, account, generation)` triples. Account
 ownership must be independently verified and expire. Coverage is recorded per
-account with completeness and a read time. Adding, deleting or changing an
-account makes the saved set differ, so the status becomes unknown. The model
+account with completeness and a read time. A persistent generation per canonical
+platform and account advances whenever membership is inserted, deleted or
+changed, including when a different client adds or removes that account.
+Old scope, ownership and provider-read evidence cannot be reused after such a
+change; the provider read must also be no older than ownership verification.
+Adding, deleting, recreating or changing an account makes the saved set differ,
+so the status becomes unknown. The model
 does not assume that a missing platform has no accounts. The default gate is
 off; an absent, expired, future, overlong or unmatched attestation is unknown;
 unverified ownership, a missing, incomplete, future or older-than-five-minute
@@ -49,7 +54,10 @@ experimental ceilings, not approved operational policy. They need review.
 
 - A trustworthy, role-authorized way to create and review scoped attestations,
   detect external account changes and maintain an audit trail. The eventual
-  writer must protect against stale updates and support revocation.
+  writer must protect against stale updates and support revocation. It must not
+  permit direct generation edits or membership TRUNCATE (which does not fire
+  row triggers), and must ensure evidence is bound to the current generation in
+  the same transaction. There is currently no runtime writer or grant.
 - Provider-specific, authenticated collectors that prove complete pagination,
   ownership, currencies, budget modes and timestamps, with explicit coverage
   semantics for accounts with zero campaigns. Each platform needs its own
@@ -58,6 +66,9 @@ experimental ceilings, not approved operational policy. They need review.
   against the live Data API and RLS configuration. There are no grants here.
 - Concurrency, expiration, retry, provider failure, scale and privacy review,
   plus real-provider readback before any claim about production coverage.
+  Verify actual PostgreSQL simultaneous transactions, locks, deadlock handling,
+  rollback and races independently before activation. The local single-connection
+  tests do not establish concurrent behavior or validate a future verifier.
 - A separate decision and design for calculating amounts or blocking a write.
   A read can become stale immediately; this candidate is never an authorizer.
 

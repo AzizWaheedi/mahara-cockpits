@@ -24,11 +24,15 @@ const setup = async () => {
     insert into cockpit_budget_inventory_private.accounts(client_key, platform, account_key, owner_verified, owner_verifier_kind, owner_evidence_ref, owner_verified_at, owner_verified_until)
       values ('example-client','meta','123456',true,'human','example-owner-review',now(),now()+interval '1 day'),
              ('example-client','tiktok','789012',true,'human','example-owner-review',now(),now()+interval '1 day');
-    insert into cockpit_budget_inventory_private.coverage(client_key, platform, account_key, provider_read_complete, provider_source, read_evidence_ref, observed_at)
-      values ('example-client','meta','123456',true,'meta','example-read',now()),
-             ('example-client','tiktok','789012',true,'tiktok','example-read',now());
+    update cockpit_budget_inventory_private.accounts a set owner_revision=g.revision
+      from cockpit_budget_inventory_private.account_generations g
+      where a.platform=g.platform and a.account_key=g.account_key;
+    insert into cockpit_budget_inventory_private.coverage(client_key, platform, account_key, provider_read_complete, provider_source, read_evidence_ref, observed_at, account_revision)
+      select a.client_key,a.platform,a.account_key,true,a.platform,'example-read',now(),g.revision
+      from cockpit_budget_inventory_private.accounts a join cockpit_budget_inventory_private.account_generations g using(platform,account_key);
     update cockpit_budget_inventory_private.scopes set all_relevant_platforms_attested=true,
-      attested_accounts='[["meta","123456"],["tiktok","789012"]]'::jsonb,
+      attested_accounts=(select jsonb_agg(jsonb_build_array(a.platform,a.account_key,g.revision) order by a.platform,a.account_key)
+        from cockpit_budget_inventory_private.accounts a join cockpit_budget_inventory_private.account_generations g using(platform,account_key) where a.client_key='example-client'),
       attested_by_kind='human', attested_at=now(), valid_until=now()+interval '1 day', evidence_ref='example-review'
       where client_key='example-client';
   `);
@@ -42,7 +46,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await db.exec(
-    "truncate cockpit_budget_inventory_private.scopes cascade; update cockpit_budget_inventory_private.gate set enabled=false;",
+    "truncate cockpit_budget_inventory_private.scopes cascade; truncate cockpit_budget_inventory_private.account_generations; update cockpit_budget_inventory_private.gate set enabled=false;",
   );
 });
 afterAll(async () => {
@@ -57,10 +61,14 @@ test("disabled even with complete fictional evidence; no runtime grants", async 
     schema_access: boolean;
     function_access: boolean;
     table_access: boolean;
+    generation_access: boolean;
+    generation_trigger_access: boolean;
   }>(`
     select role_name, has_schema_privilege(role_name,'cockpit_budget_inventory_private','usage') as schema_access,
       has_function_privilege(role_name,'cockpit_budget_inventory_private.coverage_status(text)','execute') as function_access,
-      has_table_privilege(role_name,'cockpit_budget_inventory_private.accounts','select') as table_access
+      has_table_privilege(role_name,'cockpit_budget_inventory_private.accounts','select') as table_access,
+      has_table_privilege(role_name,'cockpit_budget_inventory_private.account_generations','insert,update,delete,truncate') as generation_access,
+      has_function_privilege(role_name,'cockpit_budget_inventory_private.bump_membership_generation()','execute') as generation_trigger_access
     from (values ('anon'), ('authenticated'), ('service_role')) as roles(role_name) order by role_name
   `);
   for (const row of result.rows) {
@@ -68,6 +76,8 @@ test("disabled even with complete fictional evidence; no runtime grants", async 
       schema_access: false,
       function_access: false,
       table_access: false,
+      generation_access: false,
+      generation_trigger_access: false,
     });
   }
   for (const role of ["anon", "authenticated", "service_role"]) {
@@ -201,6 +211,11 @@ test("an account also attributed to another client is never accepted as exclusiv
   await db.exec(
     "update cockpit_budget_inventory_private.gate set enabled=true; insert into cockpit_budget_inventory_private.scopes(client_key) values ('another-example'); insert into cockpit_budget_inventory_private.accounts(client_key,platform,account_key) values ('another-example','meta','123456')",
   );
+  expect((await status()).state).toBe("unknown");
+  await db.exec(`update cockpit_budget_inventory_private.scopes set attested_accounts=(
+    select jsonb_agg(jsonb_build_array(a.platform,a.account_key,g.revision) order by a.platform,a.account_key)
+    from cockpit_budget_inventory_private.accounts a join cockpit_budget_inventory_private.account_generations g using(platform,account_key)
+    where a.client_key='example-client') where client_key='example-client'`);
   expect(await status()).toMatchObject({
     state: "incomplete",
     shared_or_conflicted: 1,
@@ -222,9 +237,15 @@ test("a mismatched provider and an unsupported platform cannot be ready", async 
   await db.exec(`update cockpit_budget_inventory_private.coverage set provider_source='meta' where platform='meta';
     insert into cockpit_budget_inventory_private.accounts(client_key,platform,account_key,owner_verified,owner_verifier_kind,owner_evidence_ref,owner_verified_at,owner_verified_until)
       values ('example-client','other','example-other',true,'human','example-owner-review',now(),now()+interval '1 day');
-    insert into cockpit_budget_inventory_private.coverage(client_key,platform,account_key,provider_read_complete,provider_source,read_evidence_ref,observed_at)
-      values ('example-client','other','example-other',true,'other','example-read',now());
-    update cockpit_budget_inventory_private.scopes set attested_accounts='[["meta","123456"],["other","example-other"],["tiktok","789012"]]'::jsonb;`);
+    update cockpit_budget_inventory_private.accounts a set owner_revision=g.revision from cockpit_budget_inventory_private.account_generations g
+      where a.platform=g.platform and a.account_key=g.account_key and a.platform='other';
+    insert into cockpit_budget_inventory_private.coverage(client_key,platform,account_key,provider_read_complete,provider_source,read_evidence_ref,observed_at,account_revision)
+      select a.client_key,a.platform,a.account_key,true,a.platform,'example-read',now(),g.revision
+      from cockpit_budget_inventory_private.accounts a join cockpit_budget_inventory_private.account_generations g using(platform,account_key) where a.platform='other';
+    update cockpit_budget_inventory_private.scopes set attested_accounts=(
+      select jsonb_agg(jsonb_build_array(a.platform,a.account_key,g.revision) order by a.platform,a.account_key)
+      from cockpit_budget_inventory_private.accounts a join cockpit_budget_inventory_private.account_generations g using(platform,account_key)
+      where a.client_key='example-client') where client_key='example-client';`);
   expect(await status()).toMatchObject({
     state: "incomplete",
     unsupported_platforms: 1,
@@ -237,4 +258,57 @@ test("evidence pointers reject URLs rather than storing credentials in links", a
       "update cockpit_budget_inventory_private.scopes set evidence_ref='https://example.invalid/?token=example' where client_key='example-client'",
     ),
   ).rejects.toThrow();
+});
+
+test("deleting and recreating an identical account cannot revive the old scope attestation", async () => {
+  await setup();
+  await db.exec(`update cockpit_budget_inventory_private.gate set enabled=true;
+    delete from cockpit_budget_inventory_private.accounts where client_key='example-client' and platform='meta';
+    insert into cockpit_budget_inventory_private.accounts(client_key,platform,account_key,owner_verified,owner_verifier_kind,owner_evidence_ref,owner_verified_at,owner_verified_until)
+      values ('example-client','meta','123456',true,'human','example-review',now(),now()+interval '1 day');
+    update cockpit_budget_inventory_private.accounts a set owner_revision=g.revision from cockpit_budget_inventory_private.account_generations g
+      where a.platform=g.platform and a.account_key=g.account_key and a.platform='meta';
+    insert into cockpit_budget_inventory_private.coverage(client_key,platform,account_key,provider_read_complete,provider_source,read_evidence_ref,observed_at,account_revision)
+      select a.client_key,a.platform,a.account_key,true,a.platform,'example-read',now(),g.revision
+      from cockpit_budget_inventory_private.accounts a join cockpit_budget_inventory_private.account_generations g using(platform,account_key) where a.platform='meta';`);
+  expect((await status()).state).toBe("unknown");
+});
+
+test("conflicts invalidate old attestations and reads even after they resolve or recur", async () => {
+  await setup();
+  await db.exec(`update cockpit_budget_inventory_private.gate set enabled=true;
+    insert into cockpit_budget_inventory_private.scopes(client_key) values ('another-example');
+    insert into cockpit_budget_inventory_private.accounts(client_key,platform,account_key) values ('another-example','meta','123456');`);
+  expect((await status()).state).toBe("unknown");
+  await db.exec("delete from cockpit_budget_inventory_private.accounts where client_key='another-example'");
+  expect((await status()).state).toBe("unknown");
+  await db.exec(`update cockpit_budget_inventory_private.scopes set attested_accounts=(
+    select jsonb_agg(jsonb_build_array(a.platform,a.account_key,g.revision) order by a.platform,a.account_key)
+    from cockpit_budget_inventory_private.accounts a join cockpit_budget_inventory_private.account_generations g using(platform,account_key)
+    where a.client_key='example-client') where client_key='example-client'`);
+  expect(await status()).toMatchObject({state:"incomplete", ownership_unverified:1, unread_or_stale:1});
+  await db.exec(`update cockpit_budget_inventory_private.accounts a set owner_revision=g.revision,owner_verified_at=now(),owner_verified_until=now()+interval '1 day'
+      from cockpit_budget_inventory_private.account_generations g where a.platform=g.platform and a.account_key=g.account_key and a.platform='meta';
+    update cockpit_budget_inventory_private.coverage c set account_revision=g.revision,observed_at=now()
+      from cockpit_budget_inventory_private.account_generations g where c.platform=g.platform and c.account_key=g.account_key and c.platform='meta';`);
+  expect((await status()).state).toBe("ready_for_attested_scope");
+  await db.exec("insert into cockpit_budget_inventory_private.accounts(client_key,platform,account_key) values ('another-example','meta','123456')");
+  expect((await status()).state).toBe("unknown");
+  await db.exec("delete from cockpit_budget_inventory_private.accounts where client_key='another-example'");
+  expect((await status()).state).toBe("unknown");
+});
+
+test("a provider read older than ownership verification is incomplete", async () => {
+  await setup();
+  await db.exec(`update cockpit_budget_inventory_private.gate set enabled=true;
+    update cockpit_budget_inventory_private.accounts set owner_verified_at=now() where platform='meta';
+    update cockpit_budget_inventory_private.coverage set observed_at=now()-interval '1 minute' where platform='meta'`);
+  expect(await status()).toMatchObject({state:"incomplete", unread_or_stale:1});
+});
+
+test("rolling back a conflicting membership also rolls back the generation", async () => {
+  await setup();
+  await db.exec("update cockpit_budget_inventory_private.gate set enabled=true; insert into cockpit_budget_inventory_private.scopes(client_key) values ('another-example')");
+  await db.exec("begin; insert into cockpit_budget_inventory_private.accounts(client_key,platform,account_key) values ('another-example','meta','123456'); rollback");
+  expect((await status()).state).toBe("ready_for_attested_scope");
 });
