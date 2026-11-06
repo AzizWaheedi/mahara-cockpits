@@ -1406,7 +1406,9 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                 Same GHL calendar count as Sales, by appointment date. It
                 includes demos without an ad link and excludes webinar leads.
                 The funnel above follows leads created in this period.
-                {salesUpdated ? ` Sales data last successfully updated ${salesUpdated}.` : ""}
+                {salesUpdated
+                  ? ` Sales data last successfully updated ${salesUpdated}.`
+                  : ""}
               </div>
             </section>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
