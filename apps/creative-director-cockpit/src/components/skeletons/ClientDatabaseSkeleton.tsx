@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/PageHeader";
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -37,7 +38,7 @@ function ClientRow() {
   );
 }
 
-export function ClientDatabaseSkeleton() {
+function ClientDatabaseSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -83,6 +84,11 @@ export function ClientDatabaseSkeleton() {
     </div>
   );
 }
+
+export const ClientDatabaseSkeleton = rememberedSkeleton(
+  "clients",
+  ClientDatabaseSkeletonStatic,
+);
 
 /* The scripting database. */
 

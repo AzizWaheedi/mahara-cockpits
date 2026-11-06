@@ -416,9 +416,12 @@ export function BillingUnavailable({
 export function AdBillingWatch({
   campaigns,
   onShowOnBoard,
+  loading,
 }: {
   campaigns?: StripCampaign[];
   onShowOnBoard?: () => void;
+  /** Drawn while the first read is in flight, so the strip keeps its space. */
+  loading?: ReactNode;
 }) {
   const [data, setData] = useState<BillingPanel | null>(null);
   const [error, setError] = useState<"failed" | "refused" | null>(null);
@@ -481,9 +484,9 @@ export function AdBillingWatch({
         busy={busy}
       />
     );
-  // Nothing while the first read is in flight: the row appears only when
-  // there is something to say.
-  if (!data) return null;
+  // The loading row while the first read is in flight, then nothing when the
+  // panel has nothing to say.
+  if (!data) return <>{loading ?? null}</>;
   return (
     <AdBillingSummary
       data={data}

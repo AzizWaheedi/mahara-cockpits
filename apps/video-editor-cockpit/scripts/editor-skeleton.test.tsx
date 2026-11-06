@@ -15,6 +15,7 @@ import {
   JobsBoardSkeleton,
   JobsGroupsSkeleton,
   JobsSkeleton,
+  JobsTallySkeleton,
   PageHeaderSkeleton,
 } from "../src/components/skeletons/JobsSkeleton";
 
@@ -72,6 +73,26 @@ describe("JobsSkeleton", () => {
     expect(html.indexOf('data-section="jobs-groups"')).toBeGreaterThan(
       at.at(-1) ?? -1,
     );
+  });
+});
+
+describe("JobsTallySkeleton", () => {
+  const html = render(JobsTallySkeleton);
+
+  test("holds the tally section the live page draws", () => {
+    expect(html.startsWith("<div")).toBe(true);
+    expect(html).toContain('data-section="jobs-tally"');
+    expect(html).toContain("grid grid-cols-4 gap-2 sm:gap-4");
+  });
+
+  test("keeps the four real labels", () => {
+    for (const label of ["Ready", "Waiting", "Late", "Due today"]) {
+      expect(html).toContain(label);
+    }
+  });
+
+  test("draws no status, button, link or field", () => {
+    noControls(html);
   });
 });
 
@@ -178,6 +199,10 @@ describe("JobsPage", () => {
     expect(page).toContain("Reading the board");
     expect(page).not.toContain("LoadingSkeleton");
   });
+
+  test("holds the tally with the same skeleton while the jobs are read", () => {
+    expect(page).toContain("<JobsTallySkeleton");
+  });
 });
 
 describe("PipelinePage", () => {
@@ -227,5 +252,23 @@ describe("the app wires the same picture", () => {
     ]) {
       expect(file).toContain(name);
     }
+  });
+});
+
+describe("the remembered layout wiring", () => {
+  test("the list draws its own picture with no remembered record", () => {
+    const html = render(JobsSkeleton);
+    expect(html).toContain('data-page-skeleton="jobs"');
+    expect(html).not.toContain("data-remembered");
+  });
+
+  test("the board draws its own picture with no remembered record", () => {
+    const html = render(JobsBoardSkeleton);
+    expect(html).toContain('data-page-skeleton="jobs-board"');
+    expect(html).not.toContain("data-remembered");
+  });
+
+  test("the signed-in layout records each page", () => {
+    expect(source("../src/App.tsx")).toContain("<LayoutRecorder");
   });
 });

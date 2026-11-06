@@ -1,3 +1,4 @@
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { readBillingStripShown } from "@/lib/billingStripShape";
 import "@/components/ceo/ceo.css";
@@ -67,10 +68,14 @@ export function TrackingBacklogSkeleton() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
           <h2 className="text-[15px] font-semibold">Tracking backlog</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            <Skeleton className="h-4 w-full max-w-xl" />
-            <Skeleton className="mt-1 h-4 w-2/3 max-w-xl" />
-          </p>
+          <div className="mt-1 text-sm">
+            <div className="flex h-5 items-center">
+              <Skeleton className="h-3.5 w-full max-w-xl" />
+            </div>
+            <div className="flex h-5 items-center">
+              <Skeleton className="h-3.5 w-2/3 max-w-xl" />
+            </div>
+          </div>
         </div>
         <Skeleton className="h-8 w-16 rounded-md" />
       </div>
@@ -82,10 +87,14 @@ export function TrackingBacklogSkeleton() {
  * The Payments row as it looked on the last load: icon, label, what it says
  * and its two buttons. Today and Ads draw it only after it has shown once.
  */
-export function BillingStripSkeleton() {
+export function BillingStripSkeleton({
+  section = true,
+}: {
+  section?: boolean;
+}) {
   return (
     <div
-      data-section="billing-strip"
+      data-section={section ? "billing-strip" : undefined}
       className="ceo-root rounded-xl border text-sm"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4">
@@ -107,6 +116,16 @@ export function BillingStripSkeleton() {
   );
 }
 
+/** One text line in the sweep, in the loaded line box. */
+function SweepLine() {
+  return (
+    <span className="relative block flex-1 text-sm leading-snug">
+      <span className="invisible">&nbsp;</span>
+      <Skeleton className="absolute inset-x-0 top-[3px] bottom-[3px] w-3/4" />
+    </span>
+  );
+}
+
 function SweepSkeleton() {
   return (
     <section data-section="sweep" className={CARD}>
@@ -114,13 +133,21 @@ function SweepSkeleton() {
         Middle of the day: the sweep
       </h2>
       <div className="mt-4 grid gap-x-6 gap-y-1 sm:grid-cols-2">
-        {rows(5).map(i => (
+        {rows(7).map(i => (
           <div
             key={i}
+            data-sweep-row
             className="flex items-start gap-2.5 rounded-lg py-1.5 text-left"
           >
             <Skeleton className="mt-0.5 size-4 flex-none rounded" />
-            <Skeleton className="h-4 w-3/4 max-w-full" />
+            {i === 1 ? (
+              <span className="min-w-0 flex-1">
+                <SweepLine />
+                <SweepLine />
+              </span>
+            ) : (
+              <SweepLine />
+            )}
           </div>
         ))}
       </div>
@@ -208,7 +235,7 @@ function CampaignBoardSkeleton() {
 }
 
 /** The Ads page with its data held back, so the board keeps its shape. */
-export function AdsSkeleton() {
+function AdsSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -240,3 +267,5 @@ export function AdsSkeleton() {
     </div>
   );
 }
+
+export const AdsSkeleton = rememberedSkeleton("ads", AdsSkeletonStatic);

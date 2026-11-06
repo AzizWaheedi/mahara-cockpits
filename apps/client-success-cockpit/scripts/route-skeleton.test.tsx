@@ -8,7 +8,10 @@ import {
   ContentSkeleton,
   RouteSkeleton,
 } from "../src/components/RouteSkeleton";
+import { ClientsSkeleton } from "../src/components/skeletons/ClientsSkeleton";
+import { InboxSkeleton } from "../src/components/skeletons/InboxSkeleton";
 import { PAGE_SKELETONS } from "../src/components/skeletons/routes";
+import { TodaySkeleton } from "../src/components/skeletons/TodaySkeleton";
 
 /**
  * The loading pictures before a page draws itself: one app shell mirror and
@@ -109,6 +112,30 @@ describe("ContentSkeleton", () => {
       expect(html).toContain('data-page-skeleton="test"');
       expect(html).not.toContain("data-sidebar");
     });
+  });
+});
+
+describe("Remembered layout", () => {
+  const WRAPPED: [string, () => ReactNode][] = [
+    ["today", () => <TodaySkeleton />],
+    ["clients", () => <ClientsSkeleton />],
+    ["inbox", () => <InboxSkeleton />],
+  ];
+
+  test("each wrapped skeleton falls back to its full picture", () => {
+    for (const [name, make] of WRAPPED) {
+      const html = renderToStaticMarkup(make());
+      expect(html).toContain(`data-page-skeleton="${name}"`);
+      expect(html).not.toContain("data-remembered");
+    }
+  });
+
+  test("the signed-in layout records the page shape", () => {
+    const source = readFileSync(
+      join(import.meta.dir, "..", "src", "components", "AppLayout.tsx"),
+      "utf8",
+    );
+    expect(source).toContain("<LayoutRecorder");
   });
 });
 

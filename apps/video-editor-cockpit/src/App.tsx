@@ -10,6 +10,7 @@ import {
 } from "react-router";
 import { HermesChat } from "./components/HermesChat";
 import { JobsHome, JobsHomeSkeleton, Library } from "./components/Places";
+import { LayoutRecorder } from "./components/RememberedSkeleton";
 import { SearchBox } from "./components/SearchBox";
 import { ShellSkeleton } from "./components/ShellSkeleton";
 import Sidebar from "./components/Sidebar";
@@ -325,6 +326,7 @@ function Shell() {
           </Routes>
         </main>
       </div>
+      <LayoutRecorder pathname={location.pathname} />
       <SearchBox />
       {/* One task, in place, wherever the address has ?focus=. */}
       <TaskFocusHost />

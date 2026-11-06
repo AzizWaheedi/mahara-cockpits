@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/kit";
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -30,7 +31,7 @@ function ClientRowSkeleton() {
   );
 }
 
-export function ClientsSkeleton() {
+function ClientsSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -80,3 +81,8 @@ export function ClientsSkeleton() {
     </div>
   );
 }
+
+export const ClientsSkeleton = rememberedSkeleton(
+  "clients",
+  ClientsSkeletonStatic,
+);

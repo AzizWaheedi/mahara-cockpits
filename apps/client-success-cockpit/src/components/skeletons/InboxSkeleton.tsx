@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/kit";
+import { rememberedSkeleton } from "@/components/RememberedSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -87,7 +88,7 @@ function SendForReviewSkeleton() {
   );
 }
 
-export function InboxSkeleton() {
+function InboxSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -122,3 +123,5 @@ export function InboxSkeleton() {
     </div>
   );
 }
+
+export const InboxSkeleton = rememberedSkeleton("inbox", InboxSkeletonStatic);

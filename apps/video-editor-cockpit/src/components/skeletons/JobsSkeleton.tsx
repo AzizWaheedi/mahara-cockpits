@@ -4,6 +4,8 @@
  * for, so the page does not move when the jobs arrive. Decorative only.
  */
 
+import { rememberedSkeleton } from "../RememberedSkeleton";
+
 /** The route paths these skeletons stand for. */
 export const JOBS_SKELETON_PATHS = ["/"];
 
@@ -74,8 +76,11 @@ function Legend() {
   );
 }
 
-/** The day in four numbers: labels stay, values are blocks. */
-function TallySkeleton() {
+/**
+ * The day in four numbers: labels stay, values are blocks. The page skeleton
+ * and the live page both draw this, so the count cards keep one shape.
+ */
+export function JobsTallySkeleton() {
   return (
     <div data-section="jobs-tally">
       <div className="grid grid-cols-4 gap-2 sm:gap-4">
@@ -228,7 +233,7 @@ function BoardColumnSkeleton() {
 }
 
 /** The Jobs list, the desk's home, with its data held back. */
-export function JobsSkeleton() {
+function JobsSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -236,7 +241,7 @@ export function JobsSkeleton() {
       className="mx-auto w-full max-w-6xl"
     >
       <HeaderSkeleton />
-      <TallySkeleton />
+      <JobsTallySkeleton />
       <div data-section="your-tasks" className="mb-6">
         <YourTasksSkeleton />
       </div>
@@ -251,6 +256,8 @@ export function JobsSkeleton() {
     </div>
   );
 }
+
+export const JobsSkeleton = rememberedSkeleton("jobs", JobsSkeletonStatic);
 
 /** The board strip while the read is pending: fixed columns at loaded width. */
 export function JobsBoardSectionSkeleton() {
@@ -270,7 +277,7 @@ export function JobsBoardSectionSkeleton() {
 }
 
 /** The board view of Jobs (?view=board), with its data held back. */
-export function JobsBoardSkeleton() {
+function JobsBoardSkeletonStatic() {
   return (
     <div
       aria-hidden="true"
@@ -282,6 +289,11 @@ export function JobsBoardSkeleton() {
     </div>
   );
 }
+
+export const JobsBoardSkeleton = rememberedSkeleton(
+  "jobs-board",
+  JobsBoardSkeletonStatic,
+);
 
 /**
  * A page that is not Jobs, before its own skeleton exists: the header block
