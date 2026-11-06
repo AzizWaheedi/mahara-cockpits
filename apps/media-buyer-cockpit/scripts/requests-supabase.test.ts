@@ -3687,6 +3687,295 @@ describe("the old form's tickets in All Tasks", () => {
     const plain = await submit(SM, { type: "general_csm", answers: { details: "Nothing old here." } });
     expect((await queueRows(plain.id))[0].payload.descriptionMarkdown).not.toContain("old ClickUp form");
   });
+
+  test("offline draft preserves distinct old ticket context for both kickoff request types", async () => {
+    // Install the guarded candidate in the synthetic database only.
+    const draft = await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text();
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      const liveShape = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
+      expect(liveShape[0].hash).toBe("96677a21b5d8fd7478b419d244c8b2b3");
+      await asOwner(); await db.exec(draft);
+      await q(`UPDATE public.cockpit_request_types SET fields = fields || '[{"key":"details","label":"What happened?","kind":"details","clickup_field_id":null,"required":false,"options":null,"help":null}]'::jsonb WHERE key IN ('card_missing','whatsapp_connection')`);
+      for (const type of ["card_missing", "whatsapp_connection"]) {
+        for (const [suffix, text] of [["blank", ""], ["same", "Original fictional context."], ["new", "A separate fictional note."], ["longer", "Original fictional context. Additional information."]]) {
+          const taskId = `cudraft${type === "card_missing" ? "c" : "w"}${suffix}`;
+          await svc("SELECT public.cockpit_request_import($1::jsonb) r", [JSON.stringify([{ ...tasks[1], taskId, url: `https://app.clickup.com/t/${taskId}`, description: "Original fictional context." }])]);
+          const sent = await submit(SM, { type, client: ACME, answers: { details: text }, replaces: taskId });
+          const rows = await queueRows(sent.id);
+          const desc = rows[0].payload.descriptionMarkdown as string;
+          expect(desc.match(/Original fictional context\./g)).toHaveLength(suffix === "longer" ? 2 : 1);
+          expect(desc).toContain("Asked on the old ClickUp form:\nOriginal fictional context.");
+          expect(desc.includes("Additional details:\nA separate fictional note.")).toBe(suffix === "new");
+          if (suffix === "longer") expect(desc).toContain("Additional details:\nOriginal fictional context. Additional information.");
+        }
+      }
+      const deniedId = "cufictionaldenied";
+      await svc("SELECT public.cockpit_request_import($1::jsonb) r", [JSON.stringify([{ ...tasks[1], taskId: deniedId, url: `https://app.clickup.com/t/${deniedId}`, description: "A private fictional excerpt." }])]);
+      await svc("SELECT public.cockpit_clickup_requests_state(true,'fictional','apply','{}'::text[],'{}'::jsonb) r");
+      await db.exec("SAVEPOINT denied_route");
+      await actor(db, CALL);
+      let denial = "";
+      try { await db.query(submitSql, submitArgs({ type: "card_missing", client: ACME, answers: {}, replaces: deniedId })); }
+      catch (e) { denial = (e as Error).message; }
+      await db.exec("ROLLBACK TO SAVEPOINT denied_route"); await asOwner();
+      expect(denial).toBe("Only that team, an editor, an admin or the CEO can route this old ticket.");
+    } finally {
+      await db.exec("ROLLBACK"); await asOwner();
+    }
+  });
+
+  test("the guarded planner migration rejects a changed function without changing settings", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      const sql = await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text();
+      const before = await q("SELECT key, fields, version FROM public.cockpit_request_types WHERE key IN ('card_missing','whatsapp_connection') ORDER BY key");
+      await db.exec(sql);
+      await db.exec("SAVEPOINT changed_function");
+      await expect(db.exec(sql)).rejects.toThrow("Request planner differs from the reviewed definition");
+      await db.exec("ROLLBACK TO SAVEPOINT changed_function");
+      expect(await q("SELECT key, fields, version FROM public.cockpit_request_types WHERE key IN ('card_missing','whatsapp_connection') ORDER BY key")).toEqual(before);
+      const after = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
+      expect(after[0].hash).toBe("9920281946cbc5f20740407340593c85");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("the guarded planner migration refuses unexpected function privileges", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) TO authenticated");
+      await db.exec("SAVEPOINT unexpected_grant");
+      await expect(db.exec(await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text()))
+        .rejects.toThrow("Request planner differs from the reviewed definition");
+      await db.exec("ROLLBACK TO SAVEPOINT unexpected_grant");
+      const f = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash");
+      expect(f[0].hash).toBe("96677a21b5d8fd7478b419d244c8b2b3");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("offline versioned policy prototype preserves legacy output and freezes enabled snapshots", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      const taskId = "cufictionalpolicy";
+      await svc("SELECT public.cockpit_request_import($1::jsonb) r", [JSON.stringify([{ ...tasks[1], taskId, url: `https://app.clickup.com/t/${taskId}`, description: "Original fictional context." }])]);
+      const row = (await q("SELECT fields,version FROM public.cockpit_request_types WHERE key='card_missing'"))[0];
+      const fields = [...row.fields, { key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null }];
+      await one(SM, "SELECT public.cockpit_request_type_save('card_missing',$1::jsonb,$2) r", [JSON.stringify({ fields }), row.version]);
+      const plan = async () => (await q("SELECT public.cockpit_request_plan(t,NULL,$1,'Fictional client',$2::jsonb,NULL,'normal','Fictional staff',$3) AS plan FROM public.cockpit_request_types t WHERE t.key='card_missing'", [ACME, JSON.stringify({details:"New fictional note."}), taskId]))[0].plan;
+      const view = async () => (await q("SELECT public.cockpit_request_type_view(t,false) AS view FROM public.cockpit_request_types t WHERE t.key='card_missing'"))[0].view;
+      const oldPlan = await plan(); const oldView = await view();
+      const prototype = await Bun.file(new URL("../../../docs/requests/drafts/versioned-policy-server-prototype.sql", import.meta.url)).text();
+      await db.exec("CREATE TABLE public.cockpit_settings(key text PRIMARY KEY,value jsonb NOT NULL,updated_by text NOT NULL)");
+      await asOwner(); await db.exec(prototype);
+      expect(await plan()).toEqual(oldPlan); expect(await view()).toEqual(oldView);
+      const access = await q("SELECT has_function_privilege('anon','public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)','EXECUTE') AS anon, has_function_privilege('authenticated','public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)','EXECUTE') AS authenticated, has_function_privilege('authenticated','public.cockpit_request_submit_impl(uuid,text,text,jsonb,date,text,text,text,text,integer)','EXECUTE') AS direct_impl");
+      expect(access[0]).toEqual({ anon: false, authenticated: true, direct_impl: false });
+      const version = (await q("SELECT version FROM public.cockpit_request_types WHERE key='card_missing'"))[0].version;
+      await db.exec("SAVEPOINT not_ready");
+      await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_type_save('card_missing',$1::jsonb,$2) r", [JSON.stringify({ retained_context_policy: "retained_v1" }), version])).rejects.toThrow("not ready for activation");
+      await db.exec("ROLLBACK TO SAVEPOINT not_ready");
+      await asOwner();
+      await q("INSERT INTO public.cockpit_settings(key,value,updated_by) VALUES ('requests.retained_context_v1_ready','{\"ready\":true}'::jsonb,'fictional') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value");
+      const enabled = await one<Row>(SM, "SELECT public.cockpit_request_type_save('card_missing',$1::jsonb,$2) r", [JSON.stringify({ retained_context_policy: "retained_v1" }), version]);
+      expect(enabled.retainedContextPolicy).toBe("retained_v1");
+      expect((await plan())[0].payload.descriptionMarkdown).toContain("Asked on the old ClickUp form:\nOriginal fictional context.");
+      await db.exec("SAVEPOINT stale_preview"); await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_preview_v1('card_missing',$1,'{}'::jsonb,$2)", [ACME, enabled.version - 1])).rejects.toThrow("request changed");
+      await db.exec("ROLLBACK TO SAVEPOINT stale_preview"); await asOwner();
+      await db.exec("SAVEPOINT legacy_preview"); await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_preview('card_missing',$1,'{}'::jsonb)", [ACME])).rejects.toThrow("supported request form");
+      await db.exec("ROLLBACK TO SAVEPOINT legacy_preview"); await asOwner();
+      const guarded = await one<Row>(SM,"SELECT public.cockpit_request_preview_v1('card_missing',$1,'{}'::jsonb,$2) r",[ACME,enabled.version]);
+      expect(guarded.parts.length).toBeGreaterThan(0);
+      const requestId = uid();
+      await db.exec("SAVEPOINT legacy_submit"); await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_submit($1,'card_missing',$2,'{}'::jsonb,NULL,'normal','client_page',NULL)",[requestId,ACME])).rejects.toThrow("supported request form");
+      await db.exec("ROLLBACK TO SAVEPOINT legacy_submit"); await asOwner();
+      const submitted = await one<Row>(SM,"SELECT public.cockpit_request_submit_v1($1,'card_missing',$2,'{}'::jsonb,NULL,NULL,'client_page',NULL,$3) r",[requestId,ACME,enabled.version]);
+      expect(submitted.id).toBe(requestId);
+      await q("UPDATE public.cockpit_settings SET value='{\"ready\":false}'::jsonb WHERE key='requests.retained_context_v1_ready'");
+      await db.exec("SAVEPOINT paused_submit"); await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_submit_v1($1,'card_missing',$2,'{}'::jsonb,NULL,'normal','client_page',NULL,$3)",[uid(),ACME,enabled.version])).rejects.toThrow("not ready");
+      await db.exec("ROLLBACK TO SAVEPOINT paused_submit"); await asOwner();
+      const pausedRetry = await one<Row>(SM,"SELECT public.cockpit_request_submit_v1($1,'card_missing',$2,'{}'::jsonb,NULL,NULL,'client_page',NULL,$3) r",[requestId,ACME,enabled.version]);
+      expect(pausedRetry.reused).toBe(true);
+      await db.exec("SAVEPOINT unsafe_restore"); await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_type_restore('card_missing',$1,$2)",[row.version,enabled.version])).rejects.toThrow("Turn it off before restoring");
+      await db.exec("ROLLBACK TO SAVEPOINT unsafe_restore"); await asOwner();
+      expect((await q("SELECT version FROM public.cockpit_request_types WHERE key='card_missing'"))[0].version).toBe(enabled.version);
+      await one(SM, "SELECT public.cockpit_request_type_save('card_missing',$1::jsonb,$2) r", [JSON.stringify({ retained_context_policy: "legacy" }), enabled.version]);
+      const retried = await one<Row>(SM,"SELECT public.cockpit_request_submit_v1($1,'card_missing',$2,'{}'::jsonb,NULL,NULL,'client_page',NULL,$3) r",[requestId,ACME,enabled.version]);
+      expect(retried.reused).toBe(true);
+      await db.exec("SAVEPOINT stale_submit"); await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_submit_v1($1,'card_missing',$2,'{}'::jsonb,NULL,'normal','client_page',NULL,$3)",[uid(),ACME,enabled.version])).rejects.toThrow("request changed");
+      await db.exec("ROLLBACK TO SAVEPOINT stale_submit"); await asOwner();
+      const frozen = await q("SELECT (public.cockpit_request_type_at('card_missing',$1)).retained_context_policy AS policy", [enabled.version]);
+      expect(frozen[0].policy).toBe("retained_v1");
+      const currentVersion = (await q("SELECT version FROM public.cockpit_request_types WHERE key='card_missing'"))[0].version;
+      await one(SM,"SELECT public.cockpit_request_type_restore('card_missing',$1,$2) r",[enabled.version,currentVersion]);
+      expect((await q("SELECT retained_context_policy,retained_context_ever_enabled FROM public.cockpit_request_types WHERE key='card_missing'"))[0]).toEqual({ retained_context_policy:'legacy', retained_context_ever_enabled:true });
+      const restoreVersion = (await q("SELECT version FROM public.cockpit_request_types WHERE key='card_missing'"))[0].version;
+      await one(SM,"SELECT public.cockpit_request_type_save('card_missing',$1::jsonb,$2) r",[JSON.stringify({ enabled:false, due_days:20, priority:'high' }),restoreVersion]);
+      const retryAfterChange = await one<Row>(SM,"SELECT public.cockpit_request_submit_v1($1,'card_missing',$2,'{}'::jsonb,NULL,NULL,'client_page',NULL,$3) r",[requestId,ACME,enabled.version]);
+      expect(retryAfterChange.reused).toBe(true);
+      await db.exec("SAVEPOINT changed_retry"); await actor(db, SM);
+      await expect(db.query("SELECT public.cockpit_request_submit_v1($1,'card_missing',$2,'{}'::jsonb,NULL,'urgent','client_page',NULL,$3)",[requestId,ACME,enabled.version])).rejects.toThrow("other answers");
+      await db.exec("ROLLBACK TO SAVEPOINT changed_retry"); await asOwner();
+      expect((await q("SELECT (public.cockpit_request_type_at('card_missing',$1)).retained_context_policy AS policy",[row.version]))[0].policy).toBe('legacy');
+      await q("INSERT INTO public.cockpit_request_type_versions(key,version,\"row\",saved_by) SELECT key,997,to_jsonb(t) - 'retained_context_policy','fictional' FROM public.cockpit_request_types t WHERE key='card_missing'");
+      await db.exec("SAVEPOINT omitted_policy");
+      await expect(db.query("SELECT public.cockpit_request_type_at('card_missing',997)")).rejects.toThrow("saved request policy is missing");
+      await db.exec("ROLLBACK TO SAVEPOINT omitted_policy");
+      await q("INSERT INTO public.cockpit_request_type_versions(key,version,\"row\",saved_by) SELECT key,998,to_jsonb(t) || '{\"retained_context_policy\":null}'::jsonb,'fictional' FROM public.cockpit_request_types t WHERE key='card_missing'");
+      await db.exec("SAVEPOINT malformed_snapshot");
+      await expect(db.query("SELECT public.cockpit_request_type_at('card_missing',998)")).rejects.toThrow("saved request policy is invalid");
+      await db.exec("ROLLBACK TO SAVEPOINT malformed_snapshot");
+      await db.exec("SAVEPOINT missing_snapshot");
+      await expect(q("SELECT public.cockpit_request_type_at('card_missing',999)")).rejects.toThrow("saved request type version is missing");
+      await db.exec("ROLLBACK TO SAVEPOINT missing_snapshot");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("held guarded migration rejects absent live function definitions before changing the schema", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec("CREATE TABLE public.cockpit_settings(key text PRIMARY KEY,value jsonb NOT NULL,updated_by text NOT NULL)");
+      const sql = await Bun.file(new URL("../../../docs/requests/drafts/held-migrations/20261106131757_requests_versioned_retained_context.sql", import.meta.url)).text();
+      const guard = sql.match(/DO \$guard\$[\s\S]*?END \$guard\$;/)?.[0];
+      expect(guard).toBeDefined();
+      await db.exec("SAVEPOINT preflight");
+      await expect(db.exec(guard!)).rejects.toThrow("Preflight function drift");
+      await db.exec("ROLLBACK TO SAVEPOINT preflight");
+      const state = await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column, to_regprocedure('public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)') IS NOT NULL AS v1_submit");
+      expect(state[0]).toEqual({policy_column:false,v1_submit:false});
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("held migration rehearses forward and rollback on a synthetic baseline and rejects drift", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec(`CREATE TABLE public.cockpit_settings(key text PRIMARY KEY,value jsonb NOT NULL,updated_by text NOT NULL);
+        ALTER TABLE public.cockpit_settings ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON public.cockpit_settings FROM PUBLIC,anon,authenticated,service_role;
+        GRANT ALL ON public.cockpit_settings TO service_role;
+        CREATE FUNCTION public.cockpit_kickoff_item_raise(text,text,uuid) RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path='' AS $$ SELECT '{}'::jsonb $$;
+        REVOKE ALL ON FUNCTION public.cockpit_kickoff_item_raise(text,text,uuid) FROM PUBLIC,anon,authenticated,service_role;
+        GRANT EXECUTE ON FUNCTION public.cockpit_kickoff_item_raise(text,text,uuid) TO authenticated;
+        CREATE TABLE public.cockpit_kickoff_item_answers(task_id text,item text,request_id uuid,decided_at timestamptz,decided_by_label text);`);
+      const sql = await Bun.file(new URL("../../../docs/requests/drafts/held-migrations/20261106131757_requests_versioned_retained_context.sql", import.meta.url)).text();
+      let guard = sql.match(/DO \$guard\$[\s\S]*?END \$guard\$;/)![0];
+      // This fixture has synthetic dependencies and different schema hashes from production.
+      // Substitute its observed fingerprints only in memory to exercise the same guard logic.
+      const functions = [...guard.matchAll(/\('([^']+\([^']*\))','([0-9a-f]{32})','([sv])','([^']+)'\)/g)];
+      expect(functions.length).toBe(11);
+      for (const m of functions) {
+        const f = (await q("SELECT md5(pg_get_functiondef(p.oid)) AS hash,p.proacl::text AS acl FROM pg_proc p WHERE p.oid=to_regprocedure('public.' || $1)",[m[1]]))[0];
+        expect(f).toBeDefined();
+        guard=guard.replace(m[0],`('${m[1]}','${f.hash}','${m[3]}','${f.acl}')`);
+      }
+      const tables = [...guard.matchAll(/\('(cockpit_[^']+)','([0-9a-f]{32})','(\{[^']+\})'\)/g)];
+      expect(tables.length).toBe(5);
+      for (const m of tables) {
+        const t = (await q("SELECT md5(coalesce(string_agg(a.attname || ':' || format_type(a.atttypid,a.atttypmod) || ':' || a.attnotnull::text, ',' ORDER BY a.attnum),'')) AS hash,c.relacl::text AS acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE n.nspname='public' AND c.relname=$1 GROUP BY c.oid",[m[1]]))[0];
+        expect(t).toBeDefined();
+        guard=guard.replace(m[0],`('${m[1]}','${t.hash}','${t.acl}')`);
+      }
+      const triggers = [...guard.matchAll(/\('(cockpit_[^']+)','(cockpit_[^']+)','([0-9a-f]{32})'\)/g)];
+      expect(triggers.length).toBe(5);
+      for (const m of triggers) {
+        const t=(await q("SELECT md5(pg_get_triggerdef(oid)) AS hash FROM pg_trigger WHERE tgrelid=to_regclass('public.' || $1) AND tgname=$2",[m[1],m[2]]))[0];
+        expect(t).toBeDefined();
+        guard=guard.replace(m[0],`('${m[1]}','${m[2]}','${t.hash}')`);
+      }
+      await db.exec(guard);
+      await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) TO authenticated");
+      await db.exec("SAVEPOINT drift");
+      await expect(db.exec(guard)).rejects.toThrow("Preflight function drift: cockpit_request_plan");
+      await db.exec("ROLLBACK TO SAVEPOINT drift");
+      await db.exec("REVOKE EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) FROM authenticated");
+      await db.exec(guard);
+      const before = await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash, (SELECT count(*) FROM public.cockpit_request_type_versions)::int AS versions");
+      const originalGuard = sql.match(/DO \$guard\$[\s\S]*?END \$guard\$;/)![0];
+      // The test's outer transaction and savepoint own rollback. The production file retains its explicit transaction.
+      const forward=sql.replace(/^BEGIN;\s*/m,"").replace(/\nCOMMIT;\s*$/,"").replace(originalGuard,guard);
+      await db.exec("SAVEPOINT forward");
+      await db.exec(forward);
+      const state=(await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column, (SELECT count(*)::int FROM public.cockpit_request_types WHERE retained_context_policy <> 'legacy') AS enabled, (SELECT count(*)::int FROM public.cockpit_settings WHERE key='requests.retained_context_v1_ready') AS ready_rows, has_function_privilege('anon','public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)','EXECUTE') AS anon_can_submit"))[0];
+      expect(state).toEqual({policy_column:true,enabled:0,ready_rows:0,anon_can_submit:false});
+      const sent=await submit(SM,{type:'card_missing',client:ACME,answers:{}});
+      expect(sent.id).toBeDefined();
+      await db.exec("ROLLBACK TO SAVEPOINT forward"); await asOwner();
+      const after=await q("SELECT md5(pg_get_functiondef(to_regprocedure('public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text)'))) AS hash, (SELECT count(*) FROM public.cockpit_request_type_versions)::int AS versions");
+      expect(after).toEqual(before);
+      const restored=(await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column, to_regprocedure('public.cockpit_request_submit_v1(uuid,text,text,jsonb,date,text,text,text,integer)') IS NOT NULL AS v1_submit"))[0];
+      expect(restored).toEqual({policy_column:false,v1_submit:false});
+      await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) TO authenticated");
+      await db.exec("SAVEPOINT bad_forward");
+      await expect(db.exec(forward)).rejects.toThrow("Preflight function drift: cockpit_request_plan");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_forward");
+      expect((await q("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cockpit_request_types' AND column_name='retained_context_policy') AS policy_column"))[0].policy_column).toBe(false);
+      await db.exec("REVOKE EXECUTE ON FUNCTION public.cockpit_request_plan(public.cockpit_request_types,uuid,text,text,jsonb,date,text,text,text) FROM authenticated");
+      await db.exec("SAVEPOINT bad_snapshot_policy");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"="row" || '{"retained_context_policy":"retained_v1"}'::jsonb WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_policy");
+      await db.exec("SAVEPOINT bad_snapshot_version");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"=jsonb_set("row",'{version}','999'::jsonb) WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_version");
+      await db.exec("SAVEPOINT bad_snapshot_key");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"=jsonb_set("row",'{key}','"fictional_other"'::jsonb) WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_key");
+      await db.exec("SAVEPOINT bad_snapshot_shape");
+      await db.exec(`UPDATE public.cockpit_request_type_versions SET "row"='{}'::jsonb WHERE key='card_missing' AND version=1`);
+      await expect(db.exec(forward)).rejects.toThrow("Preflight request type snapshot content needs reconciliation");
+      await db.exec("ROLLBACK TO SAVEPOINT bad_snapshot_shape");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("policy column experiment keeps real type snapshots distinct and exposes missing-version fallback", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      await db.exec("ALTER TABLE public.cockpit_request_types ADD COLUMN retained_context_policy text NOT NULL DEFAULT 'legacy' CHECK (retained_context_policy IN ('legacy','retained_v1'))");
+      const initial = await q("SELECT coalesce((public.cockpit_request_type_at('card_missing',1)).retained_context_policy,'legacy') AS policy");
+      expect(initial[0].policy).toBe("legacy");
+      await q("UPDATE public.cockpit_request_types SET version=2, retained_context_policy='retained_v1' WHERE key='card_missing'");
+      await q("INSERT INTO public.cockpit_request_type_versions(key,version,\"row\",saved_by) SELECT key,version,to_jsonb(t),'fictional' FROM public.cockpit_request_types t WHERE key='card_missing'");
+      await q("UPDATE public.cockpit_request_types SET version=3, retained_context_policy='legacy' WHERE key='card_missing'");
+      const frozen = await q("SELECT (public.cockpit_request_type_at('card_missing',2)).retained_context_policy AS policy");
+      expect(frozen[0].policy).toBe("retained_v1");
+      await q("UPDATE public.cockpit_request_types SET retained_context_policy='retained_v1' WHERE key='card_missing'");
+      const fallback = await q("SELECT (public.cockpit_request_type_at('card_missing',999)).retained_context_policy AS policy");
+      expect(fallback[0].policy).toBe("retained_v1");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
+
+  test("a sweep after the migration rebuilds only missing queued payloads using the saved type version", async () => {
+    await asOwner(); await db.exec("BEGIN");
+    try {
+      const row = (await q("SELECT fields, version FROM public.cockpit_request_types WHERE key='card_missing'"))[0];
+      const fields = [...row.fields, { key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null }];
+      await one(SM, "SELECT public.cockpit_request_type_save('card_missing',$1::jsonb,$2) r", [JSON.stringify({ fields }), row.version]);
+      const ids = ["cufictionalkeep", "cufictionalrepair"];
+      for (const taskId of ids) {
+        await svc("SELECT public.cockpit_request_import($1::jsonb) r", [JSON.stringify([{ ...tasks[1], taskId, url: `https://app.clickup.com/t/${taskId}`, description: "A saved fictional excerpt." }])]);
+      }
+      const kept = await submit(SM, { type: "card_missing", client: ACME, answers: {}, replaces: ids[0] });
+      const repair = await submit(SM, { type: "card_missing", client: ACME, answers: {}, replaces: ids[1] });
+      const keepBefore = await queueOf(kept.id);
+      const repairBefore = await queueOf(repair.id);
+      expect(keepBefore.payload.descriptionMarkdown).not.toContain("A saved fictional excerpt.");
+      expect(repairBefore.payload.descriptionMarkdown).not.toContain("A saved fictional excerpt.");
+      await q("DELETE FROM public.cockpit_clickup_writeback_queue WHERE id=$1", [repairBefore.id]);
+      await q("UPDATE public.cockpit_request_parts SET queue_id=NULL, state='queued' WHERE request_id=$1", [repair.id]);
+      await asOwner(); await db.exec(await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text());
+      expect(await svc<number>("SELECT public.cockpit_request_sweep() r")).toBeGreaterThanOrEqual(1);
+      expect((await queueOf(kept.id)).payload).toEqual(keepBefore.payload);
+      expect((await queueOf(repair.id)).payload.descriptionMarkdown).toContain("Asked on the old ClickUp form:\nA saved fictional excerpt.");
+    } finally { await db.exec("ROLLBACK"); await asOwner(); }
+  });
 });
 
 describe("the request lists", () => {

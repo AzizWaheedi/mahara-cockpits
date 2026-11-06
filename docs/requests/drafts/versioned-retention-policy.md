@@ -1,0 +1,43 @@
+# Versioned retained context policy design
+
+Status: design and isolated schema experiment only. This is not a migration, a usable gate, or approval to enable PR 206. The current draft UI remount and planner replacement are not dark and must not be shipped as though they were.
+
+## Why a global switch is insufficient
+
+The preview and submission call `cockpit_request_plan` with the current type. The sweep can later reconstruct a missing queue payload using the accepted request's `type_version`. `cockpit_request_type_at` normally loads that version's saved JSON row, but currently falls back to the current type if the historical snapshot is missing. Looking up a mutable global flag at sweep time could therefore change a previously accepted request's description. A missing snapshot must never cause a newly enabled policy to be inferred for an older request.
+
+The current shared `RequestForm` wrapper also remounts on seat or ticket changes before the type is known. Gating only its new details field would not preserve old behavior while off. Off must route the entire form through the exact prior behavior, not merely hide the visible retained-context text.
+
+## Candidate schema and server contract
+
+1. Add a constrained type-row policy with explicit values `legacy` and `retained_v1`, default `legacy`. A type-version snapshot must include the policy. Old JSON snapshots lacking the column resolve to `legacy`; never infer the current policy from a missing old property. Isolated PGlite experiments on a miniature table and the actual test request-type schema confirmed this composite/JSON behavior. The latter also reproduced that an absent version uses the current type's policy. Neither experiment is a production migration, concurrency proof, or security check.
+2. The planner must branch on the accepted request's frozen type version. The legacy branch must have exactly the previous planner semantics, including the old lookup, duplicate behavior and output bytes. The v1 branch may retain the prior ticket excerpt. Preview, submit and sweep must all use the correct version. Never select policy from a global flag when replaying a saved request.
+3. Introduce a seat-authorized, server-reported policy in the type view. The UI defaults to legacy if the value is absent, invalid, stale or cannot be read. The type/version and policy used on Send must be server checked against the current authorized configuration; refuse and reload on mismatch rather than silently switching behavior. Preserve the previous wrapper/remount path exactly for legacy types, including unrelated types.
+4. Use a controlled settings action that locks the type, validates the expected version, sets the new policy, bumps its version and writes an immutable snapshot in the same transaction. Keep it disabled/unavailable until the five screens and server path have been independently reviewed. No client can directly write policy tables. Every change needs an actor, audit receipt and current-version check.
+5. Address missing snapshots explicitly. Do not fall back to the current enabled policy for an old request. Either refuse reconstruction with a visible recoverable error, or prove a safe legacy rule for each historical record before implementing it. Preserve already materialized queue payloads. Examine pending and unknown claims under the same concurrency discipline used for activation.
+
+## Rollout and reversal
+
+Deploy the tested server code with all existing type versions legacy, then verify byte-for-byte legacy results and existing request processing. Deploy all five screens with the policy still off and confirm role isolation and current behavior. Only after a rehearsed activation and explicitly reviewed settings step should the two target types gain a new v1 policy version and optional details fields. Existing requests retain their saved versions.
+
+Turning the feature off is not a reverse migration: create a new legacy type version for future requests while retaining v1 code and snapshots so already accepted v1 requests and sweep repairs remain consistent. A complete database downgrade would require draining or safely reconciling every v1 request, queue, unknown effect and retry, blocking new submissions during the change, and a transactional, drift-guarded reverse script tested against the exact deployed function and grants. Never delete request history or rewrite already delivered tasks to make rollback appear complete.
+
+## Required proofs before release
+
+- Compare old and new planner outputs for all legacy versions, including imported tickets, blank/exact/new/overlapping notes, all targets and saved type versions. Prove both no-details and unrelated types remain unchanged.
+- Test preview, accepted submit and a later sweep after policy off/on/off, including absent and malformed saved snapshots. Verify policy and type version are bound atomically under concurrent settings changes.
+- Test two independent PostgreSQL transactions racing on the same imported ticket and on settings changes, not just a single PGlite session. Test claims, uncertain outcomes, duplicate retry, sign-out/re-entry, tabs, reload and access revocation.
+- Verify authenticated role checks, no direct browser access to private tables, RLS and grants, audit events, migration transaction atomicity and exact forward/reverse function hashes, owner, ACL, security mode and search path.
+- Check five-cockpit UI off-mode parity, loading/failure, keyboard and screen-reader behavior, and signed-in sessions. Confirm actual ClickUp provider state, safe recovery and rollback with separately authorized tests; the user declined a second workflow WhatsApp test.
+
+Fresh read-only aggregate on 6 November: both target types were version 1 with one saved snapshot each, and had no associated request rows at that moment. Across all types, 11 requests had matching snapshots. These counts can change and do not remove the need for an atomic rollout-time check.
+
+## Offline prototype checkpoint
+
+The adjacent server and kickoff SQL files are deliberately **not migrations**. They are experiments only and are not safe to apply or enable. A targeted synthetic request test currently exercises legacy output, authorization metadata, default-off readiness, version pinning, historical replay, recovery of an accepted retry after configuration changes, malformed or missing snapshots, and rejection of an unsafe restore (25 assertions). A separate synthetic kickoff test checks legacy and pinned v1 paths (7 assertions). These do not prove full parity, provider delivery or real concurrency.
+
+The prototype has a monotonic `retained_context_ever_enabled` marker, a frozen cutoff distinguishing old snapshots from later damaged rows, and a table-level guard so the separate type restore and writer paths cannot silently violate the v1 details-field invariant. Before any real migration, validate all existing snapshot versions against the chosen cutoff and guard the installation transaction against concurrent edits. Restoring a historical v1 snapshot while the current policy is legacy leaves the policy legacy. Turning readiness off blocks new v1 requests, but does not roll back any accepted request, existing queue or provider action. A same-seat, same-content accepted retry uses its recorded defaults even after type disablement; additional authentication, permission-revocation and uncertain-outcome tests remain required.
+
+There is a potential activation race when a legacy submit reads the old policy just before an editor enables v1. The offline prototype now takes a shared type-row lock on both legacy and v1 submission for the two affected types, re-reading the row after the lock; a settings writer takes the conflicting update lock. This changes locking behavior even while off. Two real PostgreSQL sessions using the actual prototype and synthetic request fixture passed both lock acquisition orders and an activation rollback; see `local-postgres-concurrency-plan.md`. This does not prove the kickoff caller, other failure/retry scenarios, deadlock safety or acceptable latency. Do not switch the policy on, ship the draft migration, or call this dark until the remaining paths and the authentic-session UI are verified.
+
+The release migration must be constructed against fresh live function definitions, owners, search paths and grants, abort on any drift, and perform create/revoke operations atomically. A reversible pre-activation migration needs checks that no v1 snapshot, request, queue or in-flight call exists. After activation, prefer a new legacy version while retaining v1 replay code; a full downgrade requires a separately rehearsed, drift-checked drain and reconciliation. Never erase history as a rollback.

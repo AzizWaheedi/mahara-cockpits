@@ -83,7 +83,13 @@ setSystemTime(new Date(NOW));
 let fake: Fake = createRequestsFake({ seat: "csm", now: () => NOW });
 /** Answers a call before the store does, once per name; null passes it on. */
 let before: (name: string, args: any) => Answer | null = () => null;
-db.rpc = async (name: string, args: any = {}) => {
+let versionedFixture: string | null = null;
+function mockQuery(run: () => Promise<Answer> | Answer): any {
+  const promise: any = Promise.resolve().then(run);
+  promise.setHeader = () => promise;
+  return promise;
+}
+db.rpc = (name: string, args: any = {}) => mockQuery(async () => {
   if (name === "cockpit_adopt_member") return { data: true, error: null };
   if (name === "cockpit_get_my_access")
     return {
@@ -101,9 +107,19 @@ db.rpc = async (name: string, args: any = {}) => {
     };
   const first = before(name, args);
   if (first) return first;
+  if (versionedFixture && name === "cockpit_request_types_read") {
+    const answer = fake.call(name, args);
+    const t = (answer.data as any).types.find((x:any) => x.key === versionedFixture);
+    if (t) { t.retainedContextPolicy = "retained_v1"; t.typeVersion = 9; }
+    return answer;
+  }
+  if (versionedFixture && (name === "cockpit_request_preview_v1" || name === "cockpit_request_submit_v1")) {
+    if (args.p_expected_version !== 9) return {data:null,error:{code:"40001",message:"Wrong test version."}};
+    return fake.call(name.replace(/_v1$/, ""), args);
+  }
   if (fake.handles(name)) return fake.call(name, args);
   return { data: null, error: { message: `No answer for ${name}` } };
-};
+});
 
 // --- A DOM. ------------------------------------------------------------------
 const { Window } = await import("happy-dom");
@@ -168,7 +184,8 @@ const { MemoryRouter } = await import("react-router");
 const { SupabaseAuthProvider } = await import(
   "../src/auth/SupabaseAuthProvider"
 );
-const { RequestForm } = await import("../src/components/tasks/RequestForm");
+const { RequestForm, submitReplacementOnce } = await import("../src/components/tasks/RequestForm");
+const { RequestError, submitReplacementForSeat } = await import("../src/lib/requestsClient");
 
 const container = win.document.createElement("div");
 win.document.body.appendChild(container);
@@ -309,6 +326,7 @@ afterEach(async () => {
   await flush(2);
   fake = createRequestsFake({ seat: "csm", now: () => NOW });
   before = () => null;
+  versionedFixture = null;
   expect(left).toEqual([]);
 });
 
@@ -1083,6 +1101,366 @@ describe("the request form", () => {
     );
     // Not a routed old ticket: nothing about one.
     expect(page()).not.toContain("old ticket");
+  });
+
+  test("routed card context stays visible when optional new notes are blank and a later request starts fresh", async () => {
+    versionedFixture = "card_missing";
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.importedTaskId || !old.clientTaskId) throw new Error("No fictional old ticket");
+    old.importedTaskId = "fictionalCardOld";
+    await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "Original fictional details.", replacesTaskId: old.importedTaskId });
+    expect(field("details").value).toBe("");
+    expect(page()).toContain("Saved ticket context");
+    expect(container.querySelector(".rq-quote")?.textContent).toBe("Original fictional details.");
+    expect(page()).toContain("clearing them does not remove the saved excerpt");
+    const describedBy = field("details").getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(win.document.getElementById(describedBy)?.textContent).toContain("clearing them does not remove the saved excerpt");
+    await type(field("details"), "Extra detail");
+    await type(field("details"), "");
+    await click(button("Send request"));
+    expect(submits()[0].args.p_replaces_task_id).toBe(old.importedTaskId);
+    expect(submits()[0].args.p_answers.details).toBeUndefined();
+    await click(button("Ask for something else"));
+    await pick("General tech request");
+    expect(field("details").value).toBe("");
+    expect(page()).not.toContain("Saved ticket context");
+    await type(field("details"), "A new request");
+    await click(button("Send request"));
+    expect(submits().at(-1)?.args.p_replaces_task_id).toBeNull();
+  });
+
+  test("routed WhatsApp context stays separate and stale-ticket refusal never resubmits alone", async () => {
+    versionedFixture = "whatsapp_connection";
+    const t = fake.types.find(x => x.key === "whatsapp_connection");
+    if (!t) throw new Error("No fictional WhatsApp type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    let attempts = 0;
+    before = name => {
+      if (name !== "cockpit_request_submit_v1") return null;
+      attempts++;
+      return { data: null, error: { code: "55000", message: "That old ticket was already routed." } };
+    };
+    await render({ presetType: "whatsapp_connection", presetClient: { taskId: "86harb005", name: "Fictional client" }, presetDetails: "Original fictional message.", replacesTaskId: "fictional-old", replacesIfOpen: true });
+    expect(field("details").value).toBe("");
+    expect(container.querySelector(".rq-quote")?.textContent).toBe("Original fictional message.");
+    await type(field("details"), "A separate note.");
+    await click(button("Send request"));
+    expect(attempts).toBe(1);
+    expect(page()).toContain("Review the original ticket before sending another request.");
+  });
+
+  test("a regular card request with a preset continues to prefill its editable details", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    await render({ presetType: "card_missing", presetDetails: "Existing request notes." });
+    expect(field("details").value).toBe("Existing request notes.");
+    expect(page()).not.toContain("Saved ticket context");
+  });
+
+  test("a replacement with no loaded original still explains and links to the retained context", async () => {
+    versionedFixture = "card_missing";
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    await render({ presetType: "card_missing", replacesTaskId: "fictional123" });
+    expect(field("details").value).toBe("");
+    expect(page()).toContain("The saved excerpt from the first import, up to 4,000 characters, will be included");
+    const link = [...container.querySelectorAll("a")].find(a => text(a) === "Review the original ticket");
+    expect(link?.getAttribute("href")).toBe("https://app.clickup.com/t/fictional123");
+  });
+
+  test("changing the replacement ticket rebinds its original context and request", async () => {
+    versionedFixture = "card_missing";
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.importedTaskId || !old.clientTaskId) throw new Error("No fictional old ticket");
+    old.importedTaskId = "fictionalSecondOld";
+    await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "First context", replacesTaskId: "fictional-old-first" });
+    await type(field("details"), "First additional note");
+    await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "Second context", replacesTaskId: old.importedTaskId });
+    expect(container.querySelector(".rq-quote")?.textContent).toBe("Second context");
+    expect(field("details").value).toBe("");
+    await click(button("Send request"));
+    expect(submits()[0].args.p_replaces_task_id).toBe(old.importedTaskId);
+  });
+
+  test("a pending old-ticket submission cannot call back into the next ticket after a switch", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void;
+    let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => name === "cockpit_request_submit"
+      ? await new Promise<Answer>(resolve => { release = resolve; }) : previousRpc(name, args));
+    try {
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "First context", replacesTaskId: "fictionalold1", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(release).toBeDefined();
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "Second context", replacesTaskId: "fictionalold2" });
+      release({ data: { id: "fictional", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(field("details").value).toBe("Second context");
+    } finally { db.rpc = previousRpc; }
+  });
+
+  test("a late old-ticket refusal after switching cannot start a standalone retry", async () => {
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void;
+    let attempts = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return previousRpc(name, args);
+      attempts++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    try {
+      await render({ presetType: "general_tech", presetDetails: "First context", replacesTaskId: "fictionalold1", replacesIfOpen: true });
+      await click(button("Send request"));
+      await render({ presetType: "general_tech", presetDetails: "Second context", replacesTaskId: "fictionalold2" });
+      release({ data: null, error: { code: "55000", message: "That old ticket was already routed." } });
+      await flush();
+      expect(attempts).toBe(1);
+      expect(field("details").value).toBe("Second context");
+    } finally { db.rpc = previousRpc; }
+  });
+
+  test("replacement operations hold pending payloads and retain the ID after uncertain failure", async () => {
+    const client = {};
+    const body = { requestId: "fictional-id-one", typeKey: "card_missing", clientTaskId: "fictional-client", answers: { details: "new" }, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
+    let release!: (result: any) => void;
+    const sent: string[] = [];
+    const send = async (input: typeof body) => { sent.push(input.requestId); return await new Promise<any>(resolve => { release = resolve; }); };
+    const first = submitReplacementOnce(client, "account-a", body, send);
+    const joined = submitReplacementOnce(client, "account-a", { ...body, requestId: "fictional-id-two" }, send);
+    await expect(joined).rejects.toThrow();
+    await Promise.resolve();
+    expect(sent).toEqual(["fictional-id-one"]);
+    await expect(submitReplacementOnce(client, "account-a", { ...body, answers: { details: "changed" } }, send)).rejects.toThrow();
+    release({ id: "fictional-id-one", state: "sending", parts: [] });
+    expect((await first).id).toBe("fictional-id-one");
+    await expect(submitReplacementOnce(client, "account-a", { ...body, requestId: "fictional-id-three" }, send)).rejects.toThrow();
+    expect(sent).toEqual(["fictional-id-one"]);
+
+    const uncertainClient = {}; const attempts: string[] = [];
+    const failThenPass = async (input: typeof body) => { attempts.push(input.requestId); if (attempts.length === 1) throw new Error("fictional network failure"); return { id: input.requestId, state: "sending", parts: [] } as any; };
+    await expect(submitReplacementOnce(uncertainClient, "account-a", body, failThenPass)).rejects.toThrow();
+    await expect(submitReplacementOnce(uncertainClient, "account-a", { ...body, answers: { details: "changed" } }, failThenPass)).rejects.toThrow();
+    expect((await submitReplacementOnce(uncertainClient, "account-a", { ...body, requestId: "fictional-id-new" }, failThenPass)).id).toBe("fictional-id-one");
+    expect(attempts).toEqual(["fictional-id-one", "fictional-id-one"]);
+  });
+
+  test("replacement operation identities do not cross accounts or client instances", async () => {
+    const client = {}, otherClient = {};
+    const body = { requestId: "account-a-id", typeKey: "card_missing", clientTaskId: "fictional-client", answers: {}, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-account-ticket" };
+    const sent: string[] = [];
+    const send = async (input: typeof body) => { sent.push(input.requestId); return { id: input.requestId, state: "sending", parts: [] } as any; };
+    await submitReplacementOnce(client, "account-a", body, send);
+    await submitReplacementOnce(client, "account-b", { ...body, requestId: "account-b-id" }, send);
+    await submitReplacementOnce(otherClient, "account-a", { ...body, requestId: "other-client-id" }, send);
+    expect(sent).toEqual(["account-a-id", "account-b-id", "other-client-id"]);
+    await expect(submitReplacementOnce(client, "", body, send)).rejects.toThrow();
+  });
+
+  test("only a definite first refusal permits an edited retry", async () => {
+    const body = { requestId: "fictional-1", typeKey: "card_missing", clientTaskId: "fictional-client", answers: { details: "first" }, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
+    const client = {};
+    await expect(submitReplacementOnce(client, "account-a", body, async () => { throw new RequestError("Fix the answer", "22023", "rejected"); })).rejects.toThrow();
+    const result = await submitReplacementOnce(client, "account-a", { ...body, requestId: "fictional-2", answers: { details: "corrected" } }, async input => ({ id: input.requestId, state: "sending", parts: [] }) as any);
+    expect(result.id).toBe("fictional-2");
+    const uncertain = {};
+    await expect(submitReplacementOnce(uncertain, "account-a", body, async () => { throw new Error("network outcome unknown"); })).rejects.toThrow();
+    await expect(submitReplacementOnce(uncertain, "account-a", body, async () => { throw new RequestError("signed out", null, "not_sent"); })).rejects.toThrow();
+    await expect(submitReplacementOnce(uncertain, "account-a", { ...body, answers: { details: "changed" } }, async () => ({}) as any)).rejects.toThrow();
+  });
+
+  test("a sign-out or account switch before send cannot submit the old request", async () => {
+    const body = { requestId: "fictional-auth", typeKey: "card_missing", clientTaskId: "fictional-client", answers: {}, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
+    let authListener: (event: string, session: any) => void = () => {};
+    let rpcCalls = 0;
+    let unsubscribed = false;
+    const client: any = { auth: {
+      onAuthStateChange: (cb: typeof authListener) => { authListener = cb; return { data: { subscription: { unsubscribe: () => { unsubscribed = true; } } } }; },
+      getSession: async () => ({ data: { session: { user: { id: "account-a" }, access_token: "fictional-token-a" } }, error: null }),
+      getUser: async () => { authListener("SIGNED_IN", { user: { id: "account-b" } }); return { data: { user: { id: "account-a" } }, error: null }; },
+    }, rpc: () => { rpcCalls++; throw new Error("must not send"); } };
+    await expect(submitReplacementForSeat(client, "account-a", body, () => true)).rejects.toThrow();
+    expect(rpcCalls).toBe(0); expect(unsubscribed).toBe(true);
+  });
+
+  test("an authentication lookup failure is known not to have sent a replacement", async () => {
+    const body = { requestId: "fictional-auth-failure", typeKey: "card_missing", clientTaskId: "fictional-client", answers: {}, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
+    let rpcCalls = 0;
+    const client: any = { auth: {
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+      getSession: async () => { throw new Error("fictional authentication outage"); },
+    }, rpc: () => { rpcCalls++; throw new Error("must not send"); } };
+    try { await submitReplacementForSeat(client, "account-a", body, () => true); throw new Error("expected rejection"); }
+    catch (error) { expect(error).toBeInstanceOf(RequestError); expect((error as InstanceType<typeof RequestError>).outcome).toBe("not_sent"); }
+    expect(rpcCalls).toBe(0);
+  });
+
+  test("same-user reauthentication before an answer cannot release the old result", async () => {
+    for (const signOut of [true, false]) {
+    const body = { requestId: "fictional-auth-switch", typeKey: "card_missing", clientTaskId: "fictional-client", answers: {}, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
+    let listener: (event: string, session: any) => void = () => {};
+    let finish!: (result: Answer) => void;
+    let started!: () => void;
+    const hasStarted = new Promise<void>(resolve => { started = resolve; });
+    const session = { user: { id: "account-a" }, access_token: "fictional-token-a" };
+    const client: any = { auth: {
+      onAuthStateChange: (cb: typeof listener) => { listener = cb; return { data: { subscription: { unsubscribe() {} } } }; },
+      getSession: async () => ({ data: { session }, error: null }),
+      getUser: async () => ({ data: { user: session.user }, error: null }),
+    }, rpc: () => mockQuery(async () => { started(); return await new Promise<Answer>(resolve => { finish = resolve; }); }) };
+    const pending = submitReplacementForSeat(client, "account-a", body, () => true);
+    await hasStarted;
+    if (signOut) listener("SIGNED_OUT", null);
+    listener("SIGNED_IN", { ...session, access_token: "fictional-token-new" });
+    finish({ data: { id: "fictional-old-result", state: "sending", parts: [] }, error: null });
+    try { await pending; throw new Error("expected rejection"); }
+    catch (error) { expect(error).toBeInstanceOf(RequestError); expect((error as InstanceType<typeof RequestError>).outcome).toBe("unknown"); }
+    }
+  });
+
+  test("actual Supabase fetch keeps the verified seat token if the shared session changes", async () => {
+    const { createClient } = await import("@supabase/supabase-js");
+    let header = "";
+    const client = createClient("https://fictional.supabase.co", "fictional-anon", {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: async (_input, init) => {
+        header = new Headers(init?.headers).get("authorization") ?? "";
+        return new Response(JSON.stringify({ id: "fictional-id", state: "sending", parts: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      } },
+    });
+    let reads = 0;
+    (client.auth as any).onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+    (client.auth as any).getUser = async () => ({ data: { user: { id: "account-a" } }, error: null });
+    (client.auth as any).getSession = async () => ({ data: { session: ++reads <= 2
+      ? { user: { id: "account-a" }, access_token: "fictional-token-a" }
+      : { user: { id: "account-b" }, access_token: "fictional-token-b" } }, error: null });
+    const body = { requestId: "fictional-id", typeKey: "card_missing", clientTaskId: "fictional-client", answers: {}, dueOn: "2026-10-28", priority: "normal" as const, source: "client_page" as const, replacesTaskId: "fictional-ticket" };
+    const result = await submitReplacementForSeat(client, "account-a", body, () => true);
+    expect(result.id).toBe("fictional-id");
+    expect(header).toBe("Bearer fictional-token-a");
+    expect(reads).toBeGreaterThanOrEqual(3);
+  });
+
+  test("A to B to A does not expose an earlier form's in-flight result", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const previousRpc = db.rpc;
+    let release!: (result: Answer) => void; let attempts = 0; let firstCallback = 0; let currentCallback = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return previousRpc(name, args);
+      attempts++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    const common = { presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, presetDetails: "Original context" };
+    try {
+      await render({ ...common, replacesTaskId: "fictionalATicket", onSent: () => { firstCallback++; } });
+      await click(button("Send request"));
+      await render({ ...common, replacesTaskId: "fictionalBTicket" });
+      await render({ ...common, replacesTaskId: "fictionalATicket", onSent: () => { currentCallback++; } });
+      await click(button("Send request"));
+      expect(attempts).toBe(1);
+      release({ data: { id: "fictional-result", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(firstCallback).toBe(0); expect(currentCallback).toBe(0);
+      expect(page()).toContain("Check the original request");
+    } finally { db.rpc = previousRpc; }
+  });
+
+  test("a real auth event while a replacement is in flight cannot deliver its result to the new seat", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const prior = { rpc: db.rpc, getSession: db.auth.getSession, getUser: db.auth.getUser, onAuthStateChange: db.auth.onAuthStateChange };
+    const listeners = new Set<(event: string, session: any) => void>();
+    let session: any = { user: USER, access_token: "fictional-token-a" };
+    db.auth.onAuthStateChange = (listener: (event: string, session: any) => void) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    };
+    db.auth.getSession = async () => ({ data: { session }, error: null });
+    db.auth.getUser = async (token?: string) => ({ data: { user: token === "fictional-token-a" ? USER : session?.user ?? null }, error: null });
+    let release!: (result: Answer) => void; let sent = 0; let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return prior.rpc(name, args);
+      sent++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    try {
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, replacesTaskId: "fictional-auth-ticket", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(sent).toBe(1);
+      await act(async () => { session = null; for (const listener of [...listeners]) listener("SIGNED_OUT", null); });
+      await flush();
+      await act(async () => { session = { user: { ...USER, id: "auth-other-test" }, access_token: "fictional-token-b" }; for (const listener of [...listeners]) listener("SIGNED_IN", session); });
+      await flush();
+      release({ data: { id: "fictional-old-result", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(sent).toBe(1);
+      expect(page()).not.toContain("fictional-old-result");
+    } finally {
+      db.rpc = prior.rpc; db.auth.getSession = prior.getSession; db.auth.getUser = prior.getUser; db.auth.onAuthStateChange = prior.onAuthStateChange;
+    }
+  });
+
+  test("same user reauthenticating cannot receive the previous session's result", async () => {
+    const t = fake.types.find(x => x.key === "card_missing");
+    if (!t) throw new Error("No fictional card type");
+    t.fields.push({ key: "details", label: "What happened?", kind: "details", clickup_field_id: null, required: false, options: null, help: null });
+    const old = fake.requests.find(x => x.source === "import");
+    if (!old || !old.clientTaskId) throw new Error("No fictional old ticket");
+    const prior = { rpc: db.rpc, getSession: db.auth.getSession, getUser: db.auth.getUser, onAuthStateChange: db.auth.onAuthStateChange };
+    const listeners = new Set<(event: string, session: any) => void>();
+    let session: any = { user: USER, access_token: "fictional-token-old" };
+    db.auth.onAuthStateChange = (listener: (event: string, session: any) => void) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    };
+    db.auth.getSession = async () => ({ data: { session }, error: null });
+    db.auth.getUser = async () => ({ data: { user: USER }, error: null });
+    let release!: (result: Answer) => void; let sent = 0; let callbacks = 0;
+    db.rpc = (name: string, args: any) => mockQuery(async () => {
+      if (name !== "cockpit_request_submit") return prior.rpc(name, args);
+      sent++;
+      return await new Promise<Answer>(resolve => { release = resolve; });
+    });
+    try {
+      await render({ presetType: "card_missing", presetClient: { taskId: old.clientTaskId, name: "Fictional client" }, replacesTaskId: "fictional-same-user-ticket", onSent: () => { callbacks++; } });
+      await click(button("Send request"));
+      expect(sent).toBe(1);
+      await act(async () => { session = null; for (const listener of [...listeners]) listener("SIGNED_OUT", null); });
+      await flush();
+      await act(async () => { session = { user: USER, access_token: "fictional-token-new" }; for (const listener of [...listeners]) listener("SIGNED_IN", session); });
+      await flush();
+      await click(button("Send request"));
+      expect(sent).toBe(1);
+      release({ data: { id: "fictional-old-session-result", state: "sending", held: false, parts: [] }, error: null });
+      await flush();
+      expect(callbacks).toBe(0);
+      expect(page()).not.toContain("fictional-old-session-result");
+      expect(page()).toContain("Check the original request");
+    } finally {
+      db.rpc = prior.rpc; db.auth.getSession = prior.getSession; db.auth.getUser = prior.getUser; db.auth.onAuthStateChange = prior.onAuthStateChange;
+    }
   });
 
   test("a carried due day already past starts on the type's due day; Ask for something else carries nothing", async () => {
@@ -2211,4 +2589,64 @@ describe("the request form", () => {
     expect(page()).not.toContain("You can cancel it from the request");
     expect(page()).not.toContain("You send it.");
   });
+});
+
+test('server-advertised retained context uses versioned routes from the actual replacement form', async () => {
+  const t = fake.types.find(x => x.key === 'card_missing');
+  if (!t) throw new Error('Missing fictional type');
+  t.fields.push({ key:'details', label:'What happened?', kind:'details', clickup_field_id:null, required:false, options:null, help:null });
+  const old = fake.requests.find(x => x.source === 'import');
+  if (!old || !old.clientTaskId) throw new Error('Missing fictional import');
+  const actual: {name:string; args:any}[] = [];
+  before = (name,args) => {
+    if (name === 'cockpit_request_types_read') {
+      const answer = fake.call(name,args); const data = answer.data as any;
+      const type = data.types.find((x:any) => x.key === 'card_missing');
+      type.retainedContextPolicy = 'retained_v1'; type.typeVersion = 9;
+      return answer;
+    }
+    if (name.startsWith('cockpit_request_preview') || name.startsWith('cockpit_request_submit')) {
+      actual.push({name,args});
+      if (name === 'cockpit_request_preview_v1') return fake.call('cockpit_request_preview',args);
+      if (name === 'cockpit_request_submit_v1') return fake.call('cockpit_request_submit',args);
+      return { data:null, error:{code:'55000',message:'Old endpoint is forbidden for this test.'} };
+    }
+    return null;
+  };
+  await render({ presetType:'card_missing', presetClient:{taskId:old.clientTaskId,name:'Fictional client'}, presetDetails:'Original fictional context', replacesTaskId:old.importedTaskId });
+  expect(field('details').value).toBe('');
+  expect(page()).toContain('Saved ticket context');
+  await type(field('details'),'New fictional detail');
+  await click(button('Send request'));
+  expect(actual.some(c => c.name === 'cockpit_request_preview_v1')).toBe(true);
+  expect(actual.some(c => c.name === 'cockpit_request_submit_v1')).toBe(true);
+  expect(actual.every(c => c.name.endsWith('_v1') && c.args.p_expected_version === 9)).toBe(true);
+});
+
+test('versioned form rebinds a changed ticket without old context or legacy traffic', async () => {
+  const t = fake.types.find(x => x.key === 'card_missing');
+  if (!t) throw new Error('Missing fictional type');
+  t.fields.push({ key:'details', label:'Details', kind:'details', clickup_field_id:null, required:false, options:null, help:null });
+  const calls: string[] = [];
+  before = (name,args) => {
+    if (name === 'cockpit_request_types_read') {
+      const answer = fake.call(name,args); const type = (answer.data as any).types.find((x:any) => x.key === 'card_missing');
+      type.retainedContextPolicy = 'retained_v1'; type.typeVersion = 9;
+      return answer;
+    }
+    if (name.startsWith('cockpit_request_preview') || name.startsWith('cockpit_request_submit')) {
+      calls.push(name);
+      if (name === 'cockpit_request_preview_v1') return fake.call('cockpit_request_preview',args);
+      return {data:null,error:{code:'55000',message:'Unexpected send.'}};
+    }
+    return null;
+  };
+  await render({presetType:'card_missing',replacesTaskId:'fictional-first',presetDetails:'First fictional context'});
+  expect(page()).toContain('Saved ticket context');
+  const firstCalls=calls.length;
+  await render({presetType:'card_missing',replacesTaskId:'fictional-second',presetDetails:'Second fictional context'});
+  expect(page()).toContain('Second fictional context');
+  expect(page()).not.toContain('First fictional context');
+  expect(calls.length).toBeGreaterThanOrEqual(firstCalls);
+  expect(calls.every(name=>name==='cockpit_request_preview_v1')).toBe(true);
 });

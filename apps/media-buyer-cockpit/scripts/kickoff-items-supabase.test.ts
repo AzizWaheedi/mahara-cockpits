@@ -833,6 +833,42 @@ describe("Yes: one tap through the unchanged submit", () => {
     });
   });
 
+  test("offline draft leaves one-tap kickoff intact for both optional details types", async () => {
+    await rolledBack(async () => {
+      await ex(await Bun.file(new URL("../../../docs/requests/drafts/unsafe-original-planner.sql", import.meta.url)).text());
+      await q(`UPDATE public.cockpit_request_types SET fields = fields || '[{"key":"details","label":"What happened?","kind":"details","clickup_field_id":null,"required":false,"options":null,"help":null}]'::jsonb WHERE key IN ('card_missing','whatsapp_connection')`);
+      for (const item of ["funded_card", "whatsapp_sync"]) {
+        const id = uid();
+        const result = await raise(CSM_A, ACME, item, id);
+        expect(result.raised).toBe(true);
+        const request = await requestOf(id);
+        expect(request.answers.details).toBe(itemOf(await read(CSM_A, ACME), item)!.details);
+        const queued = await q("SELECT payload FROM public.cockpit_clickup_writeback_queue WHERE source_id = $1", [id]);
+        expect(queued).toHaveLength(1);
+        expect(queued[0].payload.descriptionMarkdown).toContain(request.answers.details);
+      }
+    });
+  });
+
+  test("offline versioned policy keeps one-tap legacy state and permits pinned v1 kickoff", async () => {
+    await rolledBack(async () => {
+      const before = await read(CSM_A, ACME);
+      const server = await Bun.file(new URL("../../../docs/requests/drafts/versioned-policy-server-prototype.sql", import.meta.url)).text();
+      const kickoff = await Bun.file(new URL("../../../docs/requests/drafts/versioned-policy-kickoff-prototype.sql", import.meta.url)).text();
+      await ex(server); await ex(kickoff);
+      expect(await read(CSM_A, ACME)).toEqual(before);
+      await q("INSERT INTO public.cockpit_settings(key,value,updated_by) VALUES ('requests.retained_context_v1_ready','{\"ready\":true}'::jsonb,'fictional') ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value");
+      await q(`UPDATE public.cockpit_request_types SET fields = fields || '[{"key":"details","label":"What happened?","kind":"details","clickup_field_id":null,"required":false,"options":null,"help":null}]'::jsonb, retained_context_policy='retained_v1', version=version+1 WHERE key IN ('card_missing','whatsapp_connection')`);
+      for (const item of ["funded_card", "whatsapp_sync"]) {
+        const id = uid(); const result = await raise(CSM_A, ACME, item, id);
+        expect(result.raised).toBe(true);
+        const request = await requestOf(id);
+        expect(request.answers.details).toBe(itemOf(await read(CSM_A, ACME), item)!.details);
+        expect(request.type_version).toBe(2);
+      }
+    });
+  });
+
   test("a retry of the same press is reused; a second press with another id refuses; the lock serialises presses", async () => {
     await rolledBack(async () => {
       const id = uid();

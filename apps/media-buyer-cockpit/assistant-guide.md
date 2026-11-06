@@ -159,6 +159,7 @@ How to:
 ## Everywhere in the cockpit
 
 - Ask a team (address /requests): the page where you ask another team for something. The request becomes a ClickUp task with its steps and an owner. The tabs "Ask a team", "My requests", "Assigned to me", "Team queue" and "All requests" show the form and the lists. The page's own "Settings" link opens the request types, the people and the alerts.
+- When routing an old card or WhatsApp ticket with a details question, "Review the original ticket" opens the ClickUp original. The saved context is a first-import excerpt and can be stale; additional notes are separate.
 - Team meetings (address /team): every meeting the team holds, with its week view and its agenda. "New meeting" starts one, and "Yours" and "Everyone's" filter the list. Opening a meeting shows its page, where you can edit it, tick agenda items and write the notes.
 - Client performance (address /performance): every active client against its targets. "Edit targets" changes the targets for the whole board or one client. "Columns" chooses the columns, and "Meeting view" makes the board easier to read in a meeting. "Add a lever" files the next task for a client, and "Preview the task" then "File the task" sends it.
 - The chat button at the bottom right: opens the Signal chat. Type a question and press the send arrow, or press "New chat" to start again. The answers arrive in the panel, and the page you are on is sent with the question.

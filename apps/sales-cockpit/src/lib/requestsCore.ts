@@ -138,6 +138,9 @@ export type TypeView = {
   fields: FieldView[];
   parts: TypePartView[];
   sopUrl: string | null;
+  /** Present together only on the server-authorized versioned type. */
+  retainedContextPolicy?: "retained_v1";
+  typeVersion?: number;
   // Editors only (2.5):
   version?: number;
   typeIndex?: number;
@@ -361,6 +364,7 @@ export type SubmitInput = {
   priority: Priority | null;
   source: "requests_page" | "client_page";
   replacesTaskId?: string | null;
+  retainedContextVersion?: number;
 };
 
 /** The tone of a chip, the same names as the cockpit's StatusChip. */
