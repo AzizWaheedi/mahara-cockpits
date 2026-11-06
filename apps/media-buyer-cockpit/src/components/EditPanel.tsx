@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -375,10 +375,17 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
   );
 }
 
-function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
+export function BudgetEditor({
+  campaign,
+  adSets,
+}: {
+  campaign: Row;
+  adSets: Row[];
+}) {
   const setBudgetAction = useAction(api.edit.setAdSetBudget);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const budgetScopeId = useId();
 
   if (adSets.length === 0)
     return (
@@ -409,6 +416,11 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
             ? "This campaign uses ad set budgets (ABO). Each ad set is changed on its own."
             : ""}
       </p>
+      <p id={budgetScopeId} className="text-[12px] text-muted-foreground">
+        This changes one campaign or ad set. The cockpit does not check the
+        client's total across accounts and platforms. Check the combined daily
+        budget before saving.
+      </p>
       {rows.map(s => (
         <div
           key={s.metaId}
@@ -427,6 +439,8 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
             <input
               className="w-24 rounded-md border bg-background p-1.5 text-[13px]"
               inputMode="decimal"
+              aria-label={`New daily budget for ${s.name || "this campaign or ad set"}, in US dollars`}
+              aria-describedby={budgetScopeId}
               placeholder="new $"
               value={edits[s.metaId] ?? ""}
               onChange={e => setEdits({ ...edits, [s.metaId]: e.target.value })}
