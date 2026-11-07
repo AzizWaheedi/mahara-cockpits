@@ -197,6 +197,7 @@ function ScriptRow({ r }: { r: Row }) {
   const [type, setType] = useState("New Video Request 🎥");
   const [due, setDue] = useState("");
   const [footage, setFootage] = useState<string>(String(r.drive ?? ""));
+  const [priority, setPriority] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -222,6 +223,7 @@ function ScriptRow({ r }: { r: Row }) {
           brief: `${brief}\n\nScript task: ${r.url ?? r.name}`,
           footage,
           due,
+          priority,
         },
       });
       setSent(true);
@@ -356,6 +358,20 @@ function ScriptRow({ r }: { r: Row }) {
               onChange={e => setFootage(e.target.value)}
               placeholder="Raw footage folder link"
             />
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={priority}
+                onChange={e => setPriority(e.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                <strong>Priority video</strong>
+                <span className="block text-xs text-muted-foreground">
+                  Mark urgent in ClickUp so editors see it first.
+                </span>
+              </span>
+            </label>
             <div className="flex flex-wrap items-center gap-3">
               <Button
                 disabled={busy || sent || !text.trim() || !r.client}
@@ -376,7 +392,17 @@ function ScriptRow({ r }: { r: Row }) {
                 <span className="min-w-0 flex-1 text-xs text-muted-foreground">
                   The script above becomes the brief; the footage folder comes
                   from the client record. A tagged task lands on the Video
-                  Pipeline within 15 minutes.
+                  Pipeline within 15 minutes. To choose an assigned editor, use
+                  the{" "}
+                  <a
+                    href={FORM_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    video request form
+                  </a>
+                  .
                 </span>
               )}
             </div>

@@ -61,7 +61,7 @@ One row per live client, with the current status and any work waiting on you. Ea
 
 **How to:**
 - Write a script for a client: 1. Open Clients. 2. Open the client. 3. Read the documents and the "Do's and don'ts" card. 4. Stay on "Script from here". 5. Read the live ads, the history and the proven ads. 6. Write the script in your own tool, then send it to an editor with "New video request".
-- Request a video: 1. Open the client. 2. Open "Work in flight". 3. Press "New video request". 4. Pick new video or edit video, and a due date. 5. Check the footage folder link. 6. Write the brief. 7. Press "Send to the editors".
+- Request a video: 1. Open the client. 2. Open "Work in flight". 3. Press "New video request". 4. Pick new video or edit video, and a due date. 5. Check the footage folder link. 6. Write the brief. 7. Tick "Priority video" only when the editors should work it first. 8. Press "Send to the editors". ClickUp marks it Urgent. The existing video request form also lets you pick an editor and priority.
 - Comment on a task: 1. Open "Work in flight". 2. Press "Comment" on the row. 3. Type the update. 4. Press "Post".
 - Mark work done: 1. Open "Work in flight". 2. Find the row. 3. Press "Mark done". The row says the change is queued and reaches ClickUp within a minute.
 - Check what a client already made: 1. Open the client. 2. Open "Everything we made". 3. Read every script request and video job, newest first.

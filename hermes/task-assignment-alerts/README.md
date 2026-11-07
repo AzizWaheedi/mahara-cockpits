@@ -25,7 +25,7 @@ Aziz excluded Sales on 12 October 2026. Other lists, templates and subtasks are 
 - Subtasks, archived tasks and completed tasks cannot generate messages. Before sending, the worker checks the current task again.
 - Title, due date, comment and status edits do not repeat assignment alerts. Removing a person does not post an alert.
 - Slack identities match exact, unique active email addresses. Unknown matches use the ClickUp name and raise a health warning. Names never select a Slack account.
-- Alerts show the task name, assignee mentions, due date and a ClickUp button. Time-specific deadlines say Kuwait time.
+- Alerts show the task name, assignee mentions, due date and a ClickUp button. An urgent new video also says it is a priority in that same notice; changing priority does not send an extra notice. Time-specific deadlines say Kuwait time.
 - No channel-wide mention, daily reminder or client WhatsApp is sent.
 
 The worker polls every two minutes with a ten-minute overlap. It follows every ClickUp page before advancing that list's cursor. A full reconciliation runs every six hours. A source failure preserves the cursor and does not block healthy lists. Very brief assignment changes between polls can be missed, but the message always reflects the current assignment at delivery.

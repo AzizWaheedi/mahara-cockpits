@@ -1327,6 +1327,7 @@ function NewVideoRequest({
   // pastes it by hand. He can still override it for a one-off folder.
   const [footage, setFootage] = useState(drive ?? "");
   const [due, setDue] = useState("");
+  const [priority, setPriority] = useState(false);
 
   if (!show) {
     return (
@@ -1372,6 +1373,20 @@ function NewVideoRequest({
         rows={3}
         className="text-sm"
       />
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={priority}
+          onChange={e => setPriority(e.target.checked)}
+          className="mt-1"
+        />
+        <span>
+          <strong>Priority video</strong>
+          <span className="block text-xs text-muted-foreground">
+            Mark urgent in ClickUp so editors see it first.
+          </span>
+        </span>
+      </label>
       <div className="flex gap-2">
         <Button
           disabled={!brief.trim() || busy !== null}
@@ -1382,9 +1397,11 @@ function NewVideoRequest({
               brief,
               footage,
               due,
+              priority,
             });
             setShow(false);
             setBrief("");
+            setPriority(false);
           }}
         >
           Send to the editors
@@ -1396,7 +1413,7 @@ function NewVideoRequest({
       <p className="text-xs text-muted-foreground">
         Creates a tagged task on the Video Pipeline on the next sync, within 15
         minutes. Needs a brief and nothing else, the rest is filled from their
-        client record. If you would rather use the ClickUp form directly, open{" "}
+        client record. To choose an assigned editor, use{" "}
         <a
           href="https://forms.clickup.com/90182518398/f/2kzmr1ky-1058/E1LP6F3OHFC3WACLU8"
           target="_blank"

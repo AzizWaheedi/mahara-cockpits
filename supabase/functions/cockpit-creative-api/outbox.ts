@@ -14,7 +14,9 @@ export async function prepareOutbox(row:Row,provider:Provider,env:(key:string)=>
   const name=String(row.kind==='videoRequest'?p.type||'New Video Request':p.title||'New Script Request').slice(0,180);
   const body:Row={name,description:p.brief.slice(0,50000),tags:[row.client_name.toLowerCase()]};
   if(p.due){body.due_date=due(p.due);body.due_date_time=false;}
-  const steps:Plan[]=[{provider:'clickup',method:'POST',path:`list/${list}/task`,body,verifyPath:'task/$id',expected:{name,list:{id:list},...(body.due_date?{due_date:String(body.due_date)}:{})},result:{taskId:'$id',url:'$url'}}];
+  if(row.kind==='videoRequest' && p.priority!==undefined && typeof p.priority!=='boolean')throw new Error('Priority must be on or off');
+  if(row.kind==='videoRequest' && p.priority===true)body.priority=1;
+  const steps:Plan[]=[{provider:'clickup',method:'POST',path:`list/${list}/task`,body,verifyPath:'task/$id',expected:{name,list:{id:list},...(body.due_date?{due_date:String(body.due_date)}:{}),...(body.priority===1?{priority:{id:'1'}}:{})},result:{taskId:'$id',url:'$url'}}];
   if(row.kind==='videoRequest'&&p.footage)steps.push({provider:'clickup',method:'POST',path:`task/$step0.id/field/${FOOTAGE_FIELD}`,body:{value:String(p.footage)},verifyPath:'task/$step0.id',expected:{field:FOOTAGE_FIELD,value:String(p.footage)}});
   return {steps,result:{taskId:'$step0.id'}};
  }

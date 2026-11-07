@@ -193,3 +193,5 @@ How to:
 - Now and then a small bubble above the chat button suggests one question for the page you are on: click it to ask that question, or press the X to hide it. It shows at most once per page a day, and two dismissals in a row hide it for a week.
 - The search field at the top of the rail says "Search clients, links…". It opens the search box, and Ctrl K does the same from any page.
 - The account menu at the foot of the rail holds "Settings", "Dark mode" or "Light mode", "Mahara portal" and "Sign out".
+
+For a video request, open the request form and choose "Open the video request form". In ClickUp, pick the assigned editor and select Urgent priority only when it should be worked first.

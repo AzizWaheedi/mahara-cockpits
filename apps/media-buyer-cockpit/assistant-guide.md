@@ -166,3 +166,5 @@ How to:
 - Search: the box at the top of the left menu opens the search. It also opens with Ctrl K on Windows or Cmd K on a Mac, and with the slash key on most pages. It finds a client, a campaign and every page your seat can open.
 - "How to use this cockpit" at the bottom of the left menu, for media buyer seats: opens a window with the demo video and four links. "The simple SOP" is the day step by step with a picture of every step. "The in-depth SOP" covers every screen. "The written SOP, in ClickUp" is the same day in ten steps. "Raise a ticket (the SOP for every team)" explains how to ask another team and how to work the tickets assigned to you.
 - Your name at the bottom of the left menu: opens the account menu with "Settings", "Dark mode" or "Light mode", and "Sign out".
+
+For a video request, open the request form and choose "Open the video request form". In ClickUp, pick the assigned editor and select Urgent priority only when it should be worked first.

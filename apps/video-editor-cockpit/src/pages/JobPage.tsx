@@ -37,6 +37,7 @@ import {
 import { clock, day, minutes, moment, whenDue } from "../lib/format";
 import { onEditor, stageLabel } from "../lib/stages";
 import type { Job, Note, WorkRequest } from "../lib/types";
+import { isPriorityVideo } from "../lib/videoPriority";
 
 function Fact({
   label,
@@ -304,6 +305,9 @@ export default function JobPage() {
             <span>
               {j.request_type ?? "Video"} · {sentence(j.status)}
             </span>
+            {isPriorityVideo(j) ? (
+              <span className="txt-bad text-xs font-semibold">Priority</span>
+            ) : null}
             {/* When it is blocked, the panel below says so and says why. */}
             {blocked ? null : <StateBadge state={j.state} />}
           </span>

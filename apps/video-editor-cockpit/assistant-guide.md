@@ -236,3 +236,5 @@ Write the end of day:
 - A manager: a wrong due date, a job on the wrong card, or a seat that cannot open the desk.
 - The portal admin: a new seat or a missing role.
 - The editor desk: a cut that was not read, a version that did not appear, or a review link that does not open.
+
+On Jobs, "Priority videos" shows open editor work marked Urgent in ClickUp first. A blocked video still names what it needs. The board and job page also mark urgent videos as "Priority". ClickUp stays the source of the priority and the desk refreshes it on sync.

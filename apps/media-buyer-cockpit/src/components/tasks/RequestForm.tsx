@@ -1055,6 +1055,20 @@ function RequestFormInner({
       ) : null}
 
       {!type ? (
+        <p className="rq-note">
+          Need a video?{" "}
+          <a
+            href="https://forms.clickup.com/90182518398/f/2kzmr1ky-1058/E1LP6F3OHFC3WACLU8"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            Open the video request form
+          </a>{" "}
+          and choose the editor and priority there.
+        </p>
+      ) : null}
+      {!type ? (
         offered.length ? (
           <Finder
             types={offered}

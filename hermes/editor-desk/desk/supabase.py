@@ -52,7 +52,7 @@ def _link_changed(stored: dict[str, Any], row: dict[str, Any]) -> bool:
 
 
 JOB_COLUMNS = {
-    "task_id", "name", "url", "status", "client", "clients", "client_task_id", "editor", "editors", "request_type",
+    "task_id", "name", "url", "status", "priority", "client", "clients", "client_task_id", "editor", "editors", "request_type",
     "brief", "script_task_id", "script", "footage_url", "raw_url", "edited_url", "website",
     "due_at", "opened_at", "state", "ready", "missing", "files", "seconds", "transcript_chars",
     "prepared_at", "attempts", "error", "asked_for", "asked_at", "asked_by", "synced_at", "updated_at",
@@ -62,7 +62,7 @@ JOB_COLUMNS = {
 }
 # What a board sync is allowed to touch. Worker state is not in this set.
 BOARD_COLUMNS = {
-    "name", "url", "status", "client", "clients", "client_task_id", "editor", "editors", "request_type", "brief",
+    "name", "url", "status", "priority", "client", "clients", "client_task_id", "editor", "editors", "request_type", "brief",
     "footage_url", "raw_url", "edited_url", "website", "due_at", "opened_at", "synced_at", "updated_at",
 }
 ASSET_COLUMNS = {
