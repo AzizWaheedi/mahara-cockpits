@@ -39,7 +39,7 @@ describe("the confirm grid's held button", () => {
     expect(entry).toContain('label: "Did the intro now"');
     expect(entry).toContain("needsNote: true");
     expect(entry).toContain(
-      'hint: "You had the intro on this call. Marks it held now (in HighLevel too), then book the demo. Tell them the booked time is no longer needed."',
+      'hint: "You had the intro on this call, from the dialer or the Maqsam softphone, after at least 3 minutes on it. Marks it held now (in HighLevel too), then book the demo. Tell them the booked time is no longer needed."',
     );
     expect(grid).not.toContain('"Held the intro"');
   });
@@ -123,10 +123,32 @@ describe("the confirmation item's words", () => {
     );
   });
 
-  test("the call band says it too, on an intro's confirmation only", () => {
-    expect(page).toMatch(
-      /item\?\.appointment\?\.type === "intro" \? ` \$\{HELD_NOW_LINE\}` : ""/,
+  test("a seat that may not mark the intro is not told to press it (fix pass 2)", () => {
+    for (const code of ["confirm", "confirm_last", "confirm_early"]) {
+      expect(
+        itemWords(confirm(code, "intro"), false)?.detail ?? "",
+      ).not.toContain("Did the intro now");
+      expect(itemWords(confirm(code, "intro"), true)?.detail).toContain(
+        HELD_NOW_LINE,
+      );
+    }
+    expect(itemWords(confirm("confirm", "intro"), false)?.detail).toBe(
+      "Not confirmed yet. Call to check they are still coming.",
     );
+    // The page passes who may mark the item's intro, in all three places.
+    expect(page).toContain(
+      "const mayMarkItem = mayMarkCall(me, item?.appointment?.assigned_user_id);",
+    );
+    expect(page.match(/itemWords\(item, mayMarkItem\)/g)).toHaveLength(3);
+    expect(page).not.toMatch(/itemWords\(item\)/);
+  });
+
+  test("the call band says it too, on an intro's confirmation only, to a seat that may mark it", () => {
+    expect(page).toMatch(
+      /item\?\.appointment\?\.type === "intro" && mayMark \? ` \$\{HELD_NOW_LINE\}` : ""/,
+    );
+    expect(page).toContain("mayMark = false,");
+    expect(page).toContain("mayMark={mayMarkCall(me, appt?.assigned_user_id)}");
     // Both of the band's confirmation lines (due now, and later today).
     expect(
       page.match(/not confirmed yet\.[^`]*\$\{heldNowLine\}`/g),

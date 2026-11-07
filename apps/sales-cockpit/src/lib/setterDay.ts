@@ -148,7 +148,9 @@ const CODES: Record<string, ItemWords> = {
 /**
  * The line an intro's confirmation call adds (the CEO, 2026-11-07: confirm,
  * and if he gets them on the phone, do the intro and book the demo then and
- * there). A demo's confirmation does not get it: a demo is marked at its time.
+ * there). A demo's confirmation does not get it: a demo is marked at its
+ * time. Nor does a seat that may not mark the intro (fix pass 2): the grid
+ * has no Did the intro now for it.
  */
 export const HELD_NOW_LINE =
   "Got them now? Do the intro, press Did the intro now, then Book the demo.";
@@ -159,10 +161,13 @@ const CONFIRM_CODES = new Set(["confirm", "confirm_last", "confirm_early"]);
 /**
  * The item's label, its one primary action and what to do, from its code;
  * null for an item from a server older than the setter's one queue (no
- * code), which the page shows as before.
+ * code), which the page shows as before. `mayMark`: the seat may mark the
+ * item's intro (dialerUi.ts mayMarkCall with its host), so an intro's
+ * confirmation says to press Did the intro now.
  */
 export function itemWords(
   item: QueueItem | null | undefined,
+  mayMark = true,
 ): ItemWords | null {
   if (!item?.code) return null;
   const w = CODES[item.code];
@@ -179,7 +184,11 @@ export function itemWords(
         }
       : { ...w };
   }
-  if (CONFIRM_CODES.has(item.code) && item.appointment?.type === "intro")
+  if (
+    CONFIRM_CODES.has(item.code) &&
+    item.appointment?.type === "intro" &&
+    mayMark
+  )
     return {
       ...w,
       detail: w.detail ? `${w.detail} ${HELD_NOW_LINE}` : HELD_NOW_LINE,

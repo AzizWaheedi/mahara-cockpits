@@ -32,8 +32,9 @@ const msg = (e: unknown) => String((e as Error)?.message ?? e);
  * block says so before the press. Once a demo is booked the block shows it
  * with Reschedule, never "move it in HighLevel". The calendar's booking
  * page is always under it, to send instead. On the dialer's confirmation
- * call for an intro not held yet (`heldFirst`), it says to do the intro and
- * press Did the intro now first, and books nothing.
+ * call for an intro not held yet (`heldFirst`), a line above the picker
+ * advises Did the intro now first; the picker stays, so booking is never
+ * blocked (fix pass 2, 2026-11-07).
  */
 export function BookDemoBlock({
   me,
@@ -58,10 +59,11 @@ export function BookDemoBlock({
   /** When this call's screen opened (ms, kept over a reload): a demo booked since is this call's. */
   since: number;
   /**
-   * The dialer's confirmation call for an intro not held yet (2026-11-07,
-   * Did the intro now): the demo is booked once the intro is marked held,
-   * from the step that opens after it, never before. Unset (the call page),
-   * the block books as before.
+   * The dialer's confirmation call for an intro not held yet, that this seat
+   * may mark (2026-11-07, Did the intro now): a line above the picker says
+   * to press Did the intro now first, so the intro counts as held, or to
+   * book now and mark the intro at its time. The picker works either way.
+   * Unset (the call page), the block books with no line.
    */
   heldFirst?: { start_at: string | null } | null;
   /** The first free times, for the script's "__ or __". */
@@ -198,11 +200,11 @@ export function BookDemoBlock({
       </BlockFrame>
     );
 
-  // An intro's confirmation call: do the intro and mark it held first, so
-  // the demo never goes ahead of an intro that would then be marked later.
-  if (heldFirst && !bookedHere)
-    return (
-      <BlockFrame>
+  return (
+    <BlockFrame>
+      {heldFirst && !bookedHere ? (
+        // An intro's confirmation call: advice above the picker, never a
+        // stop. Marked first, the intro counts as held before the demo.
         <div className="flex items-start gap-3">
           <CalendarClock
             className="mt-0.5 size-5 shrink-0"
@@ -210,20 +212,18 @@ export function BookDemoBlock({
             aria-hidden
           />
           <div className="min-w-0 space-y-1">
-            <p className="text-[15px] font-semibold">Do the intro first</p>
+            <p className="text-[15px] font-semibold">
+              Did the intro on this call?
+            </p>
             <p className="muted text-sm">
-              This call confirms their intro
-              {heldFirst.start_at ? ` at ${time12(heldFirst.start_at)}` : ""}.
-              Have the intro now, press Did the intro now under "Are they
-              coming?", then book the demo in the step that opens.
+              Press Did the intro now under "Are they coming?" first, so the
+              intro counts as held. Or book the demo now and mark the intro at
+              its time
+              {heldFirst.start_at ? ` (${time12(heldFirst.start_at)})` : ""}.
             </p>
           </div>
         </div>
-      </BlockFrame>
-    );
-
-  return (
-    <BlockFrame>
+      ) : null}
       {intro && !bookedHere ? (
         <p className="muted text-xs">
           Booking also marks today's intro (

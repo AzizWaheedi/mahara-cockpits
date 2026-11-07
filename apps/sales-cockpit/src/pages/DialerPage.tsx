@@ -462,7 +462,7 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
       key: "showed",
       label: "Did the intro now",
       needsNote: true,
-      hint: "You had the intro on this call. Marks it held now (in HighLevel too), then book the demo. Tell them the booked time is no longer needed.",
+      hint: "You had the intro on this call, from the dialer or the Maqsam softphone, after at least 3 minutes on it. Marks it held now (in HighLevel too), then book the demo. Tell them the booked time is no longer needed.",
     },
     {
       key: "no_answer",
@@ -1811,15 +1811,17 @@ function CallPane({
   const [saved, setSaved] = useState<string | null>(null);
   // The setter's one queue (2026-11-05). What the item is and its one
   // primary action; kept when the queue lets the item go mid-step.
+  // Did the intro now is said only to a seat that may mark the intro.
+  const mayMarkItem = mayMarkCall(me, item?.appointment?.assigned_user_id);
   const [wordsSeen, setWordsSeen] = useState<ItemWords | null>(() =>
-    itemWords(item),
+    itemWords(item, mayMarkItem),
   );
   const itemCode = item?.code;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the words follow the item's code, not every read
   useEffect(() => {
-    if (itemCode) setWordsSeen(itemWords(item));
+    if (itemCode) setWordsSeen(itemWords(item, mayMarkItem));
   }, [itemCode]);
-  const words = item ? (itemWords(item) ?? wordsSeen) : wordsSeen;
+  const words = item ? (itemWords(item, mayMarkItem) ?? wordsSeen) : wordsSeen;
   // The voice note sales-api offered after a no-answer (dial.save or
   // Maqsam's automatic save), kept while the lead stays on screen.
   const [voiceNext, setVoiceNext] = useState<VoiceNext | null>(null);
@@ -2701,6 +2703,7 @@ function CallPane({
             : null
         }
         words={words}
+        mayMark={mayMarkCall(me, appt?.assigned_user_id)}
       />
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -3663,6 +3666,7 @@ function CallBand({
   doubt,
   onVideo = null,
   words = null,
+  mayMark = false,
 }: {
   item: DialItem | null;
   open: Attempt | null;
@@ -3677,6 +3681,8 @@ function CallBand({
   onVideo?: (() => void) | null;
   /** The item's label and what to do (setterDay.ts itemWords), when it has a code. */
   words?: ItemWords | null;
+  /** The seat may mark the item's intro (mayMarkCall), so the band may say Did the intro now. */
+  mayMark?: boolean;
 }) {
   const now = useNow(1000);
   const urgent = useMemo(
@@ -3689,9 +3695,10 @@ function CallBand({
     ? `Booked ${ago(bookedAt, now)}`
     : "Booking date not known";
   // An intro's confirmation call: the intro can be had now, then the demo
-  // booked (Did the intro now, 2026-11-07). A demo's confirmation cannot.
+  // booked (Did the intro now, 2026-11-07). A demo's confirmation cannot,
+  // nor can a seat that may not mark the intro (the grid hides the button).
   const heldNowLine =
-    item?.appointment?.type === "intro" ? ` ${HELD_NOW_LINE}` : "";
+    item?.appointment?.type === "intro" && mayMark ? ` ${HELD_NOW_LINE}` : "";
   let color = "var(--border)";
   let title: string;
   let detail: string | null = null;
@@ -4151,9 +4158,14 @@ function LeadPane({
             notesLoaded={Boolean(activity.data) || Boolean(activity.error)}
             reload={activity.reload}
             attemptId={attemptId}
-            // An intro's confirmation call: Book the demo waits for Did the
-            // intro now, so the intro is marked held before the demo.
-            heldFirst={introHeldFirst(item, appointments, Date.now())}
+            // An intro's confirmation call: Book the demo advises Did the
+            // intro now first, to a seat that may mark it; it still books.
+            heldFirst={introHeldFirst(
+              item,
+              appointments,
+              Date.now(),
+              mayMarkCall(me, item?.appointment?.assigned_user_id),
+            )}
             onBooked={() => {
               onTyping();
               onStay(contactId);

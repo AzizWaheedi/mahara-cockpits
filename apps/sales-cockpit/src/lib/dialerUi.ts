@@ -223,18 +223,22 @@ interface CallRowLike {
 
 /**
  * The intro whose confirmation call this is, while the script's Book the
- * demo waits for Did the intro now: the dialer's item is an intro's
- * confirmation, and that intro has no mark and starts more than ten minutes
- * from now (sooner, the script's block marks it held itself before the
- * booking, as before). Booking the demo first would leave the intro to be
- * marked at its time, the confirmation to come back and the demo's count
- * to miss it. Null when the block books as before.
+ * demo advises Did the intro now first: the dialer's item is an intro's
+ * confirmation, the seat may mark that intro (`mayMark`: mayMarkCall with
+ * the intro's host, as the grid's button), and the intro has no mark and
+ * starts more than ten minutes from now (sooner, the script's block marks it
+ * held itself before the booking, as before). Booking the demo first leaves
+ * the intro to be marked at its time, so the block says so above its picker;
+ * it never stops the booking (fix pass 2, 2026-11-07). Null when the block
+ * books with no advice.
  */
 export function introHeldFirst(
   item: Pick<DialItem, "kind" | "appointment"> | null | undefined,
   appointments: readonly CallRowLike[],
   now: number,
+  mayMark: boolean,
 ): { appointment_id: string; start_at: string | null } | null {
+  if (!mayMark) return null;
   const a = item?.kind === "confirm" ? item.appointment : null;
   if (a?.type !== "intro") return null;
   const row = appointments.find(r => r.appointment_id === a.id);

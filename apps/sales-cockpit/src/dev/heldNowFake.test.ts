@@ -1,15 +1,16 @@
 // bun test src/dev/heldNowFake.test.ts   (from apps/sales-cockpit)
 //
 // The practice cockpit's early-mark rule (heldNowFake.ts) says what
-// sales-api says (dialer.ts heldNowCheck, lib.ts refuseMark), so Did the
-// intro now can be clicked through on harness.html?path=/dialer and the
-// refusals look as they do live.
+// sales-api says (dialer.ts heldNowCheck and softphoneHeld, lib.ts
+// refuseMark), so Did the intro now can be clicked through on
+// harness.html?path=/dialer and the refusals look as they do live.
 import { describe, expect, test } from "bun:test";
 import {
   earlyMarkRefusal,
   type FakeCall,
   HELD_NOW_REFUSALS,
   markOf,
+  softphoneRefusal,
 } from "./heldNowFake";
 
 const SA = "../../../../supabase/functions/sales-api";
@@ -60,13 +61,55 @@ describe("the practice dialer's early mark", () => {
     ).toBe(EARLY);
   });
 
-  test("a call made elsewhere, a demo, a day away, a call that did not connect: refused in sales-api's words", () => {
-    expect(earlyMarkRefusal({ ...base, call: null })).toMatch(
-      /^Do the intro from the dialer's call with them/,
-    );
+  test("no dialer call: the softphone knob says what Maqsam has, in sales-api's words", () => {
+    // Default talk: a 3-minute answered softphone call with this lead.
+    expect(earlyMarkRefusal({ ...base, call: null })).toBeNull();
     expect(
       earlyMarkRefusal({ ...base, call: { ...call, manual: true } }),
-    ).toMatch(/^Do the intro from the dialer's call/);
+    ).toBeNull();
+    for (const other of [
+      { ...call, item_kind: "lead" },
+      { ...call, appointment_id: "a-other" },
+    ])
+      expect(
+        earlyMarkRefusal({ ...base, call: other, softphone: "none" }),
+      ).toBe(HELD_NOW_REFUSALS.noCall);
+    expect(
+      earlyMarkRefusal({ ...base, call: null, softphone: "talk" }),
+    ).toBeNull();
+    expect(earlyMarkRefusal({ ...base, call: null, softphone: "short" })).toBe(
+      HELD_NOW_REFUSALS.short,
+    );
+    expect(earlyMarkRefusal({ ...base, call: null, softphone: "none" })).toBe(
+      "Maqsam shows no call between your seat and this lead in the last two hours. Do the intro on a call with them, then press Did the intro now.",
+    );
+    expect(earlyMarkRefusal({ ...base, call: null, softphone: "unread" })).toBe(
+      "Maqsam could not be read just now, so this call cannot be checked. Try again in a minute.",
+    );
+    // The dialer's own call is judged on it, whatever the knob.
+    expect(earlyMarkRefusal({ ...base, softphone: "none" })).toBeNull();
+    // A demo or a day away is said first, with no dialer call too.
+    expect(
+      earlyMarkRefusal({
+        ...base,
+        call: null,
+        softphone: "none",
+        appt: { call_type: "demo", start_at: intro(60 * MIN).start_at },
+      }),
+    ).toBe(HELD_NOW_REFUSALS.demo);
+    expect(
+      earlyMarkRefusal({
+        ...base,
+        call: null,
+        softphone: "none",
+        appt: intro(25 * 60 * MIN),
+      }),
+    ).toBe(HELD_NOW_REFUSALS.far);
+    expect(softphoneRefusal("talk")).toBeNull();
+    expect(softphoneRefusal("anything else")).toBeNull();
+  });
+
+  test("a demo, a day away, a call that did not connect: refused in sales-api's words", () => {
     expect(
       earlyMarkRefusal({
         ...base,
@@ -100,8 +143,10 @@ describe("the practice dialer's early mark", () => {
     ).toBe(HELD_NOW_REFUSALS.gone);
   });
 
-  test("the sentences are sales-api's, word for word", () => {
+  test("the sentences are sales-api's, word for word, the softphone's lines too", () => {
     expect(HELD_NOW_REFUSALS).toEqual(D.HELD_NOW_LINES);
+    for (const k of ["noSeat", "noPhone", "unread", "noCall"] as const)
+      expect(HELD_NOW_REFUSALS[k]).toBe(D.HELD_NOW_LINES[k]);
   });
 
   test("ten minutes before the start or after it, and a cancel at any time, pass as today", () => {
