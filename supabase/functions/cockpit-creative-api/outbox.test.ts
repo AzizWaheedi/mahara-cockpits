@@ -15,6 +15,20 @@ test('new script carries canonical client tag and due date, preview performs no 
  expect('steps'in plan&&plan.steps[0].body?.due_date).toBe(Date.parse('2026-10-01T09:00:00+03:00'));
  await expect(prepareOutbox({kind:'planScript',client_name:'Alpha',payload:{brief:'Brief',due:'2026-02-30'}},p)).rejects.toThrow('valid due date');
 });
+test('video priority is ClickUp urgent and must read back, with no change to normal requests',async()=>{
+ const p:Provider={async call(){return {};}};
+ const base={kind:'videoRequest',client_name:'Alpha',payload:{brief:'Brief'}};
+ const regular=await prepareOutbox(base,p);
+ expect('steps'in regular&&regular.steps[0].body?.priority).toBeUndefined();
+ const urgent=await prepareOutbox({...base,payload:{brief:'Brief',priority:true}},p);
+ expect('steps'in urgent&&urgent.steps[0].body?.priority).toBe(1);
+ expect('steps'in urgent&&urgent.steps[0].expected?.priority).toEqual({id:'1'});
+ await expect(prepareOutbox({...base,payload:{brief:'Brief',priority:'urgent'}},p)).rejects.toThrow('Priority must be on or off');
+ const good:Provider={async call(_provider,method){return method==='POST'?{id:'video1'}:{id:'video1',name:'New Video Request',list:{id:'901816720767'},priority:{id:'1'}};}};
+ expect((await executeOutbox(urgent,good)).taskId).toBe('video1');
+ const bad:Provider={async call(_provider,method){return method==='POST'?{id:'video1'}:{id:'video1',name:'New Video Request',list:{id:'901816720767'},priority:null};}};
+ await expect(executeOutbox(urgent,bad)).rejects.toThrow('read-back did not confirm');
+});
 test('comment requires confirmed provider identity and exact read-back text',async()=>{
  const plan={comment:{task:'task',text:'Human note'}};
  const good:Provider={async call(_provider,method){return method==='POST'?{id:'123'}:{comments:[{id:'123',comment_text:'Human note'}]};}};

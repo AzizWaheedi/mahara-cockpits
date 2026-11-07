@@ -18,6 +18,8 @@ export interface Job {
   name: string | null;
   url: string | null;
   status: string | null;
+  /** ClickUp task priority; absent on older snapshots until the next sync. */
+  priority?: "urgent" | "high" | "normal" | "low" | null;
   client: string | null;
   clients: string[] | null;
   client_task_id: string | null;

@@ -6,6 +6,7 @@ import { useJobs } from "../lib/data";
 import { day, whenDue } from "../lib/format";
 import { holder, onEditor, stageLabel, stageRank } from "../lib/stages";
 import type { Job } from "../lib/types";
+import { isPriorityVideo, priorityFirst } from "../lib/videoPriority";
 import { syncedLine } from "./JobsPage";
 
 /**
@@ -59,6 +60,9 @@ function Card({ job }: { job: Job }) {
           />
         ) : null}
       </div>
+      {isPriorityVideo(job) ? (
+        <p className="txt-bad mt-1 text-xs font-semibold">Priority</p>
+      ) : null}
       <p className="mt-1 truncate text-xs text-muted-foreground">
         {job.editor ?? "Nobody assigned"}
       </p>
@@ -115,7 +119,10 @@ export default function PipelinePage({
     }
     return [...seen.keys()]
       .sort((a, b) => stageRank(a) - stageRank(b) || a.localeCompare(b))
-      .map(key => ({ key, jobs: seen.get(key) ?? [] }));
+      .map(key => ({
+        key,
+        jobs: [...(seen.get(key) ?? [])].sort(priorityFirst),
+      }));
   }, [jobs]);
 
   return (

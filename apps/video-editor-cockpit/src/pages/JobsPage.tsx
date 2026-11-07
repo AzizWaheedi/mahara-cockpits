@@ -23,6 +23,7 @@ import { useJobs } from "../lib/data";
 import { day, dueDays, minutes, moment, whenDue } from "../lib/format";
 import { holder, onEditor, stageLabel } from "../lib/stages";
 import type { Job } from "../lib/types";
+import { isPriorityVideo, priorityFirst } from "../lib/videoPriority";
 
 function isMine(job: Job, email: string): boolean {
   if (!email) return false;
@@ -55,22 +56,34 @@ const GROUPS: {
   has: (j: Job) => boolean;
 }[] = [
   {
+    key: "priority",
+    title: "Priority videos",
+    hint: "Marked urgent in ClickUp. Work these first when ready.",
+    has: j => onEditor(j) && isPriorityVideo(j),
+  },
+  {
     key: "ready",
     title: "Ready to start",
     hint: "Footage read, nothing missing",
-    has: j => onEditor(j) && j.state === "ready",
+    has: j => onEditor(j) && !isPriorityVideo(j) && j.state === "ready",
   },
   {
     key: "blocked",
     title: "Waiting on something",
     hint: "These need someone else first",
-    has: j => onEditor(j) && (j.state === "blocked" || j.state === "stale"),
+    has: j =>
+      onEditor(j) &&
+      !isPriorityVideo(j) &&
+      (j.state === "blocked" || j.state === "stale"),
   },
   {
     key: "new",
     title: "Not read yet",
     hint: "The desk reads new footage every half hour",
-    has: j => onEditor(j) && (j.state === "new" || j.state === null),
+    has: j =>
+      onEditor(j) &&
+      !isPriorityVideo(j) &&
+      (j.state === "new" || j.state === null),
   },
   {
     key: "review",
@@ -117,6 +130,9 @@ function JobRow({ job, group }: { job: Job; group: string }) {
           <span dir="auto" className="min-w-0 font-medium tracking-tight">
             {job.client ?? "No client tag"}
           </span>
+          {isPriorityVideo(job) ? (
+            <span className="txt-bad text-xs font-semibold">Priority</span>
+          ) : null}
           <span className="text-xs text-muted-foreground">
             {job.request_type ?? "Video"}
           </span>
@@ -162,7 +178,9 @@ function JobRow({ job, group }: { job: Job; group: string }) {
       {/* The group title already says the state. "Waiting on something"
           holds two (blocked, reading again), and a review or finished
           group holds several board statuses, so those rows say theirs. */}
-      {group === "blocked" ? <StateBadge state={job.state} /> : null}
+      {group === "blocked" || group === "priority" ? (
+        <StateBadge state={job.state} />
+      ) : null}
       {group === "review" || group === "finished" || group === "hold" ? (
         <StatusChip tone={group === "review" ? "accent" : "neutral"}>
           {stageLabel(job.status)}
@@ -190,7 +208,7 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
       j => showDone || (j.state !== "gone" && holder(j.status) !== "finished"),
     );
     if (onlyMine) all = all.filter(j => isMine(j, email));
-    return all;
+    return [...all].sort(priorityFirst);
   }, [jobs, onlyMine, showDone, email]);
 
   const groups = useMemo(

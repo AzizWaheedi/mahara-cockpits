@@ -159,6 +159,9 @@ def job_row(task: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
     status = str((task.get("status") or {}).get("status") or "")
     tags = [str(t.get("name") or "") for t in (task.get("tags") or []) if isinstance(t, dict)]
     footage = f.get("footage_folder") or f.get("raw_video") or f.get("drive_folder") or ""
+    raw_priority = task.get("priority")
+    priority = str(raw_priority.get("priority") or "").strip().lower() if isinstance(raw_priority, dict) else ""
+    priority = priority if priority in {"urgent", "high", "normal", "low"} else None
     brief = str(task.get("description") or task.get("text_content") or "").strip()
     if not brief and f.get("notes"):
         brief = str(f["notes"]).strip()
@@ -167,6 +170,7 @@ def job_row(task: dict[str, Any], *, now_iso: str) -> dict[str, Any]:
         "name": str(task.get("name") or ""),
         "url": task.get("url"),
         "status": status,
+        "priority": priority,
         "client": tags[0] if tags else None,
         "clients": tags,
         "editor": (people[0]["name"] or people[0]["email"]) if people else None,

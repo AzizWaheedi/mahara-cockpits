@@ -223,6 +223,18 @@ class Worker(unittest.TestCase):
         self.video(); w.dispatch(self.db, self.api, NOW+120000)
         self.assertEqual(len(self.api.posts), 1)
 
+    def test_urgent_video_uses_existing_notice_and_priority_changes_do_not_spam(self):
+        t = self.video(editors=(1,))
+        t["priority"] = {"id": "1", "priority": "urgent"}
+        w.dispatch(self.db, self.api, NOW+60000)
+        self.assertEqual(len(self.api.posts), 1)
+        self.assertIn("Priority: Urgent", self.api.posts[0]["text"])
+        self.assertNotIn("<!channel>", self.api.posts[0]["text"])
+        self.api.rows[w.VIDEO_LIST] = [t]
+        w.poll(self.db, self.api, now=NOW+120000)
+        w.dispatch(self.db, self.api, NOW+120000)
+        self.assertEqual(len(self.api.posts), 1)
+
     def test_video_custom_editor_and_assignee_deduplicate(self):
         self.video(assigned=(1,), editors=(1, 2)); w.dispatch(self.db, self.api, NOW+60000)
         self.assertEqual(self.api.posts[0]["text"].count("<@U001>"), 1)

@@ -275,6 +275,8 @@ def message(task, delivery, users):
             due += date.strftime(" · %-I:%M %p")+" Kuwait time"
     url = "https://app.clickup.com/t/"+task["id"]
     details = (f"Assigned to {', '.join(mentions)}" if mentions else "Editor not assigned yet")+f"\nDue: {due}"
+    if new_video and str((task.get("priority") or {}).get("priority") or "").strip().lower() == "urgent":
+        details += "\nPriority: Urgent. Work this video first when it is ready."
     if unmapped:
         details += "\nSlack mention unavailable for an assignee; check the ClickUp name."
     heading = "🎬 New video request" if new_video else "📌 New task assigned"

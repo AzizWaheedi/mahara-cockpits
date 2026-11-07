@@ -58,6 +58,20 @@ class BoardTests(unittest.TestCase):
         self.assertTrue(row["brief"].startswith("Cut a 30 second"))
         self.assertEqual(row["due_at"], "2026-09-16T01:00:00Z")
 
+    def test_priority_tracks_clickup_and_clears_when_removed(self):
+        t = task()
+        t["priority"] = {"id": "1", "priority": "urgent"}
+        self.assertEqual(job_row(t, now_iso=NOW)["priority"], "urgent")
+        row = job_row(t, now_iso=NOW)
+        self.assertEqual(supabase_mod.Supabase._row(row, supabase_mod.JOB_COLUMNS)["priority"], "urgent")
+        self.assertEqual(supabase_mod.Supabase._row(row, supabase_mod.BOARD_COLUMNS)["priority"], "urgent")
+        t["priority"] = {"id": "2", "priority": "high"}
+        self.assertEqual(job_row(t, now_iso=NOW)["priority"], "high")
+        t["priority"] = None
+        self.assertIsNone(job_row(t, now_iso=NOW)["priority"])
+        t["priority"] = {"id": "8", "priority": "unexpected"}
+        self.assertIsNone(job_row(t, now_iso=NOW)["priority"])
+
     def test_the_editor_comes_from_the_custom_field_not_assignees(self):
         t = task(editor=("Moaz Thabet", "moaz@maharamedia.com"))
         self.assertEqual(editors_of(t)[0]["name"], "Moaz Thabet")
