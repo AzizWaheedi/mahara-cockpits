@@ -253,7 +253,7 @@ describe("after a no-answer", () => {
     });
     expect(s.send).toBeNull();
     expect(s.text).toBe(
-      "They have not written in the last 24 hours, so WhatsApp takes only an approved template, and none is set up yet. Email is out too: they have no email address in HighLevel. A manager connects the templates under Follow-ups, WhatsApp library. The dialer tries the call again in two hours.",
+      "They have not written in the last 24 hours, so WhatsApp takes only an approved template, and none is set up yet. Email is out too: they have no email address in HighLevel. A manager connects the templates under Follow-ups, WhatsApp library. The dialer brings it back before the call.",
     );
   });
 
@@ -281,7 +281,7 @@ describe("after a no-answer", () => {
     });
     expect(s.send).toBe("whatsapp");
     expect(s.text).toBe(
-      "A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours.",
+      "A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer brings it back before the call.",
     );
   });
 });

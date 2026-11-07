@@ -468,6 +468,59 @@ export interface Reach {
 
 export type MissMoment = "missed_call" | "confirm";
 
+/** sales-api dialer.ts CONFIRM_FROM: confirmation calls start two and a half hours before the call. */
+const CONFIRM_FROM_MS = 150 * MIN_MS;
+/** sales-api dialer.ts CONFIRM_AGAIN: a confirmation nobody answered comes back sixty minutes before. */
+const CONFIRM_AGAIN_MS = 60 * MIN_MS;
+/** sales-api dialer.ts: the day-before touch waits two hours between tries. */
+const CONFIRM_EARLY_GAP_MS = 120 * MIN_MS;
+/** sales-api dialer.ts voiceNoteDue: no voice note for a miss in the call's last five minutes. */
+const VOICE_CUTOFF_MS = 5 * MIN_MS;
+
+/**
+ * When a confirmation call nobody answered comes back, read the way
+ * sales-api's appointmentWork brings it back, by how long was left before
+ * the call when it rang out:
+ * - from two and a half hours before: back sixty minutes before the call;
+ * - in the last hour: no more confirmation calls, the call itself is next;
+ * - earlier (the day-before touch of a call booked more than a day ahead):
+ *   two hours on, or two and a half hours before the call if that is sooner.
+ * Until 2026-11-07 the No answer button said "two hours" for all of them.
+ */
+export function confirmAgainWords(
+  startAt: string | null | undefined,
+  missAt: number,
+): string {
+  const start = msOf(startAt);
+  if (start === null) return "The dialer brings it back before the call.";
+  const left = start - missAt;
+  if (left > CONFIRM_FROM_MS)
+    return left - CONFIRM_FROM_MS < CONFIRM_EARLY_GAP_MS
+      ? "The dialer brings it back two and a half hours before the call."
+      : "The dialer tries again in two hours.";
+  if (left > CONFIRM_AGAIN_MS)
+    return "The dialer brings it back sixty minutes before the call.";
+  return "That was the last confirmation try: the call itself is next.";
+}
+
+/**
+ * The No answer button's hint on a confirmation: when it comes back, and the
+ * voice note sales-api asks for after a miss inside the two and a half hours
+ * (dialer.ts voiceNoteDue), or a message for the day-before touch.
+ */
+export function confirmNoAnswerHint(
+  startAt: string | null | undefined,
+  now: number,
+): string {
+  const again = confirmAgainWords(startAt, now);
+  const start = msOf(startAt);
+  if (start === null) return `${again} Message them too.`;
+  const left = start - now;
+  if (left > CONFIRM_FROM_MS) return `${again} Message them too.`;
+  if (left > VOICE_CUTOFF_MS) return `${again} Send the voice note.`;
+  return again;
+}
+
 /**
  * The panel's clocks for a room in the making (lib/rooms.ts MAKING_LATE_MS
  * and CLAIM_MINUTE_MS read these): the sweep fails a room no worker claimed
@@ -549,10 +602,6 @@ const LEAD_IN: Record<MissMoment, string> = {
 const MESSAGE: Record<MissMoment, string> = {
   missed_call: "missed-call",
   confirm: "confirmation",
-};
-const TAIL: Record<MissMoment, string> = {
-  missed_call: "",
-  confirm: " The dialer tries the call again in two hours.",
 };
 const ASK_WHATSAPP = "No answer. Send them a WhatsApp?";
 const ASK_EMAIL = "No answer. Send them an email?";
@@ -665,6 +714,11 @@ export function afterMiss(o: {
   workerDown?: boolean;
   /** The other provider is usable for this seat now (room.status other_ok); false hides Try {other}. */
   otherOk?: boolean;
+  /**
+   * A confirmation: the call's start and when the try rang out, so the step
+   * says when the dialer brings it back (confirmAgainWords).
+   */
+  confirm?: { startAt: string | null | undefined; missAt: number | null };
 }): AfterMiss {
   const { moment } = o;
   const now = o.now ?? Date.now();
@@ -947,7 +1001,10 @@ export function afterMiss(o: {
       text: "The video link is on its way to them. Wait for them here, or go to the next lead.",
       send: null,
     };
-  const tail = TAIL[moment];
+  const tail =
+    moment === "confirm"
+      ? ` ${confirmAgainWords(o.confirm?.startAt, o.confirm?.missAt ?? now)}`
+      : "";
   const unknown: AfterMiss = {
     title: ASK_WHATSAPP,
     text: `${LEAD_IN[moment]}${tail}`,

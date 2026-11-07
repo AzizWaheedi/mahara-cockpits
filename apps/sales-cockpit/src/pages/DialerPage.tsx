@@ -105,6 +105,7 @@ import {
   type AfterMiss,
   afterMiss,
   afterSave,
+  confirmNoAnswerHint,
   countsShown,
   type DialItem,
   type ItemKind,
@@ -459,7 +460,9 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
       key: "no_answer",
       label: "No answer",
       needsNote: false,
-      hint: "Tries again in two hours (half an hour near the call). Message them too.",
+      // Said by the call's time on screen (confirmNoAnswerHint): back sixty
+      // minutes before, the call itself next, or two hours on.
+      hint: "The dialer brings it back before the call.",
     },
     {
       key: "rescheduled",
@@ -1663,6 +1666,7 @@ function missStep(
   videoPending: number | null = null,
   otherOk?: boolean,
   offset = 0,
+  confirm?: { startAt: string | null | undefined; missAt: number | null },
 ): AfterMiss {
   const channels = convo.data?.channels;
   return afterMiss({
@@ -1682,6 +1686,7 @@ function missStep(
     now: Date.now() + offset,
     workerDown,
     otherOk,
+    confirm,
   });
 }
 
@@ -1889,6 +1894,13 @@ function CallPane({
     videoPending,
     panelFeed.otherOk ?? undefined,
     panelFeed.offset,
+    // A confirmation says when it comes back, by when the try rang out.
+    missMoment === "confirm"
+      ? {
+          startAt: appt?.start_at,
+          missAt: missed ? (missed.startedAt ?? missed.at) : null,
+        }
+      : undefined,
   );
   const status = useCallStatus(open, nextStep => {
     // Maqsam's record saved it as No answer. A save of the rep's own on its
@@ -2130,9 +2142,15 @@ function CallPane({
   // the wait its link promised, or the lead's knock we could not answer,
   // as the lead page's Mark this call and sales-api read it.
   const noShowHeld = video.open ? null : noShowHold(video.room, Date.now());
-  const outcomes = OUTCOMES[kind].filter(
-    o => !(o.key === "noshow" && (video.open || noShowHeld)),
-  );
+  const outcomes = OUTCOMES[kind]
+    .filter(o => !(o.key === "noshow" && (video.open || noShowHeld)))
+    // A confirmation's No answer says when the dialer brings it back, by
+    // the call's time (sales-api appointmentWork), never one fixed wait.
+    .map(o =>
+      kind === "confirm" && o.key === "no_answer"
+        ? { ...o, hint: confirmNoAnswerHint(appt?.start_at, Date.now()) }
+        : o,
+    );
   const noShowLine =
     noShowHeld && OUTCOMES[kind].some(o => o.key === "noshow")
       ? noShowHeld
