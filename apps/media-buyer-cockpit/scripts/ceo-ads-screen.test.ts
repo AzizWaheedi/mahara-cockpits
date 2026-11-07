@@ -277,7 +277,8 @@ describe("the funnel's hints", () => {
     expect(src).toContain("!RETIRED_STAGES.has(c.constraint.stage)");
     expect(RETIRED_STAGES.has("intros shown to demos booked")).toBe(true);
     expect(RETIRED_STAGES.has("demos shown to closes")).toBe(true);
-    expect(src).toContain('"intros to confirmed intros": "confirmed",');
+    // A legacy confirmed-lead constraint must not highlight the different showed-intro cohort.
+    expect(src).not.toContain('"intros to confirmed intros": "confirmed",');
     expect(src).toContain('"leads to intros": "intros",');
     expect(TONE["intros do not confirm"]).toBe("serious");
   });
