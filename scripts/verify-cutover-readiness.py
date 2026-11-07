@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 APP_NAMES = [
@@ -33,6 +34,14 @@ APP_NAMES = [
     "video-editor-cockpit",
     "sales-cockpit",
 ]
+
+APP_DIRS = {
+    "media-buyer": "media-buyer-cockpit",
+    "client-success": "client-success-cockpit",
+    "creative": "creative-director-cockpit",
+    "video-editor": "video-editor-cockpit",
+    "sales": "sales-cockpit",
+}
 
 # Explicitly removed: apps/media-buyer-cockpit/scripts/supabase-actions.test.ts
 # RATIONALE: supabase-actions.test.ts performs live HTTP calls to Supabase using
@@ -228,6 +237,76 @@ RELEVANT_TEST_FILES = [
     "scripts/dev/test_forms_gates.py",
 ]
 
+
+def choose_scope(app: str, changed: List[str]) -> Tuple[str, List[str]]:
+    """
+    Decide whether an app-scoped check is safe for the given changed paths.
+
+    Own-app files, other apps, docs and root markdown stay app-scoped. Shared
+    code, configuration and root files force a full check. Returns
+    ('full', forcing paths) or ('app', []).
+    """
+    if app not in APP_DIRS:
+        return "full", [f"unknown app {app}"]
+
+    own_prefix = f"apps/{APP_DIRS[app]}/"
+    other_prefixes = [f"apps/{folder}/" for folder in APP_DIRS.values() if folder != APP_DIRS[app]]
+
+    forcing: List[str] = []
+    for raw in changed:
+        path = raw.replace("\\", "/")
+        if path.startswith(own_prefix):
+            continue
+        if path.startswith("apps/"):
+            if any(path.startswith(prefix) for prefix in other_prefixes):
+                continue
+            forcing.append(path)
+            continue
+        if path.startswith("docs/"):
+            continue
+        if "/" not in path and path.endswith(".md"):
+            continue
+        forcing.append(path)
+
+    if forcing:
+        return "full", forcing
+    return "app", []
+
+
+def select_tests(app: str, scope: str, repo_root: Optional[Path] = None) -> List[str]:
+    """
+    Choose test suites: every suite in full scope, own app plus shared in app scope.
+
+    App scope keeps own-app entries, entries outside apps/, and entries under
+    another app's folder whose text names the own folder. A missing repo root or
+    unreadable file keeps the entry, so doubt never drops a suite.
+    """
+    if scope != "app":
+        return list(RELEVANT_TEST_FILES)
+
+    own_folder = APP_DIRS.get(app, "")
+    own_prefix = f"apps/{own_folder}/" if own_folder else ""
+    selected: List[str] = []
+    for test_rel in RELEVANT_TEST_FILES:
+        if not test_rel.startswith("apps/"):
+            selected.append(test_rel)
+            continue
+        if own_prefix and test_rel.startswith(own_prefix):
+            selected.append(test_rel)
+            continue
+        if repo_root is None:
+            selected.append(test_rel)
+            continue
+        try:
+            text = (repo_root / test_rel).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            selected.append(test_rel)
+            continue
+        if own_folder and own_folder in text:
+            selected.append(test_rel)
+    return selected
+
+
 MANDATORY_EVIDENCE_SUBCHECKS: Dict[str, List[str]] = {
     "auth_and_access_journeys": [
         "allowed_roles",
@@ -392,6 +471,41 @@ def get_git_info(repo_root: Path) -> Dict[str, Any]:
 
     is_dirty = bool(status_out.strip())
     return {"available": True, "sha": sha, "is_dirty": is_dirty, "dirty_files": status_out.strip().splitlines() if is_dirty else [], "error": None}
+
+
+def resolve_scope(repo_root: Path, app: str, base: str) -> Tuple[str, List[str], List[str]]:
+    """
+    Resolve the scope for one app from production's commit.
+
+    Returns (scope, reasons, changed). Any doubt about production's commit
+    falls back to a full check.
+    """
+    if not re.match(r"^[0-9a-f]{40}$", base or ""):
+        return "full", ["production commit unknown"], []
+
+    git_bin = find_executable("git")
+    if not git_bin:
+        return "full", ["git executable not found on PATH"], []
+
+    try:
+        rc, _, _, _ = run_command(
+            [git_bin, "merge-base", "--is-ancestor", base, "HEAD"], cwd=repo_root, timeout=60
+        )
+        if rc != 0:
+            return "full", ["production commit is not an ancestor of HEAD"], []
+
+        rc, out, err, _ = run_command(
+            [git_bin, "diff", "--name-only", base, "HEAD"], cwd=repo_root, timeout=60
+        )
+        if rc != 0:
+            detail = err.strip() or f"exit code {rc}"
+            return "full", [f"git diff failed: {detail}"], []
+    except Exception as exc:
+        return "full", [f"scope resolution failed: {exc}"], []
+
+    changed = [line.strip() for line in out.splitlines() if line.strip()]
+    scope, reasons = choose_scope(app, changed)
+    return scope, reasons, changed
 
 
 def check_app_structure(repo_root: Path) -> Tuple[bool, List[str]]:
@@ -762,6 +876,7 @@ def run_relevant_tests(
     bun_exe: Optional[str] = None,
     timeout: int = 180,
     command_logs: Optional[List[Dict[str, Any]]] = None,
+    test_files: Optional[List[str]] = None,
 ) -> Tuple[bool, List[str], Dict[str, Any]]:
     """Run explicitly chosen relevant automated test suites."""
     failures: List[str] = []
@@ -771,7 +886,8 @@ def run_relevant_tests(
     if not bun_bin:
         return False, ["bun executable not found on PATH for test execution"], details
 
-    for test_rel in RELEVANT_TEST_FILES:
+    selected_tests = RELEVANT_TEST_FILES if test_files is None else test_files
+    for test_rel in selected_tests:
         test_path = repo_root / test_rel
         if not test_path.is_file():
             failures.append(f"Test suite file missing: {test_rel}")
@@ -1056,6 +1172,13 @@ def verify_release_evidence(
     return (len(failures) == 0), failures, details
 
 
+def record_timing(report: Dict[str, Any], key: str, started: float) -> None:
+    """Print and store the wall time of one numbered step."""
+    elapsed = time.monotonic() - started
+    print(f"  (took {elapsed:.1f}s)")
+    report.setdefault("timings", {})[key] = round(elapsed, 1)
+
+
 def verify_cutover(
     repo_root: Path,
     mode: str = "release",
@@ -1070,6 +1193,8 @@ def verify_cutover(
     skip_typechecks: bool = False,
     skip_tests: bool = False,
     timeout: int = 180,
+    app: Optional[str] = None,
+    scope_base: str = "",
 ) -> Tuple[int, Dict[str, Any]]:
     """Execute cutover verification pipeline and return (exit_code, report_dict)."""
     command_logs: List[Dict[str, Any]] = []
@@ -1083,6 +1208,7 @@ def verify_cutover(
         "repo_root": str(repo_root.resolve()),
         "initial_git": initial_git,
         "checks": {},
+        "timings": {},
         "failures": [],
         "command_logs": command_logs,
         "local_checks_passed": False,
@@ -1127,8 +1253,36 @@ def verify_cutover(
 
     all_local_passed = True
 
+    # Opt-in app scope (local mode only). Steps 1-3 always cover all five
+    # apps; steps 4-5 are left to ship.sh for the shipping app only.
+    scope = "full"
+    app_scope = False
+    own_app_dir = ""
+    if mode == "local" and app:
+        scope, scope_reasons, scope_changed = resolve_scope(repo_root, app, scope_base)
+        report["scope"] = {
+            "app": app,
+            "scope": scope,
+            "reasons": scope_reasons,
+            "changed_count": len(scope_changed),
+        }
+        if scope == "app":
+            app_scope = True
+            own_app_dir = APP_DIRS[app]
+            print(f"[Scope] app-only for {app}")
+        elif scope_changed:
+            print(f"[Scope] full check: shared files changed ({len(scope_changed)})")
+            for path in scope_changed[:20]:
+                print(f"  {path}")
+        else:
+            reason = scope_reasons[0] if scope_reasons else "shared files changed"
+            print(f"[Scope] full check: {reason}")
+            for path in scope_reasons[1:20]:
+                print(f"  {path}")
+
     # 1. Structure Check
     print("\n[1/5] Validating Cockpit Structure and Project Configurations...")
+    step_start = time.monotonic()
     struct_ok, struct_fails = check_app_structure(repo_root)
     report["checks"]["structure"] = {"passed": struct_ok, "failures": struct_fails}
     if struct_ok:
@@ -1138,9 +1292,11 @@ def verify_cutover(
         report["failures"].extend(struct_fails)
         for f in struct_fails:
             print(f"  [FAIL] {f}")
+    record_timing(report, "structure", step_start)
 
     # 2. Source Scan for Convex Imports
     print("\n[2/5] Scanning Source Files for Static Convex Imports...")
+    step_start = time.monotonic()
     imports_ok, import_fails = check_no_convex_source_imports(repo_root)
     report["checks"]["no_convex_source_imports"] = {
         "passed": imports_ok,
@@ -1154,9 +1310,11 @@ def verify_cutover(
         report["failures"].extend(import_fails)
         for f in import_fails:
             print(f"  [FAIL] {f}")
+    record_timing(report, "no_convex_source_imports", step_start)
 
     # 3. Shared Files Validation
     print("\n[3/5] Validating Shared Components, Helpers, and Biome Pinning...")
+    step_start = time.monotonic()
     shared_ok, shared_fails = check_shared_files(repo_root)
     report["checks"]["shared_files"] = {"passed": shared_ok, "failures": shared_fails}
     if shared_ok:
@@ -1166,12 +1324,18 @@ def verify_cutover(
         report["failures"].extend(shared_fails)
         for f in shared_fails:
             print(f"  [FAIL] {f}")
+    record_timing(report, "shared_files", step_start)
 
     # 4. Fresh Typechecks (explicit app and node project configs)
     print("\n[4/5] Running Fresh Typechecks with Installed Per-App Compilers...")
+    step_start = time.monotonic()
     if skip_typechecks:
         print("  [SKIP] Typechecks skipped by diagnostic flag")
         report["checks"]["typechecks"] = {"passed": False, "skipped": True}
+    elif app_scope:
+        scoped_note = f"ship.sh typechecks and builds {own_app_dir} before upload"
+        print(f"  [SCOPED] Typechecks not run here: {scoped_note}")
+        report["checks"]["typechecks"] = {"passed": True, "scoped": True, "note": scoped_note}
     else:
         tc_ok, tc_fails, tc_details = run_fresh_typechecks(
             repo_root, tsc_custom=tsc_path, timeout=timeout, command_logs=command_logs
@@ -1184,12 +1348,18 @@ def verify_cutover(
             report["failures"].extend(tc_fails)
             for f in tc_fails:
                 print(f"  [FAIL] {f}")
+    record_timing(report, "typechecks", step_start)
 
     # 5. Fresh Vite Builds (isolated temp directories, no stale dist accepted)
     print("\n[5/5] Running Fresh Vite Builds into Isolated Temporary Directories...")
+    step_start = time.monotonic()
     if skip_builds:
         print("  [SKIP] Fresh builds skipped by diagnostic flag")
         report["checks"]["fresh_builds"] = {"passed": False, "skipped": True}
+    elif app_scope:
+        scoped_note = f"ship.sh typechecks and builds {own_app_dir} before upload"
+        print(f"  [SCOPED] Fresh builds not run here: {scoped_note}")
+        report["checks"]["fresh_builds"] = {"passed": True, "scoped": True, "note": scoped_note}
     else:
         bld_ok, bld_fails, bld_details = run_fresh_vite_builds(
             repo_root, vite_custom=vite_path, timeout=timeout, command_logs=command_logs
@@ -1202,24 +1372,32 @@ def verify_cutover(
             report["failures"].extend(bld_fails)
             for f in bld_fails:
                 print(f"  [FAIL] {f}")
+    record_timing(report, "fresh_builds", step_start)
 
     # Automated Unit and Access Tests
     print("\n[Tests] Running Relevant Offline Automated Test Suites...")
+    step_start = time.monotonic()
+    selected_tests = select_tests(app, "app", repo_root) if app_scope else RELEVANT_TEST_FILES
     if skip_tests:
         print("  [SKIP] Tests skipped by diagnostic flag")
         report["checks"]["test_suites"] = {"passed": False, "skipped": True}
     else:
         tests_ok, tests_fails, tests_details = run_relevant_tests(
-            repo_root, bun_exe=bun_path, timeout=timeout, command_logs=command_logs
+            repo_root,
+            bun_exe=bun_path,
+            timeout=timeout,
+            command_logs=command_logs,
+            test_files=selected_tests if app_scope else None,
         )
         report["checks"]["test_suites"] = {"passed": tests_ok, "details": tests_details, "failures": tests_fails}
         if tests_ok:
-            print(f"  [PASS] All {len(RELEVANT_TEST_FILES)} offline test suites green")
+            print(f"  [PASS] All {len(selected_tests)} offline test suites green")
         else:
             all_local_passed = False
             report["failures"].extend(tests_fails)
             for f in tests_fails:
                 print(f"  [FAIL] {f}")
+    record_timing(report, "test_suites", step_start)
 
     # Check source state again after all commands have run
     post_git = get_git_info(repo_root)
@@ -1414,6 +1592,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=180,
         help="Timeout in seconds for external commands (default: 180).",
     )
+    parser.add_argument(
+        "--app",
+        choices=list(APP_DIRS.keys()),
+        default=None,
+        help="Opt-in app scope for --mode local: check only this app's tests and leave its typechecks and builds to ship.sh.",
+    )
+    parser.add_argument(
+        "--scope-base",
+        type=str,
+        default="",
+        help="Production commit SHA used to decide the app scope (ignored unless --mode local and --app are given).",
+    )
     return parser
 
 
@@ -1440,6 +1630,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         skip_typechecks=args.skip_typechecks,
         skip_tests=args.skip_tests,
         timeout=args.timeout,
+        app=args.app,
+        scope_base=args.scope_base,
     )
     return exit_code
 

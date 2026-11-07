@@ -441,7 +441,27 @@ ship() {
 # routine ship once production had already changed.
 echo "== readiness (local checks)"
 # Complete builds and offline suites need a finite allowance on shared hosts.
-"$py_bin" scripts/verify-cutover-readiness.py --mode local --timeout 600
+# Readiness scope is opt-in (SHIP_SCOPE=app): check the shipping app only.
+# The check falls back to all five apps whenever shared files changed or
+# production's commit cannot be read.
+scope_dir=""
+if [ "${SHIP_SCOPE:-}" = "app" ] && [ "${1:-all}" != "all" ]; then
+  case "${1:-all}" in
+    media-buyer)    scope_dir=apps/media-buyer-cockpit ;;
+    client-success) scope_dir=apps/client-success-cockpit ;;
+    creative)       scope_dir=apps/creative-director-cockpit ;;
+    video-editor)   scope_dir=apps/video-editor-cockpit ;;
+    sales)          scope_dir=apps/sales-cockpit ;;
+    *)              scope_dir="" ;;
+  esac
+fi
+if [ -n "$scope_dir" ]; then
+  base=$("$py_bin" scripts/check-vercel-project.py "$scope_dir" --current 2>/dev/null | "$py_bin" -c 'import sys,json; d=json.load(sys.stdin); print(d.get("sha") or "")' 2>/dev/null || true)
+  readiness_args=(--app "$1" --scope-base "$base")
+  "$py_bin" scripts/verify-cutover-readiness.py --mode local --timeout 600 ${readiness_args[@]+"${readiness_args[@]}"}
+else
+  "$py_bin" scripts/verify-cutover-readiness.py --mode local --timeout 600
+fi
 
 case "${1:-all}" in
   all) ship client-success; ship creative; ship media-buyer; ship video-editor; ship sales ;;
