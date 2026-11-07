@@ -23,12 +23,16 @@ import {
   type As,
   addDays,
   type BookResult,
+  bookingAsk,
   type CallKind,
   CHECK_EVERY_MS,
   CHECK_FOR_MS,
   type CheckResult,
+  type CloserOption,
   checkView,
   clockLine,
+  closerField,
+  closerStart,
   customIso,
   customPrecheck,
   customTile,
@@ -51,6 +55,7 @@ import {
   type MoveResult,
   type MoveSource,
   noTimesLine,
+  type Person,
   type Placement,
   pickerKey,
   pickerLine,
@@ -78,6 +83,7 @@ import {
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 import type { Lang } from "../lib/zoomLink";
+import { CloserChoice } from "./CloserChoice";
 import { button, field, Segmented } from "./kit";
 import { LoadingSkeleton } from "./LoadingSkeleton";
 import { TellThem } from "./TellThem";
@@ -102,6 +108,15 @@ import { TellThem } from "./TellThem";
  * host's calendar and hours (book.check), and offers Book anyway outside
  * working hours. The lead's own link to pick a time shows where HighLevel
  * lets them reschedule (intros and Follow up call).
+ *
+ * The demo's closer picker (2026-11-07, opt-in with `closerPick`: the
+ * dialer's demo booking, and the script's Book the demo block on the
+ * dialer's Script tab and the call page; never the lead page's Calls card):
+ * "Who takes the demo" offers Anyone free (the round robin, exactly as
+ * before) or one closer, whose own times then show, each saying with whom;
+ * the booking goes on their calendar (book.slots, book.check and
+ * book.create with `closer_id`). A closer, both or manager seat starts on
+ * their own name, as "With me" did; a setter on Anyone free.
  */
 
 export interface PickerDone {
@@ -215,6 +230,7 @@ export function CallPicker({
   lineLabel = "A line on the call (goes on the lead in HighLevel)",
   missed = null,
   withDefault,
+  closerPick = false,
   beforeBook,
   onSlots,
   onRead,
@@ -247,6 +263,13 @@ export function CallPicker({
   /** Booking again after a missed call: the missed call's time. */
   missed?: { start: string | null } | null;
   withDefault?: "me" | "anyone";
+  /**
+   * A demo booking offers "Who takes the demo": Anyone free (as before) or
+   * one closer, whose own times then show. The dialer's demo booking and the
+   * script's Book the demo block (Script tab, call page) set it; the lead
+   * page's Calls card never does, so its requests are as before.
+   */
+  closerPick?: boolean;
   /** Booking: work that goes first (the script marks today's intro held). */
   beforeBook?: (start: string) => Promise<void>;
   /** The soonest free times, for the script's "__ or __". */
@@ -271,8 +294,35 @@ export function CallPicker({
     firstAppt ?? null,
   );
   const [withWho, setWithWho] = useState<"me" | "anyone">(
-    withDefault ?? defaultWith(firstKind, me.role),
+    withDefault ??
+      // The closer picker starts on Anyone free: a closer is one press away.
+      (closerPick && firstKind === "demo"
+        ? "anyone"
+        : defaultWith(firstKind, me.role)),
   );
+  // The demo's closer picker: the closer picked (null: Anyone free; a
+  // closer, both or manager seat starts on their own name, closerStart), and
+  // the list as the last read gave it (undefined: not read yet; null: the
+  // seats or the calendar could not be read).
+  const [closer, setCloser] = useState<Person | null>(() =>
+    closerStart({
+      on: closerPick && mode === "book" && firstKind === "demo",
+      withDefault,
+      me,
+    }),
+  );
+  // The seat's own name as the start, not a press: refused, it drops back
+  // to Anyone free without a warning.
+  const closerByDefault = useRef(closer !== null);
+  const [closerList, setCloserList] = useState<
+    CloserOption[] | null | undefined
+  >(undefined);
+  // A sales-api without the closer picker answers with no list: no row,
+  // and the "With whom" switch as before.
+  const [closerAbsent, setCloserAbsent] = useState(false);
+  const closerOn = closerPick && mode === "book" && kind === "demo";
+  const closerShown = closerOn && !closerAbsent;
+  const closerId = closerOn ? (closer?.user_id ?? null) : null;
   const [anyone, setAnyone] = useState(false);
   const [slots, setSlots] = useState<Slots | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
@@ -300,6 +350,13 @@ export function CallPicker({
   /** The booking or move "Reschedule" in the done state left: Keep it goes back. */
   const [kept, setKept] = useState<PickerDone | null>(null);
   const [line, setLine] = useState<Line | null>(null);
+  /** Another closer, or Anyone free: their times are read again, the old tiles cleared. */
+  const pickCloser = (p: Person | null) => {
+    closerByDefault.current = false;
+    setCloser(p);
+    setSlots(null);
+    setLine(null);
+  };
   const [blocked, setBlocked] = useState(false);
   const [reason, setReason] = useState<MoveReason>("they_asked");
   const [note, setNote] = useState("");
@@ -330,14 +387,19 @@ export function CallPicker({
   /** The last time pressed: its flags reach the done state, however the answer came. */
   const pressed = useRef<Extract<Phase, { k: "hold" }> | null>(null);
   /** Which calendar read the later pages belong to (a page for an old read is dropped). */
-  const readKey = `${mode}|${appointmentId}|${anyone}|${lead.contact_id}|${kind}|${withWho}`;
+  const readKey = `${mode}|${appointmentId}|${anyone}|${lead.contact_id}|${kind}|${withWho}${closerOn ? `|${closerId ?? ""}` : ""}`;
   const readKeyRef = useRef(readKey);
   readKeyRef.current = readKey;
   /** Who the calendar is read for: the call to move, or the lead and the kind of call. */
   const who = (): Record<string, unknown> =>
     mode === "reschedule"
       ? { appointment_id: appointmentId, with: anyone ? "anyone" : "same" }
-      : { contact_id: lead.contact_id, kind, with: withWho };
+      : bookingAsk({
+          contactId: lead.contact_id,
+          kind,
+          withWho,
+          closerId,
+        });
 
   useEffect(() => {
     alive.current = true;
@@ -354,11 +416,19 @@ export function CallPicker({
   useEffect(() => {
     let live = true;
     setReadError(null);
-    api<Slots>("book.slots", who())
+    // The closer picker's list comes with the first read only, not the later pages.
+    api<Slots>("book.slots", closerOn ? { ...who(), closers: true } : who())
       .then(s => {
         if (!live) return;
         setNow(Date.now());
         setSlots(s);
+        if (closerOn) {
+          if ("closers" in s) setCloserList(s.closers ?? null);
+          else {
+            setCloserAbsent(true);
+            setCloser(null);
+          }
+        }
         // A fresh read starts the later pages again: they were the old read's.
         setPages([]);
         setPageError(null);
@@ -385,6 +455,18 @@ export function CallPicker({
       .catch(e => {
         if (!live) return;
         const code = codeOf(e);
+        // The closer picked cannot take the demo: back to Anyone free, with
+        // the server's sentence (the next read is the round robin's). The
+        // seat's own name as the start goes back quietly.
+        if (closerId && (code === "not_closer" || code === "host")) {
+          setCloser(null);
+          if (!closerByDefault.current) setLine({ text: msg(e), tone: "warn" });
+          closerByDefault.current = false;
+          return;
+        }
+        // Nothing read: the row says the closers could not be read, never
+        // that they are still being read.
+        if (closerOn) setCloserList(l => (l === undefined ? null : l));
         if (
           code &&
           ["not_yours", "client", "over", "held", "late", "calendar"].includes(
@@ -398,7 +480,16 @@ export function CallPicker({
     return () => {
       live = false;
     };
-  }, [mode, appointmentId, anyone, lead.contact_id, kind, withWho, tick]);
+  }, [
+    mode,
+    appointmentId,
+    anyone,
+    lead.contact_id,
+    kind,
+    withWho,
+    closerId,
+    tick,
+  ]);
 
   // ------------------------------------------------------------ sending
   /** What the done state says about how the time was placed. */
@@ -582,6 +673,8 @@ export function CallPicker({
       note: bookLine.trim(),
       // A far-out tile names who takes it, and a custom time always does.
       ...pressExtras(h),
+      // The closer picked (the demo's closer picker only).
+      ...closerField(closerId),
       request_id: h.requestId,
       source,
       ...(attemptId ? { attempt_id: attemptId } : {}),
@@ -641,7 +734,9 @@ export function CallPicker({
         setTick(n => n + 1);
         return;
       }
-      if (uncertain(e)) {
+      // A closer the seats could not be checked for: refused before anything
+      // was written (503 unread), so its words, not "it may have gone through".
+      if (uncertain(e) && !(closerId && codeOf(e) === "unread")) {
         tried.current = { start: h.start, quiet: false };
         setLine({
           text: "No answer came back about the booking, so it may have gone through. Checking the calendar…",
@@ -652,6 +747,8 @@ export function CallPicker({
       }
       const code = codeOf(e);
       const a = refusalLine(code, msg(e));
+      // The closer picked cannot take the demo: back to Anyone free.
+      if (closerId && code === "not_closer") setCloser(null);
       // Already booked: the next read shows that call with "Reschedule that
       // one", which says the same; the line would say it twice.
       setLine(
@@ -1242,16 +1339,27 @@ export function CallPicker({
             host:
               mode === "reschedule"
                 ? hostName
-                : withWho === "me"
-                  ? me.name
-                  : null,
+                : closerId
+                  ? (slots.closer?.name ?? closer?.name ?? null)
+                  : withWho === "me"
+                    ? me.name
+                    : null,
             until: spanUntil(slots),
             withWho:
               mode === "reschedule" ? (team ? "anyone" : "same") : withWho,
             onTeam: slots.on_team,
+            closer: Boolean(closerId),
           })}
         </span>
-        {mode === "reschedule" && !team ? (
+        {closerId ? (
+          <button
+            type="button"
+            className={`${button} h-8`}
+            onClick={() => pickCloser(null)}
+          >
+            Anyone free
+          </button>
+        ) : mode === "reschedule" && !team ? (
           <button
             type="button"
             className={`${button} h-8`}
@@ -1312,12 +1420,16 @@ export function CallPicker({
         ? team
           ? null
           : firstOf(hostName) || null
-        : // Mine only when sales-api read my own times ("me"): a rep not on
-          // the calendar's team, or with no time of their own, gets the
-          // team's, each tile naming who takes it.
-          slots.with === "me" && !slots.fallback
-          ? "you"
-          : null;
+        : // A closer picked: theirs. Mine only when sales-api read my own
+          // times ("me"): a rep not on the calendar's team, or with no time
+          // of their own, gets the team's, each tile naming who takes it.
+          closerId
+          ? closerId === me.ghl_user_id
+            ? "you"
+            : firstOf(slots.closer?.name ?? closer?.name) || null
+          : slots.with === "me" && !slots.fallback
+            ? "you"
+            : null;
     const go = (n: number) => {
       setWeek(addDays(weekShown, n));
       setDay(null);
@@ -1587,8 +1699,8 @@ export function CallPicker({
               isFarDay(cDate, slots),
             );
             // The call's own host (or me) needs no name on the tile; a
-            // person picked from the list does.
-            return custom.host ? { ...t, host: null } : t;
+            // person picked from the list, or the closer picked, does.
+            return custom.host && !closerId ? { ...t, host: null } : t;
           })()
         : null;
     const reach = slots?.reach_until ?? slots?.until ?? undefined;
@@ -1737,7 +1849,26 @@ export function CallPicker({
         ) : null}
       </div>
       <p className="muted text-[13px] leading-relaxed">{sub}</p>
-      {mode === "book" && slots?.on_team && !slots.fallback && !holding ? (
+      {/* Not over a call already booked, nor a lead that cannot be booked here. */}
+      {closerShown && !holding && !blocked && !slots?.existing ? (
+        <CloserChoice
+          list={closerList}
+          picked={closerId}
+          now={now}
+          onPick={p => {
+            if ((p?.user_id ?? null) === closerId) return;
+            pickCloser(p);
+            setView("soonest");
+            setWeek(null);
+            setDay(null);
+          }}
+        />
+      ) : null}
+      {mode === "book" &&
+      slots?.on_team &&
+      !slots.fallback &&
+      !holding &&
+      !closerShown ? (
         <Segmented
           label="With whom"
           value={withWho}

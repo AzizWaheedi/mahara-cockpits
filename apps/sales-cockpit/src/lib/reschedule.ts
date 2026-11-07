@@ -60,6 +60,21 @@ export interface SlotDay {
 
 export type WeekKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
 
+/**
+ * One person a demo can go on (book.slots with `closers: true`, the demo's
+ * closer picker, 2026-11-07): on the Demo calendar's team in HighLevel with
+ * an active closer, both or manager seat.
+ */
+export interface CloserOption {
+  user_id: string;
+  name: string | null;
+  kind: "closer" | "manager";
+  /** Their soonest free time in the 14 days read; null with state ok: none. */
+  soonest: string | null;
+  /** unread: their calendar did not answer just now, never "no free time". */
+  state: "ok" | "unread";
+}
+
 /** book.slots, for a new booking or a reschedule. */
 export interface Slots {
   kind: CallKind;
@@ -131,6 +146,14 @@ export interface Slots {
    * (intros and Follow up call; demos do not).
    */
   reschedule_link?: string | null;
+  /**
+   * The demo's closer picker only (asked with `closers: true`): who a demo
+   * can go on, each with their soonest time. Null: the seats could not be
+   * read just now; absent: not asked, or an older server.
+   */
+  closers?: CloserOption[] | null;
+  /** The closer these times are for (asked with `closer_id`). */
+  closer?: Person | null;
 }
 
 /** book.check: a custom time, checked against the host's calendar and hours (read-only). */
@@ -224,7 +247,10 @@ export type RefusalCode =
   | "beyond_reach"
   | "host_needed"
   | "step"
-  | "far_unread";
+  | "far_unread"
+  // The demo's closer picker (2026-11-07): the closer picked has no active
+  // closer, both or manager seat.
+  | "not_closer";
 
 const MIN = 60_000;
 const KUWAIT_MS = 3 * 3_600_000;
@@ -1153,6 +1179,142 @@ export function pressExtras(p: {
   };
 }
 
+// ------------------------------------------------------------ the demo's closer picker
+
+/**
+ * What book.slots is asked for a new booking: the lead, the kind of call,
+ * with whom, and, only on the demo's closer picker with a closer picked,
+ * `closer_id`. Without a closer the body is the one every picker has sent
+ * since 2026-10-11, key for key.
+ */
+export function bookingAsk(o: {
+  contactId: string;
+  kind: CallKind;
+  withWho: "me" | "anyone";
+  closerId?: string | null;
+}): Record<string, unknown> {
+  return {
+    contact_id: o.contactId,
+    kind: o.kind,
+    with: o.withWho,
+    ...closerField(o.closerId),
+  };
+}
+
+/**
+ * Who the demo's closer picker starts on. A seat whose demo booking started
+ * on "With me" before the picker (defaultWith: a closer, both or manager
+ * seat; or `withDefault` "me") starts on their own name, so their demo is
+ * not handed to the round robin by a quick press. Everyone else, and the
+ * script's block (`withDefault` "anyone"), starts on Anyone free (null). A
+ * seat sales-api will not take (not on the Demo calendar) drops back to
+ * Anyone free quietly, as "With me" fell back to the team's times.
+ */
+export function closerStart(o: {
+  on: boolean;
+  withDefault?: "me" | "anyone";
+  me: {
+    role?: string | null;
+    ghl_user_id?: string | null;
+    name?: string | null;
+  };
+}): Person | null {
+  if (!o.on || !o.me.ghl_user_id) return null;
+  return (o.withDefault ?? defaultWith("demo", o.me.role)) === "me"
+    ? { user_id: o.me.ghl_user_id, name: o.me.name ?? null }
+    : null;
+}
+
+/** The closer a booking or a check goes to (the demo's closer picker), or nothing. */
+export function closerField(closerId: string | null | undefined): {
+  closer_id?: string;
+} {
+  return closerId ? { closer_id: closerId } : {};
+}
+
+/** One choice in "Who takes the demo". */
+export interface CloserChip {
+  user_id: string;
+  name: string | null;
+  /** The first name, with a last initial when two listed share it ("Sami K."). */
+  first: string;
+  /** "Today 4:30 pm", "no free time in 14 days" or "not read just now". */
+  when: string;
+  /** The whole choice, for a screen reader: "Omar · Today 4:30 pm". */
+  label: string;
+  kind: "closer" | "manager";
+  state: "ok" | "unread";
+  soonest: string | null;
+}
+
+/**
+ * The closer picker's choices after Anyone free: closers (closer, both)
+ * before managers; within each, the soonest time first, then no free time,
+ * then a calendar that was not read. Two people with the same first name
+ * get a last initial. Missing is never zero: an unread calendar says so.
+ */
+export function closerChips(
+  closers: readonly CloserOption[] | null | undefined,
+  now = Date.now(),
+): CloserChip[] {
+  const list = (closers ?? []).filter(c => c?.user_id);
+  const count = new Map<string, number>();
+  for (const c of list) {
+    const f = firstOf(c.name).toLowerCase();
+    if (f) count.set(f, (count.get(f) ?? 0) + 1);
+  }
+  const at = (c: CloserOption) =>
+    c.state === "ok" && c.soonest ? Date.parse(c.soonest) : Number.NaN;
+  const rank = (c: CloserOption) =>
+    Number.isFinite(at(c)) ? 0 : c.state === "ok" && !c.soonest ? 1 : 2;
+  return list
+    .map((c, i) => ({ c, i }))
+    .sort(
+      (a, b) =>
+        Number(a.c.kind === "manager") - Number(b.c.kind === "manager") ||
+        rank(a.c) - rank(b.c) ||
+        (rank(a.c) === 0 ? at(a.c) - at(b.c) : 0) ||
+        a.i - b.i,
+    )
+    .map(({ c }) => {
+      const f = firstOf(c.name);
+      const words = String(c.name ?? "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+      const last =
+        words.length > 1
+          ? String(words[words.length - 1])
+              .charAt(0)
+              .toUpperCase()
+          : "";
+      const first = !f
+        ? "Name not set"
+        : (count.get(f.toLowerCase()) ?? 0) > 1 && last
+          ? `${f} ${last}.`
+          : f;
+      const t = at(c);
+      const when = Number.isFinite(t)
+        ? `${dayWords(c.soonest as string, now)} ${time12(c.soonest as string)}`
+        : c.state === "ok" && !c.soonest
+          ? "no free time in 14 days"
+          : "not read just now";
+      return {
+        user_id: c.user_id,
+        name: c.name,
+        first,
+        when,
+        label: `${first} · ${when}`,
+        kind: c.kind,
+        state:
+          Number.isFinite(t) || (c.state === "ok" && !c.soonest)
+            ? "ok"
+            : "unread",
+        soonest: Number.isFinite(t) ? c.soonest : null,
+      };
+    });
+}
+
 /** The first name a line gives the host. */
 export function firstOf(name: string | null | undefined): string {
   return (
@@ -1269,6 +1431,8 @@ export function noTimesLine(o: {
   until?: string | null;
   withWho?: "me" | "anyone" | "same";
   onTeam?: boolean;
+  /** A booking on a closer the rep picked (the demo's closer picker). */
+  closer?: boolean;
 }): string {
   const who = firstOf(o.host) || (o.withWho === "anyone" ? "Nobody" : "You");
   const verb = who === "You" ? "have" : "has";
@@ -1278,6 +1442,7 @@ export function noTimesLine(o: {
     return o.withWho === "anyone"
       ? `${head} Reschedule it in HighLevel, or try again later.`
       : `${head} Show anyone free, or reschedule it in HighLevel.`;
+  if (o.closer) return `${head} Pick another closer, or Anyone free.`;
   return o.withWho === "me" && o.onTeam
     ? `${head} Try Anyone free.`
     : `${head} Book in HighLevel, or set a call-back in the dialer.`;
@@ -1316,6 +1481,8 @@ export function refusalLine(
     // times are read again so the next press is one the calendar offers.
     case "time":
     case "host":
+    // The closer picked cannot take the demo: back to the times on offer.
+    case "not_closer":
     // The host's calendar filled, or could not be read just now: read again.
     case "host_busy":
     case "far_unread":

@@ -334,7 +334,7 @@ export function NumbersIntros({
               label="Due"
               value={count(f.intros.due)}
               sub={f.intros.ahead ? `${f.intros.ahead} still ahead` : undefined}
-              hint="Intros set for a day in this window whose time has passed."
+              hint="Intros set for a day in this window whose time has passed, and any held on their confirmation call before it."
             />
             <StatTile
               variant="plain"
@@ -433,8 +433,11 @@ export function NumbersIntros({
           Turned into a demo: the lead has a demo booked at or after the intro,
           as B2B counts it, with 30 minutes of grace for an intro held a little
           early that booked the demo on the call (B2B's own rule misses those).
-          Signed on the intro: no demo, and a New Client Form at or after the
-          intro, voided ones out.
+          An intro held on its confirmation call (Did the intro now) counts from
+          when it was marked held, and is due from then, on its booked day;
+          B2B's dashboard and the CEO page count from the booked start. Signed
+          on the intro: no demo, and a New Client Form at or after the intro,
+          voided ones out.
         </p>
         <p>
           Reasons and lead quality are what the rep chose after the call. Lead

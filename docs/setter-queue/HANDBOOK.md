@@ -130,8 +130,9 @@ The same diagram as a picture, drawn top to bottom: [data-flow.png](data-flow.pn
 6. **`second_try`, tier 0,** 2 minutes after the miss. If nobody answers again, the retry ladder takes over: 17:00 the same day if that is at least an hour away, else 09:00 the next working morning, then two more 09:00 tries. After the fourth miss on the ladder the lead is closed as unreachable.
 7. **The lead books an intro.** If they booked it themselves, it is `just_booked`, tier 0, for 30 minutes. The setter tries to hold the intro there and then.
 8. **The confirmations.** If the lead has not confirmed, `confirm` comes up 2.5 hours before the call. If nobody answers, a voice note is owed, and `confirm_last` comes up 60 minutes before. A call booked more than a day ahead also gets `confirm_early` the evening before (morning calls) or that morning.
-9. **The intro.** `intro_now` is pinned first from 5 minutes before the start to 20 minutes after.
-10. **Marking it.** From 20 minutes after the start, an unmarked intro is `mark_call` (tier 1) for up to 7 days. Showed opens "What next?": book the demo in the closer's soonest slot, put the lead on the hot list, or save Not ready yet (long-term nurture). Didn't happen marks a no-show after a 5-second hold, then offers "Book it again".
+9. **The intro on the confirmation call (since 7 Nov).** If the setter gets them on the phone and they have time, he does the intro there and then. He presses **Did the intro now** (needs a note): the intro is marked held at once, in HighLevel too, and the held step opens with **Book the demo**, the hot list, Not ready yet, a call-back and the 1-to-10 rating. He tells them the booked time is no longer needed. It works only on the dialer's own call for that confirmation, for an intro up to a day ahead, on a call Maqsam does not say failed, that is still open and has gone at least 3 minutes (Maqsam's talk time once its record is in). A call made on the softphone is marked at the intro's time, as before. Until he presses it, the Script tab's Book the demo says "Do the intro first" instead of booking, so the demo never goes ahead of an unmarked intro. The band says "Got them now? Do the intro, press Did the intro now, then Book the demo." on an intro's confirmation.
+10. **The intro.** `intro_now` is pinned first from 5 minutes before the start to 20 minutes after. An intro already marked held (step 9) does not come up.
+11. **Marking it.** From 20 minutes after the start, an unmarked intro is `mark_call` (tier 1) for up to 7 days. Showed opens "What next?": book the demo in the soonest time, or pick the closer (recipe 7.14), put the lead on the hot list, or save Not ready yet (long-term nurture). Didn't happen marks a no-show after a 5-second hold, then offers "Book it again".
 
 ### Three facts that explain most surprises
 
@@ -149,16 +150,16 @@ The same diagram as a picture, drawn top to bottom: [data-flow.png](data-flow.pn
 
 | Area | Files |
 |---|---|
-| Queue rules | `D` (1,923 lines). The setter's queue is `rankForSetter` D:1249-1285; its contract is the doc comment at D:1219-1248. |
-| Server | `I` (9,311 lines): `candidates` I:4024, `dialQueue` I:4645, `dialCall` I:4856, `saveOutcome` I:4991, `dialTouch` I:5678, the router I:9220-9311. Helpers in `supabase/functions/sales-api/lib.ts`. |
+| Queue rules | `D` (2,019 lines). The setter's queue is `rankForSetter` D:1249-1285; its contract is the doc comment at D:1219-1248. |
+| Server | `I` (9,523 lines): `candidates` I:4045, `dialQueue` I:4666, `dialCall` I:4877, `saveOutcome` I:5012, `dialTouch` I:5720, the router I:9432-9523. Helpers in `supabase/functions/sales-api/lib.ts`. The demo's closer picker: `supabase/functions/sales-api/closers.ts` (recipe 7.14). |
 | Server tests | `T`, `F`, `R`, plus about 210 other files in the same folder. |
-| Dialer page | `P` (4,190 lines). |
+| Dialer page | `P` (4,262 lines). |
 | Screen words and rules | `S`, `V`, `apps/sales-cockpit/src/lib/dialer.ts`, `apps/sales-cockpit/src/lib/dialerUi.ts`. |
 | Components | `apps/sales-cockpit/src/components/`: `VoiceNoteCard.tsx`, `DayStrip.tsx`, `DialerSteps.tsx` (`MarkStep`, `HeldNext`), `MarkControls.tsx`, `AfterCall.tsx`. |
-| Speed to lead | `apps/sales-cockpit/src/lib/calls.ts`, D:1830-1923, `$W/ceo-refresh/native/adapters/growth.js`. |
+| Speed to lead | `apps/sales-cockpit/src/lib/calls.ts`, D:1926-2019, `$W/ceo-refresh/native/adapters/growth.js`. |
 | Practice cockpit | `apps/sales-cockpit/src/dev/harness.tsx`, `apps/sales-cockpit/src/dev/fixtures.ts`, `apps/sales-cockpit/harness.html`. |
 | Copies of HighLevel and Maqsam | `supabase/functions/sales-mirror/`, `supabase/functions/sales-conversations/`, `$W/sales-desk/desk/maqsam_calls.py`. |
-| Migrations of this build | `supabase/migrations/20261105s_setter_speed_line.sql`, `20261105w_sales_setter_queue.sql`, `20261105x_sales_rooms_sweep_not_ready.sql`, `20261105s_setter_speed_intake_cron.sql`. |
+| Migrations of this build | `supabase/migrations/20261105s_setter_speed_line.sql`, `20261105w_sales_setter_queue.sql`, `20261105x_sales_rooms_sweep_not_ready.sql`, `20261105s_setter_speed_intake_cron.sql`. Did the intro now adds `20261107a_sales_early_held_intro.sql` (not applied on 7 Nov): the calendar view and the funnel count "after the intro" from the mark for a call marked held more than 10 minutes before the time it was marked against (a mark the Calls card can make keeps the booked start), and the funnel counts a held call as due. **Apply it before the sales-api that sends `held_now`**: without it a demo booked on the confirmation call reads "no demo after it" and the end of day asks the setter for a reason that is not true. On its own it changes no row today. |
 | Monitoring | `$W/cockpit-guardian/checks/` (`pg_cron.py`, `syncs.py`, `edge_functions.py`), `supabase/migrations/20261031b_sales_watchdog_slack_bot.sql`. |
 | Operations notes | `RUNBOOK.md`, sections "Sales cockpit" and "Sales desk". |
 
@@ -179,7 +180,7 @@ Each lead gets at most one item: `{ tier, pin, code, why, sort }`. The first rul
 | Rule | What it does | Value (constant or inline) | Where | Tests |
 |---|---|---|---|---|
 | Sort order | Tier, then pin (0 first), then heat (not in tier 0, not for pin 0), then `sort`, then contact id. Lead items sort newest first; appointment and hot items soonest first. | pin defaults to 1 | D:964-976, D:936-947, `Ranked` D:507-523 | T:135, T:179, T:623, T:884 |
-| Always left out | Do not disturb, a signed client, a won stage, a number the dialer cannot route, claimed by another rep, an intro waiting after a ring-out. Clients and leads held by a video room are dropped earlier. | | D:1264-1269; clients I:4271; rooms I:4257-4270 | T:152, T:166, T:606 |
+| Always left out | Do not disturb, a signed client, a won stage, a number the dialer cannot route, claimed by another rep, an intro waiting after a ring-out. Clients and leads held by a video room are dropped earlier. | | D:1264-1269; clients I:4292; rooms I:4278-4291 | T:152, T:166, T:606 |
 | Intro at its minute (`intro_now`) | The setter's own intro, or one with no host. Tier 0, pin 0, so always first. | 5 min before to 20 min after (inline) | `introWindow` D:552-554; branch D:663-676 | T:405, T:623, T:643 |
 | Intro ring-out wait | An intro that rang out leaves the queue, then comes back while its window is open. | `INTRO_RETRY` = 5 min | D:614, `introWaiting` D:622-625 | T:411 |
 | First confirmation (`confirm`) | An unconfirmed intro (the setter's) or demo (the closer's). Tier 0. | `CONFIRM_FROM` = 150 min | D:628; path D:677-708; `confirmFrom` D:546-549 | T:764-800 |
@@ -187,16 +188,16 @@ Each lead gets at most one item: `{ tier, pin, code, why, sort }`. The first rul
 | Short notice | A call booked less than 3 hours before its start gets no confirmation. The just-booked call covers it. It is `CONFIRM_FROM` plus `JUST_BOOKED` on purpose: keep it so (recipe 7.1). | `SHORT_NOTICE` = 3 h | D:632, D:681 | T:780 |
 | Day-before confirmation (`confirm_early`) | Booked more than a day ahead. From 18:00 the evening before for a call before noon, otherwise from 09:00 on the day. 2 hours between tries. Tier 1. | inline | D:546-549, D:711-715 | T:428 |
 | Night rule | A confirmation never shows outside 09:00-21:00 on any of the lead's clocks. An unknown country keeps Kuwait's. | `hoursRefusal` | D:687-689; `supabase/functions/sales-api/sendrules.ts:263` | `supabase/functions/sales-api/stress2_time_r5_night_link.test.ts:66-88` |
-| What counts as confirmed | A confirmation saved in the cockpit, or the CONFIRMED stage entered after this booking. HighLevel's own "confirmed" status never counts, because every calendar confirms on booking. | | `stageConfirms` D:1699-1707; wired I:4494-4499 | T:783, F:262 |
+| What counts as confirmed | A confirmation saved in the cockpit, or the CONFIRMED stage entered after this booking. HighLevel's own "confirmed" status never counts, because every calendar confirms on booking. | | `stageConfirms` D:1795-1803; wired I:4515-4520 | T:783, F:262 |
 | Closed after booking | A lead the setter closed (not ready, not interested, disqualified, wrong number) after the intro was booked gets no confirmation and no pinned intro. The mark still comes later. | `ENDING_CLOSES` | D:1202, D:1210-1217, D:1275-1276 | F:140-175 |
 | Hot follow-up | `hot_due` (tier 0) for the first 10 minutes after its planned time, then `hot_planned` (tier 1). For its owner or a manager. | 10 min (inline) | D:950-962 (D:953) | T:197 |
 | Owner rule | A manager sees all. Otherwise another rep's call-back, another host's demo and another rep's lead stay hidden. A closer's lead still at the intro stage is the setter's. | `DEMO_STAGES`, `AFTER_DEMO_NAME` | D:978, D:986, `introStage` D:989-995, `setterScope` D:1008-1014 | T:512-530, T:821-845, F:294-306 |
-| Closed in the cockpit | A lead the dialer closed (booked, unreachable, not interested, not ready, disqualified, wrong number, handled) gets no lead work. One exception: the voice note after a missed confirmation call, for a call booked from the dialer (the lead stays closed "booked" until then). A reply, a missed call from them, a call-back booked or their own intro booking after the close opens the lead again; a "booked" close ends once the booked call has passed. | | D:1047-1050; reopening I:4355-4375 | F:177-197 |
+| Closed in the cockpit | A lead the dialer closed (booked, unreachable, not interested, not ready, disqualified, wrong number, handled) gets no lead work. One exception: the voice note after a missed confirmation call, for a call booked from the dialer (the lead stays closed "booked" until then). A reply, a missed call from them, a call-back booked or their own intro booking after the close opens the lead again; a "booked" close ends once the booked call has passed. | | D:1047-1050; reopening I:4376-4396 | F:177-197 |
 | Tier-0 lead work | A call-back due (5 min before to 10 after), a missed call from them (10 min), a reply (10 min), a new lead never dialed (10 min). The first one listed wins. | inline | D:1052-1082; `missedCall` D:437-441; `callbackSoon` D:447-449 | T:135, T:148, T:551-585, T:652 |
-| Just booked (`just_booked`) | The lead's own new intro booking, tier 0, until someone calls. A booking made from the cockpit, or while the lead was on the phone, does not count. | `JUST_BOOKED` = 30 min | D:750, D:1020-1026, D:1084-1093; input I:4338-4354 | T:660 |
-| The burst (`second_try`) | A new lead or the lead's own booking starts a 60-minute burst. The first no-answer brings the lead back 2 minutes later. The second hands it to the ladder. Talking to the lead ends the burst. A night or weekend lead (up to 3 days old) starts its burst at its first call. | `BURST` = 60 min, `SECOND_TRY` = 2 min, `FIRST_CALL_NEW` = 3 days | D:746, D:748, D:759; `burstAnchor` D:769-789; `secondTry` D:814-823; `quickRetryDue` D:906-913; save I:5045-5046; `burstNow` I:5224-5276 | T:651-707, F:81-138, R:240-262 |
-| One missed call counts once | The dialer's save and Maqsam's record of the same call count as one miss. A save pairs with the latest Maqsam call that started up to 10 minutes before it (5 s of drift allowed). | `SAME_CALL` = 10 min | D:867, D:877-899 (drift D:884); used I:4412-4415 | F:216-241 |
-| Voice note owed (`voice_note`) | After a burst call or a confirmation call that rang out, when no voice note went since and nobody spoke to the lead since. Never asked for when the voice-note table cannot be read. Tier 1, pin 0. | Confirmation window follows `CONFIRM_FROM`; cut-off 5 min before the start (D:857) | `voiceNoteDue` D:832-864; `voiceItem` D:1029-1039; `VOICE_CODES` I:4552-4561 | T:709-762, F:177-197, F:243-292, R:271 |
+| Just booked (`just_booked`) | The lead's own new intro booking, tier 0, until someone calls. A booking made from the cockpit, or while the lead was on the phone, does not count. | `JUST_BOOKED` = 30 min | D:750, D:1020-1026, D:1084-1093; input I:4359-4375 | T:660 |
+| The burst (`second_try`) | A new lead or the lead's own booking starts a 60-minute burst. The first no-answer brings the lead back 2 minutes later. The second hands it to the ladder. Talking to the lead ends the burst. A night or weekend lead (up to 3 days old) starts its burst at its first call. | `BURST` = 60 min, `SECOND_TRY` = 2 min, `FIRST_CALL_NEW` = 3 days | D:746, D:748, D:759; `burstAnchor` D:769-789; `secondTry` D:814-823; `quickRetryDue` D:906-913; save I:5069-5070; `burstNow` I:5249-5301 | T:651-707, F:81-138, R:240-262 |
+| One missed call counts once | The dialer's save and Maqsam's record of the same call count as one miss. A save pairs with the latest Maqsam call that started up to 10 minutes before it (5 s of drift allowed). | `SAME_CALL` = 10 min | D:867, D:877-899 (drift D:884); used I:4433-4436 | F:216-241 |
+| Voice note owed (`voice_note`) | After a burst call or a confirmation call that rang out, when no voice note went since and nobody spoke to the lead since. Never asked for when the voice-note table cannot be read. Tier 1, pin 0. | Confirmation window follows `CONFIRM_FROM`; cut-off 5 min before the start (D:857) | `voiceNoteDue` D:832-864; `voiceItem` D:1029-1039; `VOICE_CODES` I:4573-4582 | T:709-762, F:177-197, F:243-292, R:271 |
 | Missed call today | Tier 1 `missed_call_today`, before any retry timing. | | D:1106-1107 | T:556 |
 | Replies | Up to 1 day old: tier 1 (`reply_booked` with a call booked ahead, else `reply_today`). Up to 7 days: tier 2 `reply_waiting`. A call, an outcome or a written reply clears it. | inline | D:1117-1136 | T:802-819 |
 | Gates before the rest | Left out while a retry is ahead, a call is booked ahead, the lead rests in a stage (disqualified, paused, long-term nurture, won, lost, deposit) or the softphone ladder is not due. | `RESTING_ROLES` | D:217, D:1137-1147 | T:191, T:204 |
@@ -206,13 +207,13 @@ Each lead gets at most one item: `{ tier, pin, code, why, sort }`. The first rul
 | New, not reached | Up to 2 days old, not reached. Tier 1; under an hour old gets pin 0. `new_not_reached` if ever dialed, else `new_never_called`. | inline | D:1170-1183 | T:884 |
 | Retry (`retry`) | Tier 2 once the ladder's time has come. | | D:1184-1192 | T:204 |
 | Never called | Tier 3. A sales lead of the last 30 days nobody reached or dialed. | inline | D:1196-1197 | |
-| Mark the call (`mark_call`) | The rep's own intro (setter) or demo (closer), from 20 minutes after the start to 7 days, not marked. A call with no host is a manager's. | inline | D:725-743 (D:733); input I:4386-4397; mark rule D:1281 | T:847-869, F:199-214 |
+| Mark the call (`mark_call`) | The rep's own intro (setter) or demo (closer), from 20 minutes after the start to 7 days, not marked. A call with no host is a manager's. | inline | D:725-743 (D:733); input I:4407-4418; mark rule D:1281 | T:847-869, F:199-214 |
 | Retry ladder | 17:00 the same day if at least an hour away, else 09:00 the next working morning; then two more 09:00 tries; the fourth miss closes the lead "unreachable". | try count D:69; 17:00 D:71; 09:00 D:57; Friday D:58 | `nextWorkingNine` D:56-60, `nextTry` D:68-76, `afterOutcome` D:134-154 | T:71-100, T:498-510 |
 | Softphone misses | Maqsam's unanswered calls move the same ladder when the dialer has no state for the lead. | `min(misses, 4)` | D:1142-1147 (D:1145) | T:204 |
-| Talk in a video room | Lifts an "unreachable" close and moves the retry to the next working morning. | | `afterTalk` D:86-100; I:4368-4375 | `supabase/functions/sales-api/stress2_journeys_r6_dialer.test.ts:152-174` |
+| Talk in a video room | Lifts an "unreachable" close and moves the retry to the next working morning. | | `afterTalk` D:86-100; I:4389-4396 | `supabase/functions/sales-api/stress2_journeys_r6_dialer.test.ts:152-174` |
 | Heat | The order inside a tier. Points for: on the hot list, qualified, revenue, ready to invest, wrote today, came in this hour or day, in the Hot Leads stage. Minus one for 3 or more misses. | | D:256-294 (`revenueOf` D:225, `readyOf` D:245) | T:351-372, T:179 |
-| The closer's queue | Same shape, own demos only, no owner rule. Adds `showed_not_signed` (30 days, tier 1) and demo no-show or cancel (14 days, tier 2). | | `rankForCloser` D:1303-1323, `closerLeadWork` D:1325-1355; filter I:4676-4687 | T:222-246, T:794, T:864 |
-| Outcomes | Which outcomes fit which item and what each does (table in section 4). | | `OUTCOMES` D:102-114, `appointmentEffect` D:1607-1632, `targetRoles` D:1656-1676, `tagsFor` D:1679-1684 | T:455-496, T:899-912, R:299-330 |
+| The closer's queue | Same shape, own demos only, no owner rule. Adds `showed_not_signed` (30 days, tier 1) and demo no-show or cancel (14 days, tier 2). | | `rankForCloser` D:1303-1323, `closerLeadWork` D:1325-1355; filter I:4697-4708 | T:222-246, T:794, T:864 |
+| Outcomes | Which outcomes fit which item and what each does (table in section 4). | | `OUTCOMES` D:102-114, `appointmentEffect` D:1607-1632, `targetRoles` D:1752-1772, `tagsFor` D:1775-1780 | T:455-496, T:899-912, R:299-330 |
 
 ### The item codes
 
@@ -249,14 +250,14 @@ The screen keys on `code`, never on the `why` sentence. The server's list is `It
 ### Confirmations in detail
 
 - **Who:** the setter's own intros and any call with no host; the closer's own demos only (D:678-679). A manager seat with no HighLevel user sees them all.
-- **What counts as a try:** a confirmation saved as no answer or "message sent". Only no answer is a miss. A saved intro try counts as both (I:4196-4218).
+- **What counts as a try:** a confirmation saved as no answer or "message sent". Only no answer is a miss. A saved intro try counts as both (I:4217-4239).
 - **The clock in the sentence:** `theirClock` adds "(it is 10:05 there)" for a lead abroad (D:923-934).
 
 ### The burst in detail
 
 - **The anchor** is the later of the lead's arrival in the last hour (step "new") and their own intro booking in the last hour (step "booked").
 - **A night or weekend lead** (up to 3 days old) has neither, so the anchor is its first call, if that call rang out within the last hour.
-- **First miss:** the save sets `due_at` to now plus 2 minutes and does not move the ladder (`quickRetryDue`, I:5045-5046).
+- **First miss:** the save sets `due_at` to now plus 2 minutes and does not move the ladder (`quickRetryDue`, I:5069-5070).
 - **Second miss:** `afterOutcome` moves the ladder as usual.
 - **In all:** a new lead nobody answers gets 2 burst calls, then 3 ladder tries over about 3 working days, then closes unreachable on the fourth ladder miss. That is 5 unanswered calls in all.
 
@@ -266,12 +267,12 @@ The screen keys on `code`, never on the `why` sentence. The server's list is `It
 
 ### The door
 
-One Deno server, `Deno.serve` at I:9220-9311, deployed with verify_jwt on (I:3). Every request goes through these checks in order:
+One Deno server, `Deno.serve` at I:9432-9523, deployed with verify_jwt on (I:3). Every request goes through these checks in order:
 
 1. CORS against the allowed origins (`supabase/functions/sales-api/lib.ts:14-25`). Anything else gets 403.
 2. POST only, a bearer token, a JSON body.
-3. The action must be in `ACTIONS` (I:9064-9145) or `DESK_ACTIONS` (I:9148-9158).
-4. **The person door:** `whoami` (I:386-399) calls the database function `cockpit_sales_whoami` with the person's own token. It returns the seat (`Who`, `lib.ts:27-41`): role (setter, closer, both, manager), manager, HighLevel user id, Maqsam address. No sign-in gives 401, no seat gives 403 (I:9284-9293).
+3. The action must be in `ACTIONS` (I:9276-9357) or `DESK_ACTIONS` (I:9360-9370).
+4. **The person door:** `whoami` (I:389-402) calls the database function `cockpit_sales_whoami` with the person's own token. It returns the seat (`Who`, `lib.ts:27-41`): role (setter, closer, both, manager), manager, HighLevel user id, Maqsam address. No sign-in gives 401, no seat gives 403 (I:9496-9505).
 5. **Two machine doors:** the service-role token (the VPS sales desk, `DESK_ACTIONS` only, as the made-up seat "sales-desk"), and the `x-cron-secret` header (cron actions only).
 
 The seat check is the only gate on dialer actions. There is no CEO gate. A manager may act on another rep's call.
@@ -282,56 +283,71 @@ A refusal is one plain sentence with a status, sent as `{ ok: false, error }`. A
 
 | Helper | What it does | Where |
 |---|---|---|
-| `svc` | PostgREST with the service key, 20 s deadline. An empty or non-JSON answer to a read is an error, never "no rows". | I:289-336 |
-| `svcAll` | Pages of 1,000 rows (Creative Triage's cap), up to 50,000. | I:342-351 |
-| `ghl` | HighLevel with the secret `SALES_GHL_TOKEN`, 25 s deadline, a browser user agent (Cloudflare refuses requests without one). | I:432-483 |
-| `maqsam` | Maqsam with `SALES_MAQSAM_ACCESS_KEY` and `SALES_MAQSAM_SECRET`. A 429 becomes "Maqsam asked us to slow down". No deadline (plain `fetch`, I:3845). | I:3840-3863 |
-| `audit` | One `cockpit_audit_log` row per write (`source_app = 'sales'`). A failed audit write is logged and the change stands. | I:401-430 |
-| `setting` | Reads one `cockpit_sales_settings` row. | I:485-488 |
+| `svc` | PostgREST with the service key, 20 s deadline. An empty or non-JSON answer to a read is an error, never "no rows". | I:292-339 |
+| `svcAll` | Pages of 1,000 rows (Creative Triage's cap), up to 50,000. | I:345-354 |
+| `ghl` | HighLevel with the secret `SALES_GHL_TOKEN`, 25 s deadline, a browser user agent (Cloudflare refuses requests without one). | I:435-486 |
+| `maqsam` | Maqsam with `SALES_MAQSAM_ACCESS_KEY` and `SALES_MAQSAM_SECRET`. A 429 becomes "Maqsam asked us to slow down". No deadline (plain `fetch`, I:3866). | I:3861-3884 |
+| `audit` | One `cockpit_audit_log` row per write (`source_app = 'sales'`). A failed audit write is logged and the change stands. | I:404-433 |
+| `setting` | Reads one `cockpit_sales_settings` row. | I:488-491 |
 
 ### The dialer's actions
 
 | Action | Function | Who may call | Writes | Outside calls | Audit |
 |---|---|---|---|---|---|
-| `dial.agent` | `dialAgent` I:3892-3900 | any seat | nothing | Maqsam agents list | none |
-| `dial.queue` | `dialQueue` I:4645-4825 | any seat; `as` picks the setter or closer view | nothing (read only) | none | none |
-| `dial.call` | `dialCall` I:4856-4966 | a seat with a Maqsam address | `cockpit_sales_attempts` | Maqsam `POST /v3/calls` | `dial.call` |
-| `dial.status` | `dialStatus` I:5606-5656 | the call's rep or a manager | the attempt's call state; an automatic No answer | Maqsam `GET /v3/calls` | `dial.auto_save` when it saves |
-| `dial.save` | `dialSave` I:5532-5598, then `saveOutcome` I:4991 | the call's rep or a manager | attempts, queue state, confirmations, marks | HighLevel note, tags, stage move, mark | `dial.save` or `dial.save_manual` |
-| `dial.release` | `dialRelease` I:5658-5670 | the call's rep or a manager | the attempt becomes `released` | none | `dial.release` |
-| `dial.resync` | `dialResync` I:5437-5448 | the save's rep or a manager | `crm_note`, `crm_error` | HighLevel again | `dial.resync` |
-| `dial.resync_stuck` | `dialResyncStuck` I:5485-5512 | the VPS desk only | `crm_tries` | HighLevel again | none of its own |
-| `dial.touch` | `dialTouch` I:5678-5741 | any seat | `cockpit_sales_touches` (nothing is sent to the lead) | none | `dial.touch` |
-| `dial.hot` | `dialHot` I:5749-5760, then `hotSave` I:8185-8232 | any seat; `hotSave` checks the owner | `cockpit_sales_hot` | none | `hot.save` |
+| `dial.agent` | `dialAgent` I:3913-3921 | any seat | nothing | Maqsam agents list | none |
+| `dial.queue` | `dialQueue` I:4666-4846 | any seat; `as` picks the setter or closer view | nothing (read only) | none | none |
+| `dial.call` | `dialCall` I:4877-4987 | a seat with a Maqsam address | `cockpit_sales_attempts` | Maqsam `POST /v3/calls` | `dial.call` |
+| `dial.status` | `dialStatus` I:5648-5698 | the call's rep or a manager | the attempt's call state; an automatic No answer | Maqsam `GET /v3/calls` | `dial.auto_save` when it saves |
+| `dial.save` | `dialSave` I:5557-5640, then `saveOutcome` I:5012 | the call's rep or a manager | attempts, queue state, confirmations, marks | HighLevel note, tags, stage move, mark | `dial.save` or `dial.save_manual` |
+| `dial.release` | `dialRelease` I:5700-5712 | the call's rep or a manager | the attempt becomes `released` | none | `dial.release` |
+| `dial.resync` | `dialResync` I:5462-5473 | the save's rep or a manager | `crm_note`, `crm_error` | HighLevel again | `dial.resync` |
+| `dial.resync_stuck` | `dialResyncStuck` I:5510-5537 | the VPS desk only | `crm_tries` | HighLevel again | none of its own |
+| `dial.touch` | `dialTouch` I:5720-5783 | any seat | `cockpit_sales_touches` (nothing is sent to the lead) | none | `dial.touch` |
+| `dial.hot` | `dialHot` I:5791-5802, then `hotSave` I:8397-8444 | any seat; `hotSave` checks the owner | `cockpit_sales_hot` | none | `hot.save` |
 
 **Repeat safety.**
-- `dial.call`: two unique indexes allow one open call per lead and one per rep (`supabase/migrations/20260924j_sales_dialer.sql:36-39`). A double click within 3 seconds gets "That call is already on its way." (I:4892-4893). A call Maqsam could not confirm holds the lead for 2 minutes. A call nobody looked at for 10 minutes is let go (`STALE_CALL_MS`, I:4837).
-- `dial.save`: a repeated save with the same outcome returns `{repeated: true}`. A manual save carries a `request_id` with a unique index. `saveOutcome` writes the attempt only while it is open and unsaved (I:5073), so the rep's save and Maqsam's automatic save never both stand.
+- `dial.call`: two unique indexes allow one open call per lead and one per rep (`supabase/migrations/20260924j_sales_dialer.sql:36-39`). A double click within 3 seconds gets "That call is already on its way." (I:4913-4914). A call Maqsam could not confirm holds the lead for 2 minutes. A call nobody looked at for 10 minutes is let go (`STALE_CALL_MS`, I:4858).
+- `dial.save`: a repeated save with the same outcome returns `{repeated: true}`. A manual save carries a `request_id` with a unique index. `saveOutcome` writes the attempt only while it is open and unsaved (I:5097), so the rep's save and Maqsam's automatic save never both stand.
 - `dial.touch`: the same `request_id`, or a voice note for the lead in the last 10 minutes, returns the first row.
 
 ### `dial.queue`: what it reads and returns
 
-`candidates(now)` (I:4024-4514) reads in parallel: the queue state, waiting replies (two copies), open calls, the heavy read, confirmations, the hot list, the stage roles, the working seats, intro tries, video rooms, the burst's misses, voice notes and cockpit bookings. It builds one candidate per lead.
+`candidates(now)` (I:4045-4535) reads in parallel: the queue state, waiting replies (two copies), open calls, the heavy read, confirmations, the hot list, the stage roles, the working seats, intro tries, video rooms, the burst's misses, voice notes and cockpit bookings. It builds one candidate per lead.
 
-- **The heavy read** (`readHeavy`, I:3982-4012) is cached for 20 seconds per function instance: leads of the last 30 days, the calendar from 60 days back, outbound Maqsam calls of 60 days, live deals, inbound calls nobody answered in the last day.
-- **Waiting replies** (`waitingReplies`, I:3939-3968) come from two copies: `cockpit_sales_conversations` (every minute) and `cockpit_sales_inbox` (every 3 minutes). If one fails, the other stands. If both fail, the read fails.
+- **The heavy read** (`readHeavy`, I:4003-4033) is cached for 20 seconds per function instance: leads of the last 30 days, the calendar from 60 days back, outbound Maqsam calls of 60 days, live deals, inbound calls nobody answered in the last day.
+- **Waiting replies** (`waitingReplies`, I:3960-3989) come from two copies: `cockpit_sales_conversations` (every minute) and `cockpit_sales_inbox` (every 3 minutes). If one fails, the other stands. If both fail, the read fails.
 
-The answer holds `counts` per tier, `undialable`, `speed` (the day strip), `messages` (replies only Messages can answer), `voice_notes_known`, `saved_work` (saves HighLevel has not taken), `open`, `today` and `queue`. Each queue item carries `code`, `why`, `tier`, `due_since`, `voice_step`, `voice_note`, `just_booked` and `mark_call` (I:4762-4824).
+The answer holds `counts` per tier, `undialable`, `speed` (the day strip), `messages` (replies only Messages can answer), `voice_notes_known`, `saved_work` (saves HighLevel has not taken), `open`, `today` and `queue`. Each queue item carries `code`, `why`, `tier`, `due_since`, `voice_step`, `voice_note`, `just_booked` and `mark_call` (I:4783-4845).
 
 ### Saving an outcome: `saveOutcome`
 
-`saveOutcome` (I:4991-5200) is called by `dial.save`, by the automatic No answer in `dial.status`, and by `book.create` and `book.move`. Its steps:
+`saveOutcome` (I:5012-5225) is called by `dial.save`, by the automatic No answer in `dial.status`, and by `book.create` and `book.move`. Its steps:
 
 1. **The effect:** `appointmentEffect(kind, outcome)` (D:1607-1632). No effect means the save is refused.
-2. **"Not ready yet" gate:** refused until the 5 November database update is in (`setterUpdateIn`, I:5203-5212).
-3. **The mark first** (`markAppointment`). If HighLevel or the rules refuse the mark, nothing is saved.
-4. **The ladder:** the burst's quick retry for a lead's first miss (I:5045-5046), otherwise `afterOutcome` (I:5047-5054).
-5. **The attempt row**, then the **confirmation row** for confirm items, then the **queue state** upsert (I:5104-5148).
-6. **HighLevel in the background** (`syncCrm` I:5372-5423): the stage move (only for a person's save, not "booked"; `autoMove` I:8130-8158 skips it when the `pipeline` setting's `auto_moves` is `false`, so a missing key means on, and never moves an active client), the tags, the note.
-7. **The audit row** (I:5168-5180).
-8. **What comes next** (`nextSteps`, I:5285-5344): `next_step` (the voice note) after a No answer, `hot_offer` after a held intro.
+2. **"Not ready yet" gate:** refused until the 5 November database update is in (`setterUpdateIn`, I:5228-5237).
+3. **The mark first** (`markAppointment`, I:652). If HighLevel or the rules refuse the mark, nothing is saved. A held mark more than 10 minutes before the start is refused (`refuseMark`, `lib.ts:72`), with two exceptions judged at the start: the lead joined a video room for the call (`joinedForCall`), or Did the intro now (`heldNow`, below).
+4. **The ladder:** the burst's quick retry for a lead's first miss (I:5069-5070), otherwise `afterOutcome` (I:5071-5078).
+5. **The attempt row**, then the **confirmation row** for confirm items, then the **queue state** upsert (I:5128-5172).
+6. **HighLevel in the background** (`syncCrm` I:5397-5448): the stage move (only for a person's save, not "booked"; `autoMove` I:8342-8370 skips it when the `pipeline` setting's `auto_moves` is `false`, so a missing key means on, and never moves an active client), the tags, the note.
+7. **The audit row** (I:5192-5205).
+8. **What comes next** (`nextSteps`, I:5310-5369): `next_step` (the voice note) after a No answer, `hot_offer` after a held intro.
 
-An automatic No answer never writes a note, tags or a stage move (I:5057, I:5152).
+An automatic No answer never writes a note, tags or a stage move (I:5081, I:5176).
+
+**Did the intro now (`held_now`, 7 Nov 2026).** The dialer sends `held_now: true` with a confirm item's showed when the lead did not join a video room for this miss (`heldNowAsked`, `apps/sales-cockpit/src/lib/dialerUi.ts`). `dialSave` (I:5557) reads it only for a confirm item's showed and checks it with `heldNowCheck` (D:1687-1728) before anything is saved:
+
+- The intro starts 10 minutes away or less, or has started: `held_now` changes nothing. The save goes as it does without it.
+- Otherwise every one of these must hold, or the save is refused (403) with one sentence:
+  - the save is for the dialer's own call for this confirm item (an attempt, not manual, `item_kind` confirm, the same appointment): "Do the intro from the dialer's call with them. A call made elsewhere is marked at the intro's time.";
+  - the call is an intro: "Only an intro can be marked held on its confirmation call. Mark a demo at its time.";
+  - it starts at most 24 hours ahead (`HELD_NOW_AHEAD`): "This intro is more than a day away, so it cannot be marked held from this call. Save Confirmed, and mark it at its time.";
+  - Maqsam's record does not say no answer, busy, failed, blocked or abandoned, and Maqsam did not refuse to place the call (state failed without `uncertain`): "Maqsam's record says this call did not connect, so the intro cannot be marked held from it. Save No answer, and mark the intro at its time.";
+  - the call is still the open one: not let go (`released`, when its page closed) and placed in the last 2 hours (`HELD_NOW_CALL_AGE`): "This call is no longer open, so the intro cannot be marked held from it. Save Confirmed, and mark the intro at its time.";
+  - the call is long enough for an intro (`HELD_NOW_MIN_CALL`, 3 minutes): 3 minutes since it was placed while Maqsam's record is not in, or 3 minutes of talk once it is (a call whose start is not known never counts): "Under 3 minutes on this call is too short for the intro. Do the intro, then press Did the intro now, or save Confirmed and mark the intro at its time." A record with no talk time at all (a zero-second answer, which can also be a record not complete yet) says so: "Maqsam's record shows no talk time on this call, so the intro cannot be marked held from it. If you did talk, press Save again in a minute, once the record is complete."
+- A refused `held_now` whose lead joined this call's video room (the page had not caught up) is not refused: `held_now` is dropped and the room's join passes the save, as without it (`joinedForCall`).
+- Then `markAppointment` gets `heldNow`, reads the call again, and judges the 10-minute rule at the start only if it is still an intro at most a day ahead (else at now, so the mark is refused). The host rule and a call being moved still refuse. The mark is written to HighLevel like any other (with its automations), and the `mark` and `dial.save` audit rows carry `held_now: true`; the `dial.save` row's `before` keeps the call (Maqsam's state, talk seconds, when it was placed). The sentences are `HELD_NOW_LINES` in `dialer.ts`; the practice cockpit's copy (`heldNowFake.ts`) is tested equal to them.
+
+The `mark` action (the lead page's Calls card, Today, the Calendar, Mark the intro) never reads `held_now`, so it refuses an early held mark as before. Tests: `supabase/functions/sales-api/held_now_router.test.ts`.
 
 ### What each outcome does
 
@@ -352,7 +368,7 @@ An automatic No answer never writes a note, tags or a stage move (I:5057, I:5152
 | intro | not_ready | showed | closed | long-term nurture | none |
 | intro or confirm | rescheduled | none (`book.move` moves the call) | last outcome | none here | none |
 | confirm | confirmed | none | last outcome | intro confirmed (an intro only; a demo stays) | none |
-| confirm | showed (the intro held on video in the confirmation call's room) | showed | last outcome; also saved as confirmed | none | none |
+| confirm | showed: "Did the intro now" (an intro's confirmation only; the intro had on this call, sent with `held_now`, or on video in the confirmation call's room). The page then opens the held step with Book the demo | showed, written with HighLevel's automations, even before the booked time (`held_now`, above) | last outcome; also saved as confirmed | none (booking the demo moves it to Demo Booked) | none |
 | confirm | no_answer | none | last outcome | none | none |
 | confirm | cancelled | cancelled | due again at 10:00 the next working morning, to rebook | intro or demo cancelled | none |
 | confirm | not_interested, disqualified, not_ready | cancelled | closed | long-term nurture or disqualified | as above |
@@ -362,16 +378,17 @@ An automatic No answer never writes a note, tags or a stage move (I:5057, I:5152
 | Key | What it switches | How to change it |
 |---|---|---|
 | `pipeline` | `auto_moves` (stage moves on or off), the record pipeline, and `roles`: HighLevel stage ids pinned to roles. An unpinned stage falls back to its name (`stageRole`, D:194-214). | SQL only (no action writes it). Merge so the other keys stay: `update cockpit_sales_settings set value = value \|\| '{"auto_moves": false}'::jsonb, updated_by = '<your email>', updated_at = now() where key = 'pipeline';` |
-| `crm_writes` | Whether marks (showed, no-show, cancelled, invalid) go to HighLevel, and how many days back they still run HighLevel's automations. It does not govern notes, tags or stage moves. | The sales cockpit's Team page (`setting.save`, managers, I:1437-1449). It writes only `dispositions` and `backlog_days`, so a `quiet_backlog` set by SQL is lost on the next save. |
+| `crm_writes` | Whether marks (showed, no-show, cancelled, invalid) go to HighLevel, and how many days back they still run HighLevel's automations. It does not govern notes, tags or stage moves. | The sales cockpit's Team page (`setting.save`, managers, I:1458-1470). It writes only `dispositions` and `backlog_days`, so a `quiet_backlog` set by SQL is lost on the next save. |
 | `zoom_links`, `rooms`, `live`, `followups` | Video links, video rooms, follow-up drafts. Not the queue's order. | Guarded keys: turning one on needs an active sales manager named in the same transaction (`set local mahara.actor = '<email>'`). Turning off needs no one. |
-| `calendars` | Which HighLevel calendar is an intro and which a demo. | SQL. |
+| `calendars` | What kind of call each HighLevel calendar holds (intro, demo, follow-up, callback), so the cockpit can tell a lead's calls apart. It does not choose where a new call is booked: a new demo always goes on "Demo" and a new intro on the intro calendar for the lead's class, both hard-coded (`BOOKING_CALENDARS`, D:1459-1463, `calendarFor` D:1473-1486). Only the Follow up call calendar is read from this setting. "Demo 2" is typed demo here, so its calls count as demos, but the cockpit never books on it. | SQL. |
+| `booking` | `reach_days` (60 when the row is absent, 15 to 120): how far past the calendar's own booking page `book.slots` and `book.create` reach (Another day, far-out and custom times). Live value 60 on 7 Nov. | SQL. |
 
 Read them all at once (read only):
 
 ```sql
 select key, value, updated_by, updated_at
 from cockpit_sales_settings
-where key in ('pipeline', 'crm_writes', 'zoom_links', 'rooms', 'live', 'followups', 'calendars')
+where key in ('pipeline', 'crm_writes', 'zoom_links', 'rooms', 'live', 'followups', 'calendars', 'booking')
 order by key;
 ```
 
@@ -380,9 +397,9 @@ The `zoom_links` value holds an email address. Do not paste it into documents.
 ### Things that surprise people
 
 - **Every cache is per function instance.** Two instances can answer a few seconds apart.
-- **`dial.call` does not check the client tag itself.** Clients never reach the queue (I:4271, D:1264), so it does not matter from the Dialer, but a direct call with a client's id is not refused.
-- **The CONFIRMED stage counts by `opp_updated_at`** (D:1699-1707). HighLevel's stage-change time is not copied, so any later edit to the opportunity also counts as "after the booking".
-- **Some refusal sentences name the CEO by first name** (I:3881, I:3883, I:4860, I:9293, `lib.ts:65`). The setter sees them. See the backlog.
+- **`dial.call` does not check the client tag itself.** Clients never reach the queue (I:4292, D:1264), so it does not matter from the Dialer, but a direct call with a client's id is not refused.
+- **The CONFIRMED stage counts by `opp_updated_at`** (D:1795-1803). HighLevel's stage-change time is not copied, so any later edit to the opportunity also counts as "after the booking".
+- **Some refusal sentences name the CEO by first name** (I:3902, I:3904, I:4881, I:9505, `lib.ts:65`). The setter sees them. See the backlog.
 
 ---
 
@@ -392,36 +409,38 @@ The `zoom_links` value holds an email address. Do not paste it into documents.
 
 | What | Where |
 |---|---|
-| The `Queue` type the server returns (`speed` and `messages` are new) | P:240-259 |
-| `readQueue` throws on a garbled answer, so the last good queue stays on screen | P:288-320 |
-| The read: `dial.queue` with `limit: 80` | P:703-706 |
-| Polling: every 15 s in front, every 30 s in a background tab | P:725-747 |
-| The visible list: the server's order, less skips (30 min) and leads saved since the read | P:751-760 |
-| The lead on screen: the open call, else the setter's pick, else the first visible | P:764 |
-| First alert for a new Call now item: a chime, plus a desktop notice when the tab is behind | P:786-818 |
-| Re-alerts: a chime only, 30 s before and at each deadline, never during a call | P:826-841 |
-| The tab title "(N) call now" | P:844-857 |
-| Tier names and dots | P:330-344 |
-| Outcome buttons per item kind (lead, intro, confirm) | P:353-402, P:405-489 |
-| Queue row icons (mic, clipboard, calendar, missed call) and the teal dot for `intro_now` | P:1482-1527 |
-| `save()` reads `next_step` and `hot_offer` | P:2245-2360 |
-| Not ready yet saves on its own | `saveNotReady` P:2531-2552 |
-| Which step leads the pane: the voice card or the mark | P:2558-2616 |
-| After a held intro: `HeldNext` | P:2734-2752 |
-| After a mark other than showed: "Book it again" | P:2753-2790 |
-| The band at the top of the call pane | `CallBand` P:3589-3800; coded items P:3702-3716 |
+| The `Queue` type the server returns (`speed` and `messages` are new) | P:246-265 |
+| `readQueue` throws on a garbled answer, so the last good queue stays on screen | P:294-326 |
+| The read: `dial.queue` with `limit: 80` | P:714-717 |
+| Polling: every 15 s in front, every 30 s in a background tab | P:736-758 |
+| The visible list: the server's order, less skips (30 min) and leads saved since the read | P:762-771 |
+| The lead on screen: the open call, else the setter's pick, else the first visible | P:775 |
+| First alert for a new Call now item: a chime, plus a desktop notice when the tab is behind | P:797-829 |
+| Re-alerts: a chime only, 30 s before and at each deadline, never during a call | P:837-852 |
+| The tab title "(N) call now" | P:855-868 |
+| Tier names and dots | P:336-350 |
+| Outcome buttons per item kind (lead, intro, confirm) | P:359-408, P:411-500 |
+| Queue row icons (mic, clipboard, calendar, missed call) and the teal dot for `intro_now` | P:1493-1538 |
+| `save()` reads `next_step` and `hot_offer` | P:2280-2413 |
+| Not ready yet saves on its own | `saveNotReady` P:2584-2605 |
+| Which step leads the pane: the voice card or the mark | P:2611-2669 |
+| Did the intro now on a confirm item: the grid shows it for an intro only, to its host or a manager (`outcomeOffered`, `mayMarkCall`), the save sends `held_now` (`heldNowAsked`), the held step follows (`afterSave`) and the lead's calls are read again. Until then the Script tab's Book the demo says "Do the intro first" (`introHeldFirst` → `ScriptRunner` → `BookDemoBlock`'s opt-in `heldFirst`; the call page never sets it) | P:411-500 (the confirm grid), P:2156, P:2329, P:2355 |
+| After a held intro (or Did the intro now): `HeldNext` | P:2787-2805 |
+| Book the demo from the held step or Booked → Demo: `DialerBooking` passes `closerPick` on a demo (never on a reschedule), so "Who takes the demo" shows (recipe 7.14) | P:3370-3489, `closerPick` at P:3471 |
+| After a mark other than showed: "Book it again" | P:2806-2843 |
+| The band at the top of the call pane | `CallBand` P:3650-3865; coded items P:3767-3781 |
 
 ### The words (`S`)
 
 - `CODES` (S:28-146) gives each code a label, one primary action (call, voice or mark) and an optional detail.
-- `itemWords` (S:153-182) returns null for an unknown code. The page then shows the item the old way. That is the rollout safety net: an old page and a new server, or the other way round, never break.
-- `missStepWords` (S:197-207): with the voice card on screen, the WhatsApp step reads "Or write from the official line". One message, not two.
-- The tab title and re-alerts: S:214-253 (`REALERT_BEFORE_MS` = 30 s at S:230).
-- The day strip's words: S:266-417. `speedSegs` returns no line for an old server, and "not known right now" when the read failed.
+- `itemWords` (S:164-198) returns null for an unknown code. The page then shows the item the old way. That is the rollout safety net: an old page and a new server, or the other way round, never break.
+- `missStepWords` (S:213-223): with the voice card on screen, the WhatsApp step reads "Or write from the official line". One message, not two.
+- The tab title and re-alerts: S:230-269 (`REALERT_BEFORE_MS` = 30 s at S:246).
+- The day strip's words: S:282-433. `speedSegs` returns no line for an old server, and "not known right now" when the read failed.
 
 ### The voice-note script (`V`)
 
-The script is built in the browser from facts the server sends (`voiceFacts`, D:1762). No AI and no network.
+The script is built in the browser from facts the server sends (`voiceFacts`, D:1858). No AI and no network.
 
 - **The lead's name:** `greetName` V:63-74 drops non-names (company words, titles, digits).
 - **The country:** `countryWords` V:105. An unknown country is left out of the Arabic script.
@@ -439,6 +458,7 @@ The script is built in the browser from facts the server sends (`voiceFacts`, D:
 | `DialerSteps.tsx` | `MarkStep` (lines 22-72) and `HeldNext` (lines 74-271): Book the demo, Add to hot list (`dial.hot`, line 115), Not ready yet, the 1-to-10 rating. |
 | `MarkControls.tsx` | Showed, Didn't happen, Disqualify. A no-show runs HighLevel's no-show automation, which messages the lead, so the mark waits 5 seconds (`UNDO_MS`, line 26) with Undo. Shared with Today, Calendar and the lead page's Calls card. |
 | `AfterCall.tsx` | The 1-to-10 rating and why no demo, saved through `call.outcome`. Nothing goes to HighLevel. |
+| `CallPicker.tsx`, `CloserChoice.tsx` | The one booking picker, shared with the lead page's Calls card, Today and the Calendar. With the opt-in prop `closerPick` (the dialer's demo booking and the script's Book the demo only) it shows "Who takes the demo" (recipe 7.14). The Calls card never sets it. |
 
 ### Client-side countdowns
 
@@ -528,7 +548,7 @@ A run marked "succeeded" in `cron.job_run_details` only means pg_net queued the 
 | Copy | Where | Shown on |
 |---|---|---|
 | App | `apps/sales-cockpit/src/lib/calls.ts:95` (`lineAddress`), `:111` (`salesLineCall`), `:127` (`speedToLead`) | the Numbers page |
-| Server | D:1830 (`lineAddress`), D:1844 (`salesLineCall`), D:1869 (`speedToday`) | the Dialer's day strip |
+| Server | D:1926 (`lineAddress`), D:1940 (`salesLineCall`), D:1965 (`speedToday`) | the Dialer's day strip |
 | CEO | `$W/ceo-refresh/native/adapters/growth.js:93` (`firstCallsSql`, as SQL); `BY_SALES_REP` at growth.js:69 for leads older than the copy | the CEO page |
 | Address list | the database function `cockpit_sales_line_agents()` (`20261105s_setter_speed_line.sql:23-45`) | feeds the app's copy, which row security would otherwise blind |
 
@@ -558,14 +578,14 @@ The order mattered: `w` and `x` before sales-api, and sales-mirror deployed befo
    cd ../dialer-change && scripts/prepare-worktree.sh --apply
    ```
    `prepare-worktree.sh --apply` installs the dependencies of seven folders, which `ship.sh` needs. To only change and test the dialer, less is enough: the server tests need no install at all (bun runs them as they are), and the app needs `cd apps/sales-cockpit && bun install --frozen-lockfile`. The checkout itself is about 105 MB.
-2. **Change the rule in `D` only, when you can.** It is pure: no database, no network. Touch `I` only when a rule needs a new fact. Add the fact to `Candidate` (D:336-425) and to the builder in `candidates` (I:4271-4512).
+2. **Change the rule in `D` only, when you can.** It is pure: no database, no network. Touch `I` only when a rule needs a new fact. Add the fact to `Candidate` (D:336-425) and to the builder in `candidates` (I:4292-4533).
 3. **Expect literal numbers in tests.** Only `CONFIRM_FROM` and `FIRST_CALL_NEW` are imported by tests. Every other time is a literal (`2 * MIN`, `61 * MIN`, `60 * MIN`), so search `T`, `F` and `R` for the old number after changing a constant.
 4. **Keep the doc comments true.** The comment on `rankForSetter` (D:1219-1248) and on `ItemCode` (D:459-472) is the contract the screen and the setter's SOP were written from.
 5. **Run the fast loop:**
    ```sh
    bun test supabase/functions/sales-api/dialer.test.ts supabase/functions/sales-api/setter_queue_fix.test.ts supabase/functions/sales-api/setter_queue_router.test.ts
    ```
-6. **Mind the freeze.** From Sunday 8 to Thursday 12 November 2026 a WhatsApp reactivation campaign runs through Messages. Do not change Messages, Needs reply, booking or the lead page's Calls card in that week without the CEO's OK. The mark controls are shared with the Calls card.
+6. **Mind the freeze (the one rule; recipes 7.12 and 7.14 point here).** The CEO, for the WhatsApp reactivation that starts Sunday 8 November 2026 at 12:00 Kuwait: "Don't change Messages, Needs reply, booking or the Calls card before Sunday without telling me." So a change to any of them is told to the CEO, with what would change, and waits for his go. Any sales-api or sales-mirror deploy counts, even when its diff is elsewhere, because it redeploys the code behind those screens. The mark controls and the booking picker are shared with the Calls card. Ask the CEO whether the rule still holds while the campaign runs (Sunday 8 to Thursday 12 November).
 7. **Ship with recipe 7.12.**
 
 ### 7.1 Change the confirmation times
@@ -604,16 +624,16 @@ The value: `SECOND_TRY` = 2 min (D:748). The burst window is `BURST` = 60 min (D
 1. Change `SECOND_TRY`.
 2. Move the test literals that use `2 * MIN` for the second try: T:674-678, T:700, F:93-108, F:237-239, F:446, and the expectations in R:240-262 (R:249-250 check the due time is under 2 minutes and over 1).
 3. The screen follows on its own: the strip's deadline for `second_try` is the item's `due_since` (`apps/sales-cockpit/src/lib/dialer.ts:166-184`). The voice card's "Second try at 14:05" comes from the server's `second_try_at`.
-4. The practice cockpit fakes the gap: `leave()` in `apps/sales-cockpit/src/dev/harness.tsx:286-322` brings a missed new lead back "2 minutes later". Change it there too.
+4. The practice cockpit fakes the gap: `leave()` in `apps/sales-cockpit/src/dev/harness.tsx:298-334` brings a missed new lead back "2 minutes later". Change it there too.
 5. To call three times in the burst instead of two, change `misses.length !== 1` at D:818 and `earlierMisses > 0` at D:911, and add tests.
-6. If you widen `BURST` past 60 minutes, widen the look-backs that assume one hour: I:4344, I:4422, I:5229 and I:5242 (all `3_600_000`), and `miss_times` (2 hours, I:4414). Then update `61 * MIN` at T:684, T:699, T:702.
+6. If you widen `BURST` past 60 minutes, widen the look-backs that assume one hour: I:4365, I:4443, I:5254 and I:5267 (all `3_600_000`), and `miss_times` (2 hours, I:4435). Then update `61 * MIN` at T:684, T:699, T:702.
 7. Run the fast loop, deploy sales-api.
 
 ### 7.3 Change the retry ladder (tries and hours)
 
 1. **Number of tries:** `step >= 3` at D:69 and `Math.min(c.misses, 4)` at D:1145 move together. Update T:71-100, T:204-211 and T:498-510.
 2. **The hours:** 17:00 at D:71, 09:00 at D:57.
-3. **The day off:** Friday is in two functions, D:58 and D:1637 (`nextMorning`).
+3. **The day off:** Friday is in two functions, D:58 and D:1733 (`nextMorning`).
 4. Update the "unreachable" step comment in `20260924j_sales_dialer.sql` only if you write a new migration anyway; the column has no check.
 5. Update the SOP's ladder description. Deploy sales-api.
 
@@ -624,17 +644,17 @@ Use how `not_ready` was added in PR #209 as the model: `git grep -n not_ready`. 
 1. **The rules (`D`). First decide where the outcome can be saved:**
    - **On a lead item** (the usual case): add it to `OUTCOMES` (D:102-114) and `OUTCOME_WORDS` (D:117-126). `appointmentEffect` accepts every `OUTCOMES` entry on a lead by itself (D:1609-1610), so a lead needs no branch there.
    - **On the intro call or a confirmation as well:** add a branch in `appointmentEffect` (D:1607-1632) for each of those kinds.
-   - **Only on the intro call or a confirmation** (like `showed` or `cancelled`): add it to `APPOINTMENT_OUTCOMES` (D:1575) and its words to `ANY_OUTCOME_WORDS` (D:1578-1585) instead of `OUTCOMES`. The server accepts both lists (`outcomeInput`, I:5516-5518), and the HighLevel note's first words come from `ANY_OUTCOME_WORDS` (I:5362).
+   - **Only on the intro call or a confirmation** (like `showed` or `cancelled`): add it to `APPOINTMENT_OUTCOMES` (D:1575) and its words to `ANY_OUTCOME_WORDS` (D:1578-1585) instead of `OUTCOMES`. The server accepts both lists (`outcomeInput`, I:5541-5543), and the HighLevel note's first words come from `ANY_OUTCOME_WORDS` (I:5387).
    - What it does to the lead: with no branch in `afterOutcome` (D:134-154) the outcome closes the lead under its own name. Add a branch if it should do something else (keep a call-back, set a retry).
-   - Add `targetRoles` (D:1656-1676) and `tagsFor` (D:1679-1684) entries if it moves the stage or tags the contact. With none, it does neither.
+   - Add `targetRoles` (D:1752-1772) and `tagsFor` (D:1775-1780) entries if it moves the stage or tags the contact. With none, it does neither.
    - If it closes a lead after a booking, add it to `ENDING_CLOSES` (D:1202) and to the loop at F:141.
-2. **The server input:** add it to `NEEDS_NOTE` (I:5515) if the next person needs a line of notes.
+2. **The server input:** add it to `NEEDS_NOTE` (I:5540) if the next person needs a line of notes.
 3. **"They spoke":** if the outcome means the rep and the lead talked, add it to `PHONE_TALKED` (`supabase/functions/sales-api/roomlogic.ts:2870`) and write a new rooms-sweep migration: copy `20261105x_sales_rooms_sweep_not_ready.sql` under a new, later name, change only the outcome list at its line 968, and rewrite its header comment. Then point finding 15 at the new file: F:320 names the newest sweep migration exactly (`expect(newest).toBe("20261105x_sales_rooms_sweep_not_ready.sql")`). F:308-330 fails until both lists match and that name is the new one.
 4. **The database:** a new migration that drops and re-adds `cockpit_sales_attempts_outcome_check` with every existing value plus yours (copy `20261105w_sales_setter_queue.sql:39-45`). Live on 6 Nov the check holds 13 values: `no_answer`, `callback`, `booked`, `not_interested`, `disqualified`, `wrong_number`, `handled`, `confirmed`, `rescheduled`, `cancelled`, `showed`, `noshow`, `not_ready`. If the outcome also writes a confirmation row, widen the `result` check in `20260926b_sales_dialer_appointments.sql:24-25` the same way.
 5. **The page:**
-   - Add the button to the right list in P:353-489 (lead, intro or confirm), with `needsNote` set the same as the server's `NEEDS_NOTE`.
-   - Add its words to `OUTCOME_WORDS` in `apps/sales-cockpit/src/lib/dialerUi.ts:262-280`.
-   - Add it to `NEEDS_NOTE` in `apps/sales-cockpit/src/dev/harness.tsx:234` so the practice cockpit behaves the same. The practice cockpit's `leave()` takes any other outcome off the queue for a day, so nothing else is needed there.
+   - Add the button to the right list in P:359-500 (lead, intro or confirm), with `needsNote` set the same as the server's `NEEDS_NOTE`.
+   - Add its words to `OUTCOME_WORDS` in `apps/sales-cockpit/src/lib/dialerUi.ts:354-372`.
+   - Add it to `NEEDS_NOTE` in `apps/sales-cockpit/src/dev/harness.tsx:246` so the practice cockpit behaves the same. The practice cockpit's `leave()` takes any other outcome off the queue for a day, so nothing else is needed there.
    - Three tests read P as text and look for the exact line `const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {` (`apps/sales-cockpit/src/lib/m1_journeys_r6_ui.test.ts:782-826` and two others, section 11). Do not reformat it.
 6. **Tests:** a case in T "outcomes on appointment work" (T:455-475) and "where an outcome moves the lead in the pipeline" (T:477-496); a through-the-handler case like R:299-330. Run the fast loop and the app checks, then the whole server suite, because `OUTCOMES` and `PHONE_TALKED` reach many files.
 7. **The assistant guide:** if `apps/sales-cockpit/assistant-guide.md` quotes button text, keep it exact (`ship.sh` checks it).
@@ -648,12 +668,12 @@ Example: a code `deck_opened`, "Opened the deck, call now".
    - Add the code to `ItemCode` and its doc comment (D:459-502).
    - Return it from the right rule: `setterLeadWork` (D:1047) for lead work (its position in that function decides what wins when two rules match), `appointmentWork` (D:655) or `markWork` (D:725) for calendar work, `hotFollowUp` (D:950), or `closerLeadWork` (D:1325).
    - The item shape is `{ tier, kind: "lead", code, why, sort, due_since?, pin? }`. `why` is the sentence the screen shows; `due_since` starts the strip's clock.
-   - If the item needs a new fact, add it to `Candidate` (D:336-425) and build it in `candidates` (I:4434-4511). If it needs new data on the page, read it in `dialQueue` for shown items only, and add the field to the item map (I:4780-4810).
+   - If the item needs a new fact, add it to `Candidate` (D:336-425) and build it in `candidates` (I:4455-4532). If it needs new data on the page, read it in `dialQueue` for shown items only, and add the field to the item map (I:4801-4831).
 2. **Server tests:** a pure rule test beside the numbered describes in T (T:623-930), and a case in R "dial.queue: the setter's one queue" (R:157).
-3. **The words:** add `deck_opened: { label, action, detail }` to `CODES` (S:28-146). Without it `itemWords` returns null and the page shows the item the old way. A brand-new action (not call, voice or mark) also needs `ItemAction` (S:18) and branches in P at 2568-2616, 2654-2663 and 3702-3716.
-4. **The voice note:** if the item should offer the script, add it to `VOICE_CODES` (I:4552) and `voiceStepOf` (I:4555-4561).
-5. **The screen:** a countdown other than the default goes in `urgentEvents` (`apps/sales-cockpit/src/lib/dialer.ts:166-184`); a row icon in P:1504-1527. Add the code to the `QueueItem.code` comment (`apps/sales-cockpit/src/lib/dialer.ts:39-45`).
-6. **The practice cockpit:** add a row to the setter's list in `dialItems` (`apps/sales-cockpit/src/dev/fixtures.ts:1053-1210`). If saving it does something special, extend `leave()` or `saveAttempt()` (`harness.tsx:286-376`).
+3. **The words:** add `deck_opened: { label, action, detail }` to `CODES` (S:28-146). Without it `itemWords` returns null and the page shows the item the old way. A brand-new action (not call, voice or mark) also needs `ItemAction` (S:18) and branches in P at 2605-2653, 2691-2700 and 3749-3763.
+4. **The voice note:** if the item should offer the script, add it to `VOICE_CODES` (I:4573) and `voiceStepOf` (I:4576-4582).
+5. **The screen:** a countdown other than the default goes in `urgentEvents` (`apps/sales-cockpit/src/lib/dialer.ts:166-184`); a row icon in P:1515-1538. Add the code to the `QueueItem.code` comment (`apps/sales-cockpit/src/lib/dialer.ts:39-45`).
+6. **The practice cockpit:** add a row to the setter's list in `dialItems` (`apps/sales-cockpit/src/dev/fixtures.ts:1053-1210`). If saving it does something special, extend `leave()` or `saveAttempt()` (`harness.tsx:298-386`).
 7. **App tests:** `apps/sales-cockpit/src/lib/setterDay.test.ts:39-65`. Then `bun test src`, `bunx tsc -b --force`, `bunx biome check src`.
 8. **Deploy sales-api first, then the app.** Either alone is safe: an old page shows an unknown code the old way, and a new page shows a code-less item the old way. To rename a code, add the new one, ship, then remove the old one.
 
@@ -695,10 +715,10 @@ The rule is `setterScope` (D:1008-1014) with `introStage` (D:989-995). Today, in
 
 Steps:
 1. Keep the order of checks. Each check assumes the ones above it.
-2. "Owner" is HighLevel's `assigned_to`, mapped to a working seat (I:4131-4136, I:4465-4469). A manager's or a leaver's lead has no owner, so it is everyone's. Change the mapping there, not in `D`.
+2. "Owner" is HighLevel's `assigned_to`, mapped to a working seat (I:4152-4157, I:4486-4490). A manager's or a leaver's lead has no owner, so it is everyone's. Change the mapping there, not in `D`.
 3. A new pipeline stage that only comes after a demo, but whose name does not match: add its role to `DEMO_STAGES` (D:978) or its name to `AFTER_DEMO_NAME` (D:986), with a case in F finding 17 (F:294-306).
 4. Appointment work and hot follow-ups have their own host checks (D:678-679, D:950-962). The owner rule covers lead work only (D:1277).
-5. The closer's view is filtered before ranking (I:4676-4687), not by `setterScope`.
+5. The closer's view is filtered before ranking (I:4697-4708), not by `setterScope`.
 6. Update T:512-530, T:821-845 and F:294-306. Deploy sales-api.
 
 ### 7.8 Turn the minute intake off and on
@@ -727,13 +747,13 @@ Then remove `"mahara-sales-new-contacts"` from `EXPECTED_JOBS` in `$W/cockpit-gu
 
 1. **Give them the Sales cockpit.** On the portal's Admin page (`cockpit.maharamedia.com/admin`, admins only), add or edit the person, tick Sales and choose Setter, Closer, Both or Manager. This calls `cockpit_admin_upsert_member(..., p_sales_role)`, which writes `cockpit_sales_people` (`supabase/migrations/20261104a_admin_sales_seat.sql`).
 2. **Link the seat.** In the sales cockpit's Team page (`/sales/team`, managers only), open the seat and fill in what it lists as missing (`apps/sales-cockpit/src/components/TeamSeat.tsx:55-70`):
-   - **HighLevel user.** Without it the seat hosts no calls (D:1259) and cannot mark (`lib.ts:65`). Picking the user also links B2B's rep with the same HighLevel id, when B2B has one (I:1371-1383).
-   - **Maqsam line** (the Maqsam agent's email). Without it `dial.call` refuses (I:4858-4860), and the seat's calls do not count for speed to lead.
+   - **HighLevel user.** Without it the seat hosts no calls (D:1259) and cannot mark (`lib.ts:65`). Picking the user also links B2B's rep with the same HighLevel id, when B2B has one (I:1392-1404).
+   - **Maqsam line** (the Maqsam agent's email). Without it `dial.call` refuses (I:4879-4881), and the seat's calls do not count for speed to lead.
    - **Name in Arabic.** The Arabic voice script uses it.
    - Slack and Fathom as needed (a Fathom email is not asked of a setter).
    - The list also names "their name in B2B's rep list" (a B2B roster row, optional, step 4), "a pay rule" and "goals". Those are for pay and the Goals page, not the Dialer.
-   - The save is `person.save` (I:1351-1407).
-3. **In Maqsam:** the agent must exist, be switched on, be allowed to call out, and be Available (`maqsamReady`, I:3878-3886).
+   - The save is `person.save` (I:1372-1428).
+3. **In Maqsam:** the agent must exist, be switched on, be allowed to call out, and be Available (`maqsamReady`, I:3899-3907).
 4. **Speed to lead:** the Maqsam address is enough for their calls to count (`salesLineCall`). The VPS desk picks up the new address on its next run (:16 or :46). A B2B roster row is optional but makes their numbers follow them on B2B's side too.
 5. **Check:** the seat signs in, opens the Dialer, and sees "Calls go out as <their Maqsam address>". A `cockpit_audit_log` row `person.save` records the change.
 
@@ -741,7 +761,7 @@ A seat with the role "both" sees a Setter / Closer switch. A manager seat sees e
 
 ### 7.10 Change the speed-to-lead rule in all three places
 
-1. Change the app copy (`apps/sales-cockpit/src/lib/calls.ts:95-183`) and the server copy (D:1830-1923) the same way. T:964-975 compares them.
+1. Change the app copy (`apps/sales-cockpit/src/lib/calls.ts:95-183`) and the server copy (D:1926-2019) the same way. T:964-975 compares them.
 2. Change the CEO copy: `firstCallsSql` (`$W/ceo-refresh/native/adapters/growth.js:93`), and `BY_SALES_REP` (growth.js:69) if the B2B fallback should change too.
 3. If the set of addresses changes, change `cockpit_sales_line_agents()` with a new migration (copy `20261105s_setter_speed_line.sql`). Keep it a security definer function with an empty `search_path`, gated on `cockpit_sales_seat()`, returning addresses only.
 4. Tests:
@@ -777,7 +797,7 @@ To make a new cut of the video, the project is in the CEO's Mac checkout at `not
 
 ### 7.12 Ship a change
 
-Do the steps that apply, in this order.
+Do the steps that apply, in this order. Mind the freeze first (7.0 step 6): a change to Messages, Needs reply, booking or the Calls card, and any sales-api or sales-mirror deploy, is told to the CEO and waits for his go.
 
 **1. Tests.**
 ```sh
@@ -794,7 +814,7 @@ One failure is known and happens on main too: `book_move_router.test.ts:601-602`
 
 **2. Merge.** Open a PR to main and merge it. The repo has no GitHub Actions; the checks are Vercel previews. Deploy from the merge commit, never from a working tree.
 
-**3. Migrations** (before the functions that need them).
+**3. Migrations** (before the functions that need them; Did the intro now: `20261107a` before the sales-api that sends `held_now`).
 - Save `pg_get_functiondef` of any function you replace.
 - A new table ships with row security and its grant in the same migration. The service key is the only door unless a browser needs one.
 - Apply with your own management token:
@@ -876,11 +896,36 @@ The 6 Nov template is `~/.cockpit-guardian/stage-50b8655d/release.sh`.
 | CEO | Point the link back: `ln -s ~/.cockpit-native-releases/<old id> ~/cockpit-native-current.next && mv -T ~/cockpit-native-current.next ~/cockpit-native-current`. Before 6 Nov the live release was `ads1105a`. Old releases are never deleted. |
 | Guardian | Copy the files back from `~/.cockpit-guardian/backup-before-<sha>/`. |
 
+### 7.14 The demo's closer picker: who is listed, and adding a closer
+
+Since 7 Nov (built, not shipped: booking is under the freeze in 7.0 step 6). The CEO asked: "He should also be able to pick the specific closer he wants to book the demo on their calendar for." Before it, every dialer demo asked the Demo calendar for "anyone", so HighLevel's round robin chose the host, and 2 of the setter's 4 cockpit demos from 5 to 7 Nov went to the manager user on that calendar.
+
+**Where it lives.**
+- **The screen.** Book the demo shows a row, "Who takes the demo": **Anyone free** first (the round robin's soonest times, exactly as before), then one choice per closer with their soonest time ("<First> · Today 4:30 pm", "no free time in 14 days", or "not read just now"). Picking a closer reads again with `closer_id`: only their times show (the soonest four, Another day, Custom time fixed to them), and every tile, the hold strip and the done line say "with <First>". The "With whom" switch hides while the row shows. If the server says the closer cannot take the demo, the row drops back to Anyone free with the server's sentence. Picking another closer clears the old tiles until their times arrive.
+- **Where it starts** (`closerStart`, `reschedule.ts`). A setter starts on Anyone free. A closer, both or manager seat booking a demo from the dialer's panel starts on their own name, as "With me" did before the picker; if the server will not take them (not on the Demo calendar), it drops back to Anyone free without a warning. The script's block passes `withDefault="anyone"`, so everyone starts on Anyone free there, as before.
+- **Who shows it.** `CallPicker`'s opt-in prop `closerPick` (`apps/sales-cockpit/src/components/CallPicker.tsx:233`, on only for a demo booking, line 323; the row is `CloserChoice.tsx`). It is passed by the script's block (`BookDemoBlock.tsx`), which shows on the dialer's Script tab and on the call page `/call/:contactId` (`CallPage.tsx` → `ScriptRunner.tsx`), and by the dialer's booking panel for a demo (P:3471: the held step's Book the demo, and Booked → Demo). The lead page's Calls card never passes it, so its requests are as before; `apps/sales-cockpit/src/components/CloserPick.test.tsx` pins that.
+- **The words and order.** `closerChips`, `bookingAsk`, `closerField` and the `not_closer` refusal are in `apps/sales-cockpit/src/lib/reschedule.ts` (from line 1190; `refusalLine` reads `not_closer` as read again, not blocked).
+- **The server.** `book.slots` takes two optional fields, for a demo only: `closers: true` (the list, each closer's soonest time from their own free-slots read through `ghl()`; a read that fails is `unread`, never "no time") and `closer_id` (that closer's own times, named). `book.check` and `book.create` take `closer_id` the same way. `book.create` then books with `assignedUserId` = the closer, HighLevel's own slot check still on, the owner becomes the closer, and the audit row carries `closer_picked` and `closer_id`. A time that is gone is refused 409 `taken` ("That time was just taken. Pick another."), also when HighLevel says so at the write ("The slot you have selected is no longer available"; any other HighLevel refusal is said in HighLevel's words, 502). If HighLevel reads back another host than the closer picked, the owner follows the read-back, the answer names who has it, and the audit row adds `closer_mismatch: true`. A request without the new fields runs exactly as before. Code: `closersPick` I:6363, `closerReads` I:6393, `closerSlots` I:6414, used in `bookSlots` (I:6552), `bookCreate` (I:6832) and `bookCheck` (I:7822). The rules are pure, in `supabase/functions/sales-api/closers.ts`; the router tests are `closer_pick_router.test.ts`.
+- **The refusals.** Not on the Demo calendar's team in HighLevel: 409 `host`, "<First> is not on the Demo calendar in HighLevel. Pick another closer, or Anyone free." No active closer, both or manager seat: 409 `not_closer`. Not a demo: 400 `host`. A press naming another host than the closer: 400 `host`, "That time is another closer's. Pick one of <First>'s times." Seats unread: the list is null (said on screen), and a picked closer is refused 503 `unread`.
+
+**How the list is built** (`closersOn`, `closerOrder` in `closers.ts`): the people on the Demo calendar's team in HighLevel (`GET /calendars/{id}`, `teamMembers`) who have an active seat in `cockpit_sales_people` with that HighLevel user id and the role closer, both or manager. Closers (closer, both) first, then managers; the soonest time first within each. A team member without such a seat (a leaver, a setter) is left out. One HighLevel user on two seats shows once. Two people with the same first name get a last initial. On 7 Nov the list would be the closer, then the CEO's manager user.
+
+**Add a closer to the list.**
+1. **Give them a seat** (recipe 7.9): role Closer or Both, active, with their HighLevel user picked on the Team page.
+2. **A person adds them to the Demo calendar's team in HighLevel** (Settings → Calendars → Demo → Team members), and links their "Work Hours" availability schedule to the Demo calendar, so free-slots shows their hours. Do it by hand in HighLevel's settings, **never from code**: a calendar update through the API (`PUT /calendars/{id}`) is not a patch. It resets the fields it leaves out (open hours, slot length and interval, buffers) and unlinks the calendar from every user's availability schedule. That happened to both demo calendars on 11 Oct, and free slots started at midnight.
+3. **Check:** within 10 minutes (the calendar cache) the dialer's Book the demo lists them with their soonest time. "not read just now" means HighLevel did not answer for them; "no free time in 14 days" usually means their schedule is not linked to the Demo calendar.
+
+**Take someone off the list:** end their seat or change its role (a leaver drops off at once), or remove them from the Demo calendar's team in HighLevel by hand. Hiding manager seats would be a one-line change in `closerKind` (`closers.ts`) and its tests; Anyone free can still give a demo to a manager through the round robin.
+
+**Practice cockpit:** Book the demo in `harness.html?path=/dialer` lists two made-up closers with different soonest times and the manager seat. Knob `closers=ok|none|unread|off` (`apps/sales-cockpit/src/dev/closerFake.ts`, wired in `bookingFake.ts`).
+
+**Ship** (recipe 7.12) only with the CEO's go (7.0 step 6). Order for Did the intro now and the closer picker together: the migration `20261107a` first, then sales-api (the new fields are optional, so an old page is unaffected), then the app. An old server ignores the new fields: a new page then shows no closer row and the "With whom" switch as before.
+
 ---
 
 ## 8. Running it on your machine: the practice cockpit
 
-The practice cockpit (the "harness") is the real sales cockpit with every request answered inside the browser: database reads, whoami, RPCs and sales-api actions. Nothing leaves the browser (the fetch intercept is at `apps/sales-cockpit/src/dev/harness.tsx:1384-1393`). The leads are made up.
+The practice cockpit (the "harness") is the real sales cockpit with every request answered inside the browser: database reads, whoami, RPCs and sales-api actions. Nothing leaves the browser (the fetch intercept is at `apps/sales-cockpit/src/dev/harness.tsx:1435-1444`). The leads are made up.
 
 **Start it:**
 ```sh
@@ -890,9 +935,13 @@ VITE_SUPABASE_URL=https://abcdefghijklmnopqrst.supabase.co VITE_SUPABASE_ANON_KE
 # then open http://localhost:5296/sales/harness.html?path=/dialer
 ```
 Checked on 6 Nov: with `&call=noanswer`, pick the new lead ("New lead, call now"), press **Call**, and about 7 seconds later the voice card shows **عربي**, **English**, **Copy script**, **Open WhatsApp** and **I sent the voice note**.
+
+Did the intro now (7 Nov): pick the "Confirm, 2.5 h before" lead (the intro two hours ahead, fixture `a19`), press **Call**, stay on it 3 minutes (the least for an intro; sooner is refused, as live), choose **Did the intro now**, write a line and press **Save**. The held step opens with **Book the demo**. The practice cockpit refuses the early mark as sales-api does, in its words (`apps/sales-cockpit/src/dev/heldNowFake.ts`): without `held_now`, from a call made elsewhere, a call under 3 minutes or let go, or with `&call=refuse`. The "Confirm the demo" lead has no held button. Not yet clicked through in a browser on 7 Nov (the Mac's disk was nearly full); the fake's rules are tested in `heldNowFake.test.ts`.
+
+Who takes the demo (7 Nov): press **Book the demo** on the held step (or Booked → Demo, or the script's block). The row lists two made-up closers on the Demo calendar with different soonest times, then the manager seat. Pick one: only their times show, each "with <First>", and a press books on them. `&closers=unread` makes the second closer's calendar not answer, `&closers=none` gives them no time, `&closers=off` answers as an older server. Not clicked through in a browser on 7 Nov either; the fake's rules are tested in `CloserPick.test.tsx`.
 The address only has to look like a Supabase project (`apps/sales-cockpit/src/lib/env.ts:11-30`), and any `sb_publishable_` key passes, so no real key is needed.
 
-**Knobs** go in the address (`&call=noanswer`) or on `window.harness`. The full list is in the header of `harness.tsx` (lines 1-90, the object at 117-132).
+**Knobs** go in the address (`&call=noanswer`) or on `window.harness`. The full list is in the header of `harness.tsx` (lines 1-98, the object at 126-141).
 
 | Knob | Values | What it shows |
 |---|---|---|
@@ -907,7 +956,7 @@ The address only has to look like a Supabase project (`apps/sales-cockpit/src/li
 
 In the browser console, `harnessArrive(i)` brings a lead in fresh at the top of the queue, and `harnessLog` lists every sales-api call the page made (useful for counting double taps).
 
-**Where the fakes live:** the setter's queue is `dialItems` (`apps/sales-cockpit/src/dev/fixtures.ts:1011-1210`, one row of each code from line 1053). What a save does next is `leave()` and `saveAttempt()` (`harness.tsx:286-376`). Change these when an answer's shape changes, or the practice cockpit drifts from production.
+**Where the fakes live:** the setter's queue is `dialItems` (`apps/sales-cockpit/src/dev/fixtures.ts:1011-1210`, one row of each code from line 1053). What a save does next is `leave()` and `saveAttempt()` (`harness.tsx:298-386`). Change these when an answer's shape changes, or the practice cockpit drifts from production.
 
 **Anything the team will see** (videos, SOP pictures) must use the practice patch. Main's harness signs in with the CEO's real seat and email (`fixtures.ts:22`). The patch makes the seat "The setter" (`setter@example.test`, a non-manager), uses a made-up first name in the scripts, and renames every real name and client. It lives in the CEO's Mac checkout (not committed). The current version is `notes/team-videos/sales-setter-day-narrated/harness-guide.patch`, made for the narrated video: every lead has a full made-up name, the hot list comes back at 10:00 Kuwait the next working morning as the server does, End of day opens as the setter's own page, and `harnessBringBack(i)` brings a lead back for its second try. The first version, `notes/team-videos/sales-setter-day/harness-guide.patch`, is out of date. Apply it with `git apply` in a fresh detached worktree. Fixture phone numbers are made up but still have 8 or more digits, so blur them in recordings.
 
@@ -919,10 +968,10 @@ In the browser console, `harnessArrive(i)` brings a lead in fresh at the top of 
 
 When something cannot be read, the screen says so and names it. It never turns into 0, "nobody to call" or "no voice note needed".
 
-- **The day strip:** `speed` is null when its read failed, and the strip says "not known right now". `not_known` names each part that failed (I:4637-4641; S:286-316).
-- **Voice notes:** when `cockpit_sales_touches` cannot be read, `voice_known` is false and no voice-note step is asked for (D:832-864). The second try then reads "The first call rang out. Call once more." without claiming a note went or is owed (S:153-182).
-- **Replies:** if one of the two copies fails, the other stands. If both fail, the read fails and the page keeps the last good queue (I:3939-3968, P:288-320).
-- **Reads in general:** an empty or garbled answer to a server read is an error, never "no rows" (`svc`, I:289-336).
+- **The day strip:** `speed` is null when its read failed, and the strip says "not known right now". `not_known` names each part that failed (I:4658-4662; S:302-332).
+- **Voice notes:** when `cockpit_sales_touches` cannot be read, `voice_known` is false and no voice-note step is asked for (D:832-864). The second try then reads "The first call rang out. Call once more." without claiming a note went or is owed (S:164-198).
+- **Replies:** if one of the two copies fails, the other stands. If both fail, the read fails and the page keeps the last good queue (I:3960-3989, P:294-326).
+- **Reads in general:** an empty or garbled answer to a server read is an error, never "no rows" (`svc`, I:292-339).
 - **The CEO page:** if the first-calls read fails or returns nothing over a year, the cycle keeps the last good numbers rather than publishing zeros (growth.js:1316-1330).
 - **One exception to know:** the video-room reads fail open (an unread table means "nobody is held"), and they log it.
 
@@ -1006,13 +1055,13 @@ There is one unified `logs` table. `function_logs`, `function_edge_logs`, `postg
 
 | Limit | What happens | Where | What would fix it |
 |---|---|---|---|
-| An early "held" mark waits for its time | If the setter holds the intro there and then, before its booked time, he cannot mark it Showed until 10 minutes before the start. It comes up later as "Mark the intro". | `refuseMark`, `supabase/functions/sales-api/lib.ts:55-75` (the 10 minutes at :72) | Allow "showed" early when a call with the lead was answered. It changes the lead page's Calls card too, so wait until after the 8-12 Nov campaign. |
+| An early "held" mark needs the dialer's call | Since 7 Nov the setter can do the intro on the confirmation call and press Did the intro now, then Book the demo (section 4, `held_now`). An intro had on a call made elsewhere (the softphone, WhatsApp) still cannot be marked Showed until 10 minutes before the start: first it pins as "Intro call now" (5 minutes before to 20 after), then it comes up as "Mark the intro". On the dialer's confirmation call the Script tab's Book the demo waits for Did the intro now; the call page's block still books with the intro unmarked when the intro is more than 10 minutes away. B2B's and the CEO page's "intros advanced" count from the booked start, so an intro held early whose demo was booked before that time is missed there, and their show rate can read high (above 100% for a short window) until its booked time passes; the CEO page's source note says so (the cockpit's view and funnel count from the mark, and count it due, once `20261107a` is in). An intro held the evening before counts on its booked day: the end of day, the funnel, the show counts and the setter's pay. If the lead later moves a held-early intro with HighLevel's reschedule link, the cockpit's showed mark stays on the moved call; no screen counts how many intros were held on the confirmation call yet (the audit rows carry `held_now`). | `refuseMark`, `supabase/functions/sales-api/lib.ts:55-75` (the 10 minutes at :72); `heldNowCheck` D:1687-1728; `supabase/functions/cockpit-ceo-api/windows.ts:313-314` | A softphone call: not planned, because `refuseMark` is shared with the lead page's Calls card. The CEO page: count from the mark, as the cockpit does (B2B is read only). If the CEO wants early-held intros marked without HighLevel's automations, pass `quiet` with `heldNow` in `markAppointment`. |
 | No email-opens signal | The old Slack "email opened" channel has no counterpart. The queue does not know when a lead opens an email. | none | A bridge from the email tool into a new table, plus an item code (recipe 7.5). |
 | No B2B roster row for the setter | His calls count through his Maqsam address, so speed to lead is right. B2B's own numbers do not know him. | `TeamSeat.tsx:62` lists it as missing | Add a `sales_reps` row in B2B and link it on the Team page. This is the systems manager's job. |
-| No phone push | Re-alerts are a chime in an open Dialer tab with alerts on. The first alert can also show a desktop notice. Nothing reaches a phone. | P:786-841 | Web push from the service worker, or a Slack DM from the server for tier 0 items. |
+| No phone push | Re-alerts are a chime in an open Dialer tab with alerts on. The first alert can also show a desktop notice. Nothing reaches a phone. | P:797-852 | Web push from the service worker, or a Slack DM from the server for tier 0 items. |
 | The ladder stops after 4 tries | A new lead nobody answers gets 5 calls (2 in the burst, 3 more on the ladder) over about 3 working days, then closes "unreachable" and moves to nurture. An older lead gets 4. The old Slack routine followed up for about 17 days. | D:69, D:1145 | Recipe 7.3, if the CEO wants a longer ladder. |
-| "Just booked" can be late | Bookings made in HighLevel reach the cockpit through B2B, up to about 15 minutes late, and the item lasts 30 minutes from the booking. | I:4338-4354 | Read the intro calendars straight from HighLevel every minute, as the Follow Up and Callback calendars already are. |
-| An automatic No answer moves no stage | When Maqsam's automatic save closes a lead "unreachable", the lead stays in its stage. Only a person's save moves it to nurture. | I:5057, I:5152 | Allow the stage move on the unreachable close only. |
+| "Just booked" can be late | Bookings made in HighLevel reach the cockpit through B2B, up to about 15 minutes late, and the item lasts 30 minutes from the booking. | I:4359-4375 | Read the intro calendars straight from HighLevel every minute, as the Follow Up and Callback calendars already are. |
+| An automatic No answer moves no stage | When Maqsam's automatic save closes a lead "unreachable", the lead stays in its stage. Only a person's save moves it to nurture. | I:5081, I:5176 | Allow the stage move on the unreachable close only. |
 | The CEO's 30-day speed is a mean | The CEO page's "Last 30 days" figure is a mean of daily values, but its hint says median. On 6 Nov: 3,738.8 min shown, true median 1,637.8. | `apps/media-buyer-cockpit/src/components/ceo/timeframe.ts:136` | Compute the 30-day median from the first calls, or change the hint. |
 
 **Checked and closed:** the 3,500 rows in `cockpit_sales_dials` are not a cap. They are 2,912 B2B rows plus 588 desk rows; no code trims the table (the dedupe is the only delete); and Maqsam's count equals the copy's over the last 7 days (62 calls against 62).
@@ -1022,15 +1071,15 @@ There is one unified `logs` table. `function_logs`, `function_edge_logs`, `postg
 1. **Show a stalled 3-minute copy.** The guardian (`$W/cockpit-guardian/checks/syncs.py:17`) and the app (`useMirrorRun`, `apps/sales-cockpit/src/lib/data.ts:1112-1124`) read the newest mirror run of any mode. sales-conversations writes one every minute, so a stalled 3-minute copy looks fine. Filter on `mode = 'scheduled'` in both.
 2. **Watch the minute intake's status row.** Add a freshness check (about 5 minutes) to the guardian or the watchdog.
 3. **Add the three missing cron jobs** (`mahara-sales-conversations`, `mahara-sales-rooms-sweep`, `mahara-sales-watchdog`) to the guardian's `EXPECTED_JOBS`.
-4. **Make the calls copy's age honest.** The Dialer's `calls_as_of` (I:4618, "Maqsam's calls as of 2 min ago" on the strip) and the CEO page's "as of" time (`mirrored_ms` in `CALLS_COPY_SQL`, growth.js:162-167, shown at growth.js:1543) read `max(mirrored_at)`. The 3-minute run re-reads B2B's last 10 minutes of calls every run and re-stamps them, so that time is always fresh: on 6 Nov B2B's newest call was from 7 Oct, but its stamp was minutes old. Read the desk's last run, or `max(occurred_at)`, instead. The CEO's stale warning (`callsCopyStale`, growth.js:173, used at growth.js:1538-1539) already reads `max(occurred_at)`.
+4. **Make the calls copy's age honest.** The Dialer's `calls_as_of` (I:4639, "Maqsam's calls as of 2 min ago" on the strip) and the CEO page's "as of" time (`mirrored_ms` in `CALLS_COPY_SQL`, growth.js:162-167, shown at growth.js:1543) read `max(mirrored_at)`. The 3-minute run re-reads B2B's last 10 minutes of calls every run and re-stamps them, so that time is always fresh: on 6 Nov B2B's newest call was from 7 Oct, but its stamp was minutes old. Read the desk's last run, or `max(occurred_at)`, instead. The CEO's stale warning (`callsCopyStale`, growth.js:173, used at growth.js:1538-1539) already reads `max(occurred_at)`.
 5. **Add a test that ties `CODES` (S:28) to `ItemCode` (D:473-502).** Today the two lists match by hand (29 and 29).
 6. **Done 2026-11-07: the confirmation's No answer hint.** It said "Tries again in two hours (half an hour near the call). Message them too." for every confirmation, while the server brings a 2.5-hour try back 60 minutes before the call. The hint and the step after the miss now follow the call's time: "back sixty minutes before the call" for a try in the 2.5 hours, "the call itself is next" for a try in the last hour, and "two hours" only for the day-before touch (`confirmAgainWords` in `apps/sales-cockpit/src/lib/dialerUi.ts`, checked against `appointmentWork` by `confirmAgain.test.ts`; recipe 7.1 step 6).
 7. **Bring the in-cockpit assistant up to date.** PR #219 added a section "The setter's day in the dialer" to `apps/sales-cockpit/assistant-guide.md`, with the day in short. Its "## Dialer" section (lines 96-118) still does not describe the voice note, marking the intro, Not ready yet or the day strip.
-8. **Remove names from the screen.** Five server refusals name the CEO by first name (I:3881, I:3883, I:4860, I:9293, `lib.ts:65`); some Numbers and Links page copy names people too. Say "Ask the CEO" or "Ask the sales manager".
+8. **Remove names from the screen.** Five server refusals name the CEO by first name (I:3902, I:3904, I:4881, I:9505, `lib.ts:65`); some Numbers and Links page copy names people too. Say "Ask the CEO" or "Ask the sales manager".
 9. **The Arabic plural and the call-back line** in the voice script still wait for the CEO to hear them. If he keeps them, log the rule in the voice skill.
 10. **Rethink the desk's B2B skip.** The desk skips B2B's own setters and "both" reps (`$W/sales-desk/desk/maqsam_calls.py:402-414`), because B2B was meant to copy them, but B2B's Maqsam copy stopped on 7 Oct. Nothing is missing today. A roster setter who dials again would go uncounted.
 11. **Move the webinar's first contact** to `cockpit_sales_dials` (`$W/ceo-refresh/native/adapters/webinar.js:67-70`). It still reads B2B's stopped `maqsam_calls` copy.
-12. **Give the Maqsam helper a deadline** like `svc` and `ghl` have (I:3845).
+12. **Give the Maqsam helper a deadline** like `svc` and `ghl` have (I:3866).
 13. **Name the inline windows.** Most times in `setterLeadWork` and `markWork` are literals. Named exports, as `CONFIRM_FROM` is, would make recipe changes one-line edits.
 14. **Tidy two grants:** `revoke all on public.cockpit_sales_locks, public.cockpit_sales_dial_checks from anon, authenticated;` then grant back `select` on `cockpit_sales_dial_checks` to `authenticated` (its managers-only policy needs it). On 6 Nov anon could SELECT both tables and authenticated could INSERT into both at the grant level; row security blocks every one of those today.
 15. **A `seat=setter` knob for the practice cockpit,** so recordings need no patch.

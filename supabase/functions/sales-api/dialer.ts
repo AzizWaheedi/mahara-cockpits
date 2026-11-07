@@ -1631,6 +1631,102 @@ export function appointmentEffect(kind: ItemKind, outcome: AnyOutcome): Effect |
   return null;
 }
 
+/** How long before the start the early-mark rule already allows a mark (lib.ts refuseMark). */
+export const MARK_GRACE = 10 * MIN;
+/** How far ahead a confirmation call may mark its intro held now: the evening-before call included. */
+export const HELD_NOW_AHEAD = DAY;
+/**
+ * The least time on the call for an intro to have been had on it: since the
+ * call was placed while Maqsam's record is not in, or Maqsam's talk time
+ * once it is (fix pass, 2026-11-07: a ring, a zero-second answer or a
+ * one-minute "see you at 2:30" is not the intro).
+ */
+export const HELD_NOW_MIN_CALL = 3 * MIN;
+/** How old the dialer's call may be: yesterday evening's call let go is not this one. */
+export const HELD_NOW_CALL_AGE = 2 * HOUR;
+/** Maqsam states of a call that did not connect, so no intro was had on it. */
+const NOT_CONNECTED = new Set(["no_answer", "no-answer", "unanswered", "busy", "failed", "blocked", "abandoned"]);
+
+/** What a refused "Did the intro now" says: what happened, then what to do. */
+export const HELD_NOW_LINES = {
+  elsewhere: "Do the intro from the dialer's call with them. A call made elsewhere is marked at the intro's time.",
+  demo: "Only an intro can be marked held on its confirmation call. Mark a demo at its time.",
+  far: "This intro is more than a day away, so it cannot be marked held from this call. Save Confirmed, and mark it at its time.",
+  notConnected:
+    "Maqsam's record says this call did not connect, so the intro cannot be marked held from it. Save No answer, and mark the intro at its time.",
+  gone: "This call is no longer open, so the intro cannot be marked held from it. Save Confirmed, and mark the intro at its time.",
+  noTalk:
+    "Maqsam's record shows no talk time on this call, so the intro cannot be marked held from it. If you did talk, press Save again in a minute, once the record is complete.",
+  short:
+    "Under 3 minutes on this call is too short for the intro. Do the intro, then press Did the intro now, or save Confirmed and mark the intro at its time.",
+} as const;
+
+/**
+ * "Did the intro now" on a confirmation call (the CEO, 2026-11-07: "if he
+ * gets them on the phone, he should be able to book them for the demo then
+ * and there"). The dialer sends held_now with a confirm item's showed; this
+ * says whether the intro may be marked held before its booked time.
+ *
+ * - heldNow false, no refusal: held_now changes nothing. It was not asked,
+ *   the save is not a confirm item's showed, or the intro starts within ten
+ *   minutes or has started, where the early-mark rule already allows the
+ *   mark (refuseMark), so the save goes exactly as it does without it.
+ * - a refusal: one plain sentence, said before anything is saved.
+ * - heldNow true: markAppointment judges the early-mark rule at the start.
+ *
+ * The intro must be had on the dialer's own call for this confirm item
+ * (an attempt, not a manual save), be an intro (a demo is marked at its
+ * time), start at most a day ahead, and Maqsam's record must not say the
+ * call did not connect. A call Maqsam refused to place (failed, and not
+ * "uncertain") did not connect either. The call must still be the open one
+ * (not let go, placed in the last two hours) and long enough for an intro:
+ * three minutes since it was placed while Maqsam's record is not in, or
+ * three minutes of talk once it is. A zero-second answer has no talk: it
+ * is said apart, since Maqsam's record can be incomplete for a moment.
+ */
+export function heldNowCheck(s: {
+  asked: boolean;
+  kind: ItemKind;
+  outcome: string;
+  attempt: Record<string, unknown> | null;
+  appointmentId: string | null;
+  appt: { call_type?: unknown; start_at?: unknown } | null;
+  now: number;
+}): { heldNow: boolean; refusal: string | null } {
+  const none = { heldNow: false, refusal: null };
+  if (!s.asked || s.kind !== "confirm" || s.outcome !== "showed" || !s.appt) return none;
+  const start = s.appt.start_at ? Date.parse(String(s.appt.start_at)) : Number.NaN;
+  if (!Number.isFinite(start) || start <= s.now + MARK_GRACE) return none;
+  const a = s.attempt;
+  if (
+    !a ||
+    a.manual === true ||
+    String(a.item_kind ?? "") !== "confirm" ||
+    !s.appointmentId ||
+    String(a.appointment_id ?? "") !== s.appointmentId
+  )
+    return { heldNow: false, refusal: HELD_NOW_LINES.elsewhere };
+  if (s.appt.call_type !== "intro") return { heldNow: false, refusal: HELD_NOW_LINES.demo };
+  if (start > s.now + HELD_NOW_AHEAD) return { heldNow: false, refusal: HELD_NOW_LINES.far };
+  const state = String(a.call_state ?? "").toLowerCase();
+  if (NOT_CONNECTED.has(state) || (a.state === "failed" && state !== "uncertain"))
+    return { heldNow: false, refusal: HELD_NOW_LINES.notConnected };
+  // Let go (its page closed; dialSave still saves it), or placed long ago:
+  // not the call the intro was just had on.
+  const placed = Date.parse(String(a.started_at ?? ""));
+  if (a.state === "released" || (Number.isFinite(placed) && placed < s.now - HELD_NOW_CALL_AGE))
+    return { heldNow: false, refusal: HELD_NOW_LINES.gone };
+  // Long enough for an intro. A call whose start is not known is never
+  // taken as long enough.
+  const record = state ? callSummary({ state, duration: Number(a.call_duration_s ?? 0) }) : null;
+  if (record?.final && !record.answered) return { heldNow: false, refusal: HELD_NOW_LINES.noTalk };
+  const long = record?.final
+    ? record.answered && record.seconds * 1000 >= HELD_NOW_MIN_CALL
+    : Number.isFinite(placed) && s.now - placed >= HELD_NOW_MIN_CALL;
+  if (!long) return { heldNow: false, refusal: HELD_NOW_LINES.short };
+  return { heldNow: true, refusal: null };
+}
+
 /** The next working morning at 10:00 Kuwait time (Friday is off). */
 export function nextMorning(now: number): number {
   let t = kuwaitAt(now, 10, 0, 1);

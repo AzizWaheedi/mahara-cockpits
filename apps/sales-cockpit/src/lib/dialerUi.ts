@@ -162,15 +162,107 @@ export function readyLine(i: DialItem, now: number): string {
  * What the screen does once an outcome is saved: the next lead opens at
  * once (the call centre's way), except after an intro was held (book the
  * demo or set a call-back first) or a no-answer the rep chose to message.
+ * An intro held on its confirmation call ("Did the intro now", the CEO,
+ * 2026-11-07) is held too: the demo is booked on the same call. A demo's
+ * confirmation (`call` "demo") never offers to book the demo.
  */
 export function afterSave(
   kind: ItemKind,
   outcome: string,
   thenMessage: boolean,
+  call: "intro" | "demo" | null = null,
 ): "next" | "held" | "message" {
   if (kind === "intro" && outcome === "showed") return "held";
+  if (kind === "confirm" && outcome === "showed" && call !== "demo")
+    return "held";
   if (outcome === "no_answer" && thenMessage) return "message";
   return "next";
+}
+
+/**
+ * Whether an outcome button shows on this item's grid: Did the intro now (a
+ * confirm item's showed) only on an intro's confirmation call, and only for
+ * someone who may mark it (`mayMark`: its host, or a manager; sales-api
+ * refuses anyone else). A demo is marked at its time (the Calls card, or
+ * Mark the demo).
+ */
+export function outcomeOffered(
+  kind: ItemKind,
+  key: string,
+  call: "intro" | "demo" | null | undefined,
+  mayMark = true,
+): boolean {
+  return !(
+    kind === "confirm" &&
+    key === "showed" &&
+    (call !== "intro" || !mayMark)
+  );
+}
+
+/**
+ * Whether this seat may mark the call (sales-api lib.ts refuseMark): a
+ * manager any call, anyone else only a call booked with their own
+ * HighLevel user. A call with no host is nobody's but a manager's.
+ */
+export function mayMarkCall(
+  me: { manager?: boolean | null; ghl_user_id?: string | null },
+  host: string | null | undefined,
+): boolean {
+  return (
+    Boolean(me.manager) || (Boolean(me.ghl_user_id) && host === me.ghl_user_id)
+  );
+}
+
+/** The few fields of a lead's call that the script's Book the demo reads. */
+interface CallRowLike {
+  appointment_id: string;
+  start_at: string | null;
+  status?: string | null;
+  marked_status?: string | null;
+}
+
+/**
+ * The intro whose confirmation call this is, while the script's Book the
+ * demo waits for Did the intro now: the dialer's item is an intro's
+ * confirmation, and that intro has no mark and starts more than ten minutes
+ * from now (sooner, the script's block marks it held itself before the
+ * booking, as before). Booking the demo first would leave the intro to be
+ * marked at its time, the confirmation to come back and the demo's count
+ * to miss it. Null when the block books as before.
+ */
+export function introHeldFirst(
+  item: Pick<DialItem, "kind" | "appointment"> | null | undefined,
+  appointments: readonly CallRowLike[],
+  now: number,
+): { appointment_id: string; start_at: string | null } | null {
+  const a = item?.kind === "confirm" ? item.appointment : null;
+  if (a?.type !== "intro") return null;
+  const row = appointments.find(r => r.appointment_id === a.id);
+  if (
+    row &&
+    (row.marked_status ||
+      ["showed", "noshow", "cancelled", "invalid"].includes(
+        String(row.status ?? ""),
+      ))
+  )
+    return null;
+  const start = msOf(row?.start_at ?? a.start_at);
+  if (start === null || start <= now + 10 * MIN_MS) return null;
+  return { appointment_id: a.id, start_at: row?.start_at ?? a.start_at };
+}
+
+/**
+ * Whether a save asks sales-api to mark the intro held now, before its
+ * booked time (dial.save held_now): Did the intro now on a confirmation
+ * call. Not after the lead joined this miss's video room: that save passes
+ * on the room's join, as before, and the dialer's own call may be closed.
+ */
+export function heldNowAsked(
+  kind: ItemKind,
+  outcome: string,
+  joinedVideo: boolean,
+): boolean {
+  return kind === "confirm" && outcome === "showed" && !joinedVideo;
 }
 
 /**

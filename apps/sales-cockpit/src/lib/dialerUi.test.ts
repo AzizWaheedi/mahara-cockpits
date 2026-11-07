@@ -482,6 +482,11 @@ describe("after a save", () => {
 
   test("a held intro and a no-answer to message stay on the lead", () => {
     expect(afterSave("intro", "showed", false)).toBe("held");
+    // Did the intro now on its confirmation call: book the demo next
+    // (2026-11-07). A demo's confirmation held on video moves on.
+    expect(afterSave("confirm", "showed", false)).toBe("held");
+    expect(afterSave("confirm", "showed", false, "intro")).toBe("held");
+    expect(afterSave("confirm", "showed", false, "demo")).toBe("next");
     expect(afterSave("lead", "no_answer", true)).toBe("message");
     expect(afterSave("confirm", "no_answer", true)).toBe("message");
     // Only a no-answer has the message step.

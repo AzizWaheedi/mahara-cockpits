@@ -22,8 +22,17 @@
  * The dialer's side of sales-api keeps state, so the next-lead flow behaves
  * as it does live: a call opens, rings and ends; a saved lead leaves the
  * queue; a save sent again is the same save; HighLevel's slow half shows as
- * saved work. The knobs sit on `window.harness` (change them from the
- * console) and can be set in the address too, e.g.
+ * saved work. A held mark more than ten minutes before the call is refused,
+ * except Did the intro now on the confirmation call's own dialer call (the
+ * "Confirm, 2.5 h before" lead: press Call, stay on it three minutes, the
+ * least for an intro, then Did the intro now, then the held step's Book the
+ * demo; the Script tab's Book the demo says to do the intro first until
+ * then). Book the demo (the held step's button,
+ * Booked → Demo, or the script's block) shows "Who takes the demo": Anyone
+ * free, or one of two made-up closers on the Demo calendar with different
+ * soonest times, and a press books on the closer picked (bookingFake.ts and
+ * closerFake.ts; knob `closers`). The knobs sit on `window.harness`
+ * (change them from the console) and can be set in the address too, e.g.
  * /sales/harness.html?path=/dialer&call=noanswer&timeout=5000
  *
  *   agent    available | absent | busy | switched_off | no_address | not_found
@@ -96,6 +105,7 @@ import "../index.css";
 import { BookRefusal, bookAnswer } from "./bookingFake";
 import { dayReviewAnswer, seedDayReview } from "./dayReviewFake";
 import * as F from "./fixtures";
+import { earlyMarkRefusal, markOf } from "./heldNowFake";
 import {
   answerWaves,
   hostRows,
@@ -224,6 +234,8 @@ interface Attempt extends Row {
   manual: boolean;
   request_id: string | null;
   item_kind: string;
+  /** The call a confirmation or an intro was placed for (null for a lead). */
+  appointment_id?: string | null;
   /** How Maqsam's record goes for this call (knobs.call when it was placed). */
   plan: string;
   counted: boolean;
@@ -681,8 +693,12 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
           "You already have a call open. Save how it went, or skip it, first.",
           409,
         );
+      const itemKind = String(b.item_kind ?? "lead");
       const a = newAttempt(contact, {
-        item_kind: String(b.item_kind ?? "lead"),
+        item_kind: itemKind,
+        // The call a confirmation or an intro is for, as sales-api keeps it.
+        appointment_id:
+          itemKind === "lead" ? null : String(b.appointment_id ?? "") || null,
       });
       dial.lastCallAt = now;
       if (knobs.call === "refuse") {
@@ -783,6 +799,8 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
           500,
         );
       let a: Attempt | null = null;
+      const contact = String(b.contact_id ?? "");
+      const rid = String(b.request_id ?? "");
       if (b.attempt_id) {
         a = dial.attempts.get(String(b.attempt_id)) ?? null;
         if (!a) throw new Refusal("That call is not there any more.", 404);
@@ -791,8 +809,6 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         if (!["dialing", "placed", "failed", "released"].includes(a.state))
           throw new Refusal("This call was already saved.", 409);
       } else {
-        const contact = String(b.contact_id ?? "");
-        const rid = String(b.request_id ?? "");
         const twin = [...dial.attempts.values()].find(
           x => rid && x.request_id === rid,
         );
@@ -804,12 +820,47 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
             "You have a call open with another lead. Save or skip it first.",
             409,
           );
-        else
-          a = newAttempt(contact, {
-            manual: true,
-            request_id: rid || null,
-            item_kind: String(b.item_kind ?? "lead"),
-          });
+      }
+      // The mark goes first, as in sales-api: refused, nothing is saved.
+      const kind =
+        a && a.item_kind !== "lead"
+          ? a.item_kind
+          : String(b.item_kind ?? "lead");
+      const apptId = String(b.appointment_id ?? a?.appointment_id ?? "");
+      const appt =
+        F.APPOINTMENTS.find(x => x.appointment_id === apptId) ?? null;
+      const early = earlyMarkRefusal({
+        kind,
+        outcome,
+        heldNow: b.held_now === true,
+        call: a,
+        appointmentId: apptId,
+        appt,
+        // A video room for this lead the lead joined in the last three hours.
+        joined: stage.rooms.some(
+          r =>
+            r.contact_id === String(appt?.contact_id ?? "") &&
+            Boolean(r.lead_in_at) &&
+            now - Date.parse(String(r.lead_in_at)) <= 3 * 60 * MIN,
+        ),
+        now,
+      });
+      if (early) throw new Refusal(early, 403);
+      a ??= newAttempt(contact, {
+        manual: true,
+        request_id: rid || null,
+        item_kind: String(b.item_kind ?? "lead"),
+      });
+      // A held mark lands on the calendar row the lists read (Today, the
+      // Calendar, the lead page), as the mark action's does here.
+      const row = markOf(kind, outcome) === "showed" ? appt : null;
+      if (row) {
+        row.marked_status = "showed";
+        row.status = "showed";
+        row.marked_by = F.ME.email;
+        row.mark_note = note || null;
+        row.marked_at = new Date(now).toISOString();
+        row.needs_mark = false;
       }
       const out = saveAttempt(a, b);
       if (knobs.save === "slow" && !dial.slowUsed.save) {

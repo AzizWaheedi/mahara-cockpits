@@ -13,10 +13,10 @@ import { MarkControls } from "./MarkControls";
  * - Mark the intro: the rep's own call past its twenty minutes with no
  *   mark, marked here with the same controls as Today (Showed, Didn't
  *   happen with its five-second Undo, Disqualify).
- * - What next, once it was held: book the demo in the closer's soonest
- *   slot (qualified), the long-term nurture (qualified but not ready for a
- *   real reason, not a disqualification), or the hot list (showed, no demo
- *   yet), with the 1 to 10 rating and why no demo underneath.
+ * - What next, once it was held: book the demo in the soonest time or pick
+ *   the closer (qualified), the long-term nurture (qualified but not ready
+ *   for a real reason, not a disqualification), or the hot list (showed, no
+ *   demo yet), with the 1 to 10 rating and why no demo underneath.
  */
 
 /** Mark the rep's own call: did it happen? */
@@ -153,8 +153,8 @@ export function HeldNext({
           The intro is marked held. What next?
         </p>
         <p className="muted text-xs">
-          Qualified: book the demo in the closer's soonest slot, even five
-          minutes from now. Qualified but not ready for a real reason: the
+          Qualified: book the demo in the soonest time, or pick the closer, even
+          five minutes from now. Qualified but not ready for a real reason: the
           long-term nurture, not a disqualification. Held but no demo yet: the
           hot list.
         </p>

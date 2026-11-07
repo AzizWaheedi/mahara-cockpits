@@ -146,6 +146,17 @@ const CODES: Record<string, ItemWords> = {
 };
 
 /**
+ * The line an intro's confirmation call adds (the CEO, 2026-11-07: confirm,
+ * and if he gets them on the phone, do the intro and book the demo then and
+ * there). A demo's confirmation does not get it: a demo is marked at its time.
+ */
+export const HELD_NOW_LINE =
+  "Got them now? Do the intro, press Did the intro now, then Book the demo.";
+
+/** The confirmation items, the day before, 2.5 hours before and 60 minutes before. */
+const CONFIRM_CODES = new Set(["confirm", "confirm_last", "confirm_early"]);
+
+/**
  * The item's label, its one primary action and what to do, from its code;
  * null for an item from a server older than the setter's one queue (no
  * code), which the page shows as before.
@@ -168,6 +179,11 @@ export function itemWords(
         }
       : { ...w };
   }
+  if (CONFIRM_CODES.has(item.code) && item.appointment?.type === "intro")
+    return {
+      ...w,
+      detail: w.detail ? `${w.detail} ${HELD_NOW_LINE}` : HELD_NOW_LINE,
+    };
   // The second try once the voice note is no longer due: it went, so the
   // band does not ask for it again (or the voice notes cannot be read yet).
   if (item.code === "second_try" && item.voice_note && !item.voice_note.due)
