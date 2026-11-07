@@ -329,6 +329,26 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     });
   });
 
+  test("intro showed credits each contact once by appointment date, even across ad changes", async () => {
+    const { payload } = await fixture(`
+      insert into public.meta_ad_snapshots values
+        ${snapshot("2026-10-10", "a-event", "A", LG, "ACTIVE", 1)},
+        ${snapshot("2026-10-10", "b-event", "B", LG, "ACTIVE", 1)};
+      insert into public.leads values ('older', 'a-event', '{}', '2026-09-01 05:00+00');
+      insert into public.calls values
+        ('older', 'a-event', 'intro', '2026-10-10 06:00+00', '2026-10-11 08:00+00', 'confirmed', 'u1'),
+        ('older', 'a-event', 'intro', '2026-10-11 06:00+00', '2026-10-12 08:00+00', 'showed', 'u1'),
+        ('moved', 'a-event', 'intro', '2026-10-11 06:00+00', '2026-10-12 08:00+00', 'showed', 'u1'),
+        ('moved', 'b-event', 'intro', '2026-10-12 06:00+00', '2026-10-13 08:00+00', 'confirmed', 'u1'),
+        ('missed', 'a-event', 'intro', '2026-10-11 06:00+00', '2026-10-12 08:00+00', 'noshow', 'u1'),
+        ('invalid-intro', 'a-event', 'intro', '2026-10-11 06:00+00', '2026-10-12 08:00+00', 'invalid', 'u1'),
+        ('cancelled-intro', 'a-event', 'intro', '2026-10-11 06:00+00', '2026-10-12 08:00+00', 'cancelled', 'u1');
+    `);
+    expect(adOf(payload, "a-event").w7.introShowedLeads).toBe(1);
+    expect(adOf(payload, "b-event").w7.introShowedLeads).toBe(1);
+    expect(payload.account.w7.introShowedLeads).toBe(5);
+  });
+
   test("intros and confirmed intros count each lead once, on the lead's own ad (the CEO, 2026-10-18)", async () => {
     // "For intros, it shouldn't count re-scheduled either. It should just count once."
     const { payload } = await fixture(`
