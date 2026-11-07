@@ -128,6 +128,7 @@ export function ScriptRunner({
   notesLoaded,
   reload,
   attemptId = null,
+  heldFirst = null,
   onBooked,
   headerStart,
   headerEnd,
@@ -145,6 +146,12 @@ export function ScriptRunner({
   reload: () => void;
   /** The dialer's open call with this lead: a booking saves it as booked. */
   attemptId?: string | null;
+  /**
+   * The dialer only: the intro this confirmation call is for, not held yet.
+   * Book the demo then waits for Did the intro now (BookDemoBlock). The call
+   * page never sets it, so its block books as before.
+   */
+  heldFirst?: { start_at: string | null } | null;
   /** The demo was booked from the script (the dialer keeps the lead on screen). */
   onBooked?: (words: string) => void;
   headerStart?: ReactNode;
@@ -678,6 +685,7 @@ export function ScriptRunner({
         values={values}
         attemptId={attemptId}
         since={startedAt}
+        heldFirst={heldFirst}
         onSlots={setSlotIsos}
         onBooked={booked}
       />

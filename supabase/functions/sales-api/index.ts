@@ -80,6 +80,8 @@ import {
   dayStats,
   ghlTime,
   heat,
+  HELD_NOW_AHEAD,
+  heldNowCheck,
   isNoAnswer,
   kuwaitAt,
   kuwaitWords,
@@ -110,6 +112,7 @@ import {
 } from "./dialer.ts";
 import { callAttended, callReviewed, dayBounds, reviewVersion, type ReviewCall } from "./dayReview.ts";
 import { makeDemoHandoffs } from "./demoHandoffs.ts";
+import { type Closer, type CloserRead, closerOrder, closerRefusal, closersOn, type CloserSeat, NOT_DEMO_LINE, soonestOf } from "./closers.ts";
 import { hotFresh, hotPatch, stillHot } from "./hot.ts";
 import {
   alreadyBookedMessage,
@@ -659,6 +662,12 @@ async function markAppointment(
     raced?: boolean;
     /** A showed mark whose call was had on video before its booked time (a confirmation call's room the lead joined). */
     heldEarly?: boolean;
+    /**
+     * A showed mark for an intro had on the dialer's confirmation call before
+     * its booked time (Did the intro now, 2026-11-07; dial.save checked the
+     * call first, dialer.ts heldNowCheck). Only dial.save passes it.
+     */
+    heldNow?: boolean;
   } = {},
 ): Promise<Row> {
   const appt = (await svc(
@@ -675,8 +684,19 @@ async function markAppointment(
   const moving = await moveHoldsMark(id, status, now);
   if (moving) throw moving;
   // Held on video before its booked time (m1 round 6): the early-mark rule
-  // judges the moment the lead joined the room asked for it, not now.
-  const early = status === "showed" && opts.heldEarly ? await joinedForCall(String(appt.contact_id ?? ""), String(appt.appointment_id ?? id), now) : null;
+  // judges the moment the lead joined the room asked for it, not now. Held
+  // on the dialer's confirmation call (Did the intro now): judged at the
+  // booked start, the same way. Every other refusal (the host, a move) holds.
+  // The call is read again here: an intro still, at most a day ahead (the
+  // mirror may have moved it since dial.save judged it), else the rule
+  // judges now.
+  const start = ms(appt.start_at);
+  const early =
+    status === "showed" && opts.heldNow && appt.call_type === "intro" && start !== null && start <= now + HELD_NOW_AHEAD
+      ? Math.max(now, start)
+      : status === "showed" && opts.heldEarly
+        ? await joinedForCall(String(appt.contact_id ?? ""), String(appt.appointment_id ?? id), now)
+        : null;
   const no = refuseMark(opts.anyRep ? { ...who, manager: true } : who, appt, status, early ?? now);
   if (no) throw new Refusal(no, 403);
   // A person's no-show while the lead's video link is out (m1 round 2,
@@ -746,6 +766,7 @@ async function markAppointment(
     crm_status_before: appt.status,
     ...(opts.anyRep ? { by_other_rep: true } : {}),
     ...(opts.quiet ? { quiet: true } : {}),
+    ...(status === "showed" && opts.heldNow ? { held_now: true } : {}),
   });
   return result;
 }
@@ -5003,6 +5024,8 @@ async function saveOutcome(
     kind?: ItemKind;
     /** A manual save's own id, so saving it again after a dropped connection is the same save. */
     requestId?: string | null;
+    /** Did the intro now: the intro held on this confirmation call before its time (dial.save checked it). */
+    heldNow?: boolean;
   } = {},
 ): Promise<{ attempt: Row; state: Row; stage_move?: Row | null; next_step?: Row | null; hot_offer?: Row | null } | null> {
   const now = Date.now();
@@ -5036,6 +5059,7 @@ async function saveOutcome(
       note: note || null,
       anyRep,
       ...(kind === "confirm" && effect.mark === "showed" ? { heldEarly: true } : {}),
+      ...(kind === "confirm" && effect.mark === "showed" && extra.heldNow ? { heldNow: true } : {}),
     });
   }
   const st = (await svc(`cockpit_sales_queue_state?contact_id=eq.${enc(contactId)}&select=*`))[0];
@@ -5176,6 +5200,7 @@ async function saveOutcome(
       state,
       kind,
       ...(marked ? { mark: marked.status, mark_crm: marked.crm } : {}),
+      ...(extra.heldNow && marked ? { held_now: true } : {}),
     },
   );
   const moving = wantMove && (rolesFor(null).length > 0 || next?.closed === "unreachable");
@@ -5577,13 +5602,30 @@ async function dialSave(who: Who, b: Row) {
   const kindAsked = a?.item_kind && a.item_kind !== "lead" ? String(a.item_kind) : String(b.item_kind);
   const kind = (["intro", "confirm"].includes(kindAsked) ? kindAsked : "lead") as ItemKind;
   const requestId = /^[0-9a-f-]{36}$/i.test(String(b.request_id ?? "")) ? String(b.request_id) : null;
+  const appointmentId = cleanText(b.appointment_id, 80) || ((a?.appointment_id as string) ?? null);
+  // Did the intro now (the CEO, 2026-11-07): the intro had on the dialer's
+  // confirmation call, marked held before its booked time so the demo is
+  // booked on the same call. Checked before anything is saved; without
+  // held_now, or once the intro is ten minutes away, the save is as before.
+  let heldNow = false;
+  if (b.held_now === true && kind === "confirm" && outcome === "showed" && appointmentId) {
+    const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}&select=call_type,start_at`))[0] ?? null;
+    const check = heldNowCheck({ asked: true, kind, outcome, attempt: a, appointmentId, appt, now: Date.now() });
+    // The lead joined this call's video room and the page had not caught up
+    // (it sent held_now): the room's join passes the save as it does
+    // without held_now, so held_now is dropped rather than refused.
+    if (check.refusal) {
+      if ((await joinedForCall(contactId, appointmentId, Date.now())) === null) throw new Refusal(check.refusal, 403);
+    } else heldNow = check.heldNow;
+  }
   try {
     const out = await saveOutcome(who, a, contactId, outcome, note, callbackAt, {
       reason: cleanText(b.reason, 200) || null,
       asRole: cleanText(b.as, 10) || null,
       kind,
-      appointmentId: cleanText(b.appointment_id, 80) || ((a?.appointment_id as string) ?? null),
+      appointmentId,
       requestId,
+      ...(heldNow ? { heldNow: true } : {}),
     });
     return out ?? {};
   } catch (e) {
@@ -6278,6 +6320,145 @@ async function moveGate(who: Who, m: MovePlan, now: number): Promise<{ lead: Row
   return { lead, hostName };
 }
 
+// ---------------------------------------------------------------------------
+// The demo's closer picker (2026-11-07, closers.ts). The CEO, verbatim: "He
+// should also be able to pick the specific closer he wants to book the demo
+// on their calendar for." Two optional fields on a demo's book.slots,
+// book.check and book.create: `closers: true` (who a demo can go on, each
+// with their soonest time) and `closer_id` (that closer's own times, and the
+// call goes to them). Only the dialer's demo booking sends them; a request
+// without them runs exactly as before. Reads the Demo calendar's team and
+// the seats, writes appointments only: never a calendar (a calendar update
+// through the API resets its fields and unlinks the schedules).
+// ---------------------------------------------------------------------------
+
+type BookingPlan = Awaited<ReturnType<typeof bookingPlan>>;
+
+interface ClosersPick {
+  /** Who a demo can go on, or null when the seats could not be read (said so, never "nobody"). */
+  listed: Closer[] | null;
+  /** The closer picked (closer_id), checked. */
+  closer: Closer | null;
+  /** The list was asked for (closers: true). */
+  list: boolean;
+}
+
+/** The seats of these HighLevel users, in one read; a failed read throws. */
+async function teamSeats(ids: string[]): Promise<CloserSeat[]> {
+  const list = [...new Set(ids.filter(Boolean))];
+  if (!list.length) return [];
+  return (await svc(
+    `cockpit_sales_people?ghl_user_id=in.(${list.map(i => `"${i}"`).map(enc).join(",")})&select=ghl_user_id,name,role,active&limit=200`,
+  )) as CloserSeat[];
+}
+
+/**
+ * The picker's fields on a booking request, checked; null when the request
+ * has neither (the caller then runs exactly as before). Refused: not a demo
+ * (400 host), a closer not on the Demo calendar's team (409 host), without
+ * an active closer, both or manager seat (409 not_closer), a press naming
+ * another host (400 host). With the seats unread a closer cannot be checked
+ * (503 unread); the list alone is then null.
+ */
+async function closersPick(p: BookingPlan, b: Row): Promise<ClosersPick | null> {
+  const id = cleanText(b.closer_id, 80) || null;
+  const list = b.closers === true;
+  if (!id && !list) return null;
+  if (p.kind !== "demo") throw new Refusal(NOT_DEMO_LINE, 400, { code: "host" });
+  const team = teamOf(p.cal);
+  let seats: CloserSeat[];
+  try {
+    seats = await teamSeats(id ? [...team, id] : team);
+  } catch (e) {
+    console.error("closer seats unread", redact(String((e as Error)?.message ?? e)));
+    if (id)
+      throw new Refusal("The cockpit's seats could not be read just now, so that closer can't be checked. Try again in a minute.", 503, {
+        code: "unread",
+      });
+    return { listed: null, closer: null, list };
+  }
+  if (id) {
+    const no = closerRefusal({ id, kind: p.kind, team, seats, userId: cleanText(b.user_id, 80) || null });
+    if (no) throw new Refusal(no.message, no.status, { code: no.code });
+  }
+  const listed = closersOn(team, seats);
+  return { listed, closer: id ? (listed.find(c => c.user_id === id) ?? null) : null, list };
+}
+
+/**
+ * Each listed closer's soonest free time on the calendar in the next 14
+ * days: HighLevel's free slots for that person, read through ghl() in
+ * parallel. A read that fails is "unread" (logged), never "no free time".
+ */
+async function closerReads(calendarId: string, listed: Closer[], now: number, to: number): Promise<CloserRead[]> {
+  return await Promise.all(
+    listed.map(async (c): Promise<CloserRead> => {
+      const base = { user_id: c.user_id, name: c.name, kind: c.kind };
+      try {
+        return { ...base, soonest: soonestOf(await freeSlots(calendarId, now, to, c.user_id), now), state: "ok" };
+      } catch (e) {
+        console.error("closer's free slots unread", redact(String((e as Error)?.message ?? e)));
+        return { ...base, soonest: null, state: "unread" };
+      }
+    }),
+  );
+}
+
+/**
+ * book.slots for a demo on a picked closer (closer_id): that closer's own
+ * free times inside the calendar's window, then past it from their hours
+ * and calendar (farout.ts), every time named with them (slot_hosts), Custom
+ * time fixed to them, and the lead's demo already ahead. With `closers` the
+ * list comes too, the closer's own read reused.
+ */
+async function closerSlots(b: Row, p: BookingPlan, pick: ClosersPick, c: Closer, now: number, to: number) {
+  const host: FarHost = { user_id: c.user_id, name: c.name };
+  const others = pick.list && pick.listed ? pick.listed.filter(x => x.user_id !== c.user_id) : [];
+  const [own, existing, rest] = await Promise.all([
+    freeSlots(p.calendarId, now, to, c.user_id),
+    upcoming(p.contact, p.kind, { unmarked: true }),
+    others.length ? closerReads(p.calendarId, others, now, to) : Promise.resolve([] as CloserRead[]),
+  ]);
+  const mine: CloserRead = { user_id: c.user_id, name: c.name, kind: c.kind, soonest: soonestOf(own, now), state: "ok" };
+  const page = await slotsPage({
+    calendarId: p.calendarId,
+    cal: p.cal,
+    now,
+    from: b.from,
+    windowDays: own,
+    farHosts: [host],
+    named: false,
+    exceptId: null,
+    customHost: host,
+    team: (pick.listed ?? [c]).map(x => ({ user_id: x.user_id, name: x.name })),
+  });
+  // Every time is the closer's: each tile, the hold and the done state say with whom.
+  const named: Record<string, FarHost> = {};
+  for (const d of page.days as { slots: string[] }[]) for (const s of d.slots) named[s] = host;
+  return {
+    kind: p.kind,
+    calendar_id: p.calendarId,
+    calendar: String(p.cal.name ?? ""),
+    minutes: p.minutes,
+    // Not the seat's own times ("me"): `closer` says whose they are.
+    with: "anyone",
+    fallback: false,
+    on_team: p.onTeam,
+    host,
+    notice: noticeWords(p.kind, p.cal),
+    ...page,
+    slot_hosts: named,
+    existing: existing
+      ? { id: existing.id, start: isoAt(existing.start), words: kuwaitWords12(existing.start), kind: p.kind }
+      : null,
+    moving: null,
+    booking_url: bookingUrl(p.calendarId, p.cal),
+    reschedule_link: null,
+    closer: host,
+    ...(pick.list ? { closers: pick.listed ? closerOrder([...rest, mine]) : null } : {}),
+  };
+}
+
 /**
  * The free times to book or reschedule a call. Inside the calendar's window
  * they are HighLevel's own, 14 days asked (D10), exactly as before; past it,
@@ -6290,7 +6471,8 @@ async function moveGate(who: Who, m: MovePlan, now: number): Promise<{ lead: Row
  * Booking ({contact_id, kind, with: "me" | "anyone"}): the rep's own times
  * when they are on the calendar, else the team's (the calendar's round robin
  * picks who takes it), and the lead's call of that kind already ahead. Far
- * tiles with anyone name who takes each (slot_hosts).
+ * tiles with anyone name who takes each (slot_hosts). A demo may also ask
+ * for the closer picker (closers: true, closer_id; closersPick above).
  *
  * Rescheduling ({appointment_id, with: "same" | "anyone"}): judged first
  * (not_yours, client, over, held, late), then the same host's times on the
@@ -6365,9 +6547,14 @@ async function bookSlots(who: Who, b: Row) {
     };
   }
   const p = await bookingPlan(who, b);
-  const [mine, existing] = await Promise.all([
+  // The demo's closer picker, only when its fields are sent: a closer's own
+  // times, or the list beside the round robin's times.
+  const pick = await closersPick(p, b);
+  if (pick?.closer) return await closerSlots(b, p, pick, pick.closer, now, to);
+  const [mine, existing, reads] = await Promise.all([
     freeSlots(p.calendarId, now, to, p.userId),
     upcoming(p.contact, p.kind, { unmarked: true }),
+    pick?.listed ? closerReads(p.calendarId, pick.listed, now, to) : Promise.resolve(null),
   ]);
   // A rep on the calendar with no free time of their own sees the team's
   // times; the calendar's round robin then picks who takes the call.
@@ -6389,7 +6576,8 @@ async function bookSlots(who: Who, b: Row) {
     named: !withMe,
     exceptId: null,
     customHost: p.onTeam && me ? { user_id: me, name: nameOf(me) } : null,
-    team: team.map(u => ({ user_id: u, name: nameOf(u) })),
+    // With the closer picker, Custom time's "Who takes it" lists the closers only.
+    team: pick?.listed ? pick.listed.map(c => ({ user_id: c.user_id, name: c.name })) : team.map(u => ({ user_id: u, name: nameOf(u) })),
   });
   return {
     kind: p.kind,
@@ -6409,6 +6597,8 @@ async function bookSlots(who: Who, b: Row) {
     booking_url: bookingUrl(p.calendarId, p.cal),
     // A call not booked yet has no reschedule page.
     reschedule_link: null,
+    // The closer picker's list (closers: true): null when the seats could not be read.
+    ...(pick ? { closers: pick.listed ? closerOrder(reads ?? []) : null } : {}),
   };
 }
 
@@ -6636,7 +6826,12 @@ async function bookCreate(who: Who, b: Row) {
     throw new Refusal("Write a line on the call, so whoever takes it knows what was said.", 400, { code: "note_needed" });
   // Who a far tile or a custom time goes to (book.slots names them): someone on this calendar.
   const team = teamOf(p.cal);
-  const asked = cleanText(b.user_id, 80) || null;
+  // A demo on a picked closer (closer_id, closersPick): they take it, the
+  // window is judged by their own times, and a press naming another host is
+  // refused. Without the field, exactly as before.
+  const pick = await closersPick(p, b);
+  const asked = pick?.closer?.user_id ?? (cleanText(b.user_id, 80) || null);
+  const closerMeta: Row = pick?.closer ? { closer_picked: true, closer_id: pick.closer.user_id } : {};
   if (asked && !team.includes(asked))
     throw new Refusal("That person is not on this calendar. Pick a time from the list.", 400, { code: "host" });
   const me = who.ghl_user_id ? String(who.ghl_user_id) : null;
@@ -6753,7 +6948,11 @@ async function bookCreate(who: Who, b: Row) {
     const no = await customRecheck(place, { calendarId: p.calendarId, cal: p.cal, start, exceptId: null, bookingId: String(booking.id) });
     if (no) {
       const row = await finish({ state: "failed", error: no.message });
-      await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, { ...placeMeta(place), refused: no.extra.code ?? null });
+      await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, {
+        ...placeMeta(place),
+        refused: no.extra.code ?? null,
+        ...closerMeta,
+      });
       throw no;
     }
   }
@@ -6783,7 +6982,13 @@ async function bookCreate(who: Who, b: Row) {
     // all: it may have been, so it is left for a person to check.
     const refused = typeof (e as { status?: number }).status === "number";
     const row = await finish({ state: refused ? "failed" : "unverified", error: err });
-    await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, placeMeta(place));
+    await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, { ...placeMeta(place), ...closerMeta });
+    // A picked closer's offered time that HighLevel says is gone ("The slot
+    // you have selected is no longer available"): taken, so the picker reads
+    // their times again (nothing was booked). Any other refusal, such as a
+    // person HighLevel will not book, is said in HighLevel's words.
+    if (pick?.closer && refused && place.placement !== "custom" && /slot .*no longer available/i.test(err))
+      throw new Refusal("That time was just taken. Pick another.", 409, { code: "taken" });
     throw new Refusal(
       refused
         ? `HighLevel did not book it: ${err}`
@@ -6869,6 +7074,10 @@ async function bookCreate(who: Who, b: Row) {
     kind: p.kind,
     source,
     ...placeMeta(place),
+    ...closerMeta,
+    // HighLevel put the demo on someone other than the closer picked: the
+    // answer names who has it (appointment.host_name), and this flags it.
+    ...(pick?.closer && verified && assigned !== pick.closer.user_id ? { closer_mismatch: true } : {}),
   });
   const names = verified ? await namesByUser([assigned]) : new Map<string, string>();
   return {
@@ -7609,11 +7818,14 @@ async function bookCheck(who: Who, b: Row) {
     exceptId = m.id;
   } else {
     const p = await bookingPlan(who, b);
-    if (asked && !teamOf(p.cal).includes(asked)) throw new Refusal("That person is not on this calendar.", 400, { code: "host" });
+    // A demo on a picked closer (closer_id): checked as book.create checks it, and judged by their hours.
+    const pick = await closersPick(p, b);
+    const named = pick?.closer?.user_id ?? asked;
+    if (named && !teamOf(p.cal).includes(named)) throw new Refusal("That person is not on this calendar.", 400, { code: "host" });
     const me = who.ghl_user_id ? String(who.ghl_user_id) : null;
     calendarId = p.calendarId;
     cal = p.cal;
-    host = asked || (p.onTeam ? me : null);
+    host = named || (p.onTeam ? me : null);
     // The host's own times, as book.create judges them (the picker sends the host it checked).
     windowUser = host ?? p.userId;
   }

@@ -108,14 +108,18 @@ import {
   confirmNoAnswerHint,
   countsShown,
   type DialItem,
+  heldNowAsked,
   type ItemKind,
+  introHeldFirst,
   isNextLeadKey,
   lateSentence,
   liveSkips,
   type MissMoment,
+  mayMarkCall,
   messagedSinceMiss,
   missedCallLine,
   openAfterRead,
+  outcomeOffered,
   plainError,
   readyLine,
   rowTime,
@@ -169,6 +173,7 @@ import {
   alertCrossings,
   callNowCount,
   callNowTitle,
+  HELD_NOW_LINE,
   type ItemWords,
   itemWords,
   labelSaysMore,
@@ -451,10 +456,13 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
       hint: "They will be there. Kept in the cockpit; the call stays as booked.",
     },
     {
+      // An intro's confirmation only (the outcomes filter in CallPane): the
+      // CEO, 2026-11-07, "he should be able to book them for the demo then
+      // and there". Saved with held_now; sales-api marks it held early.
       key: "showed",
-      label: "Held the intro",
+      label: "Did the intro now",
       needsNote: true,
-      hint: "You had the intro with them now (on video): marks it showed (in HighLevel too).",
+      hint: "You had the intro on this call. Marks it held now (in HighLevel too), then book the demo. Tell them the booked time is no longer needed.",
     },
     {
       key: "no_answer",
@@ -2144,6 +2152,15 @@ function CallPane({
   const noShowHeld = video.open ? null : noShowHold(video.room, Date.now());
   const outcomes = OUTCOMES[kind]
     .filter(o => !(o.key === "noshow" && (video.open || noShowHeld)))
+    // Did the intro now is for an intro's confirmation call only.
+    .filter(o =>
+      outcomeOffered(
+        kind,
+        o.key,
+        appt?.type,
+        mayMarkCall(me, appt?.assigned_user_id),
+      ),
+    )
     // A confirmation's No answer says when the dialer brings it back, by
     // the call's time (sales-api appointmentWork), never one fixed wait.
     .map(o =>
@@ -2305,6 +2322,13 @@ function CallPane({
           d.outcome === "callback" && d.callback
             ? new Date(d.callback).toISOString()
             : null,
+        // Did the intro now: the intro had on this confirmation call, marked
+        // held before its booked time (sales-api checks the call first). Not
+        // after the lead joined the video room: that save passes as before,
+        // on the room's join.
+        ...(heldNowAsked(kind, d.outcome, Boolean(joinedAt))
+          ? { held_now: true }
+          : {}),
       });
       // Stored: HighLevel's half (note, tags, stage) may still be on its
       // way, and a save it does not take shows as saved work.
@@ -2313,14 +2337,22 @@ function CallPane({
       // Saved already (sent again after no answer came back): what landed
       // the first time is what stands.
       const outcome = (out.repeated && out.attempt?.outcome) || d.outcome;
-      const label = outcomes.find(o => o.key === outcome)?.label ?? outcome;
+      // A demo's confirmation held on video (the joined step's button) is
+      // not "Did the intro now", the intro-only button it shares a key with.
+      const label =
+        kind === "confirm" && outcome === "showed" && appt?.type === "demo"
+          ? "Held on video"
+          : ((
+              outcomes.find(o => o.key === outcome) ??
+              OUTCOMES[kind].find(o => o.key === outcome)
+            )?.label ?? outcome);
       const words = `${out.repeated ? "Already saved" : "Saved"}: ${label}`;
       // A no-answer with a voice note next keeps the lead on screen for it
       // (Aziz, 2026-11-05: no pickup, then the voice note from your phone).
       const voice = outcome === "no_answer" ? voiceNextOf(out.next_step) : null;
       const next = voice
         ? "message"
-        : afterSave(kind, outcome, then === "message");
+        : afterSave(kind, outcome, then === "message", appt?.type ?? null);
       if (!mounted.current || next === "next") {
         onFinished(
           contactId,
@@ -2335,6 +2367,9 @@ function CallPane({
       setDraftState(NO_DRAFT);
       setDoubt(null);
       if (next === "held") {
+        // Did the intro now: the lead's calls are read again, so the lead
+        // pane (the script's Book the demo, the history) shows it held.
+        if (kind === "confirm") onCallsChanged?.();
         setKind("lead");
         setSaved("Intro marked held");
         setMode("held");
@@ -2751,7 +2786,7 @@ function CallPane({
 
         {mode === "held" ? (
           // What next after a held intro (Aziz's Loom): the demo in the
-          // closer's soonest slot, the hot list, or the long-term nurture,
+          // soonest time or with the closer picked, the hot list, the nurture,
           // with the 1 to 10 rating and why no demo (2026-10-29) under it.
           <HeldNext
             contactId={contactId}
@@ -2821,7 +2856,8 @@ function CallPane({
               // round 2). Its link invites the call now, so the intro may
               // have been had on video: Held the intro marks it showed
               // (m1 round 6, m1-journeys-r6-confirm-call-link-invites-call-
-              // now-intro-never-held).
+              // now-intro-never-held). Book the demo comes only after that
+              // mark is saved (the held step, as after Did the intro now).
               <>
                 <button
                   type="button"
@@ -3183,7 +3219,12 @@ function CallPane({
                           draft.outcome === "rescheduled"
                         ? "Pick a time"
                         : draft.outcome &&
-                            (afterSave(kind, draft.outcome, false) === "held" ||
+                            (afterSave(
+                              kind,
+                              draft.outcome,
+                              false,
+                              appt?.type ?? null,
+                            ) === "held" ||
                               // A no-answer here brings the voice note next.
                               (draft.outcome === "no_answer" &&
                                 Boolean(item?.voice_note)))
@@ -3426,6 +3467,8 @@ function DialerBooking({
           source="dialer"
           attemptId={attemptId}
           itemKind={itemKind}
+          // A demo: "Who takes the demo", Anyone free or one closer.
+          closerPick={kind === "demo"}
           missed={again ? { start: again.start_at } : null}
           line={
             again
@@ -3645,6 +3688,10 @@ function CallBand({
   const booked = bookedAt
     ? `Booked ${ago(bookedAt, now)}`
     : "Booking date not known";
+  // An intro's confirmation call: the intro can be had now, then the demo
+  // booked (Did the intro now, 2026-11-07). A demo's confirmation cannot.
+  const heldNowLine =
+    item?.appointment?.type === "intro" ? ` ${HELD_NOW_LINE}` : "";
   let color = "var(--border)";
   let title: string;
   let detail: string | null = null;
@@ -3711,12 +3758,12 @@ function CallBand({
       item?.kind === "intro"
         ? "Intros are phone calls: call them at the booked time, then say how it went."
         : item?.kind === "confirm"
-          ? `${booked}; not confirmed yet.${item.code === "confirm_last" ? " This is the last try before the call." : ""}`
+          ? `${booked}; not confirmed yet.${item.code === "confirm_last" ? " This is the last try before the call." : ""}${heldNowLine}`
           : (lateSentence(urgent, now) ?? words?.detail ?? null);
   } else if (item?.kind === "confirm") {
     color = "var(--primary)";
     title = item.why;
-    detail = `${booked}; not confirmed yet. Call, or message them on WhatsApp.`;
+    detail = `${booked}; not confirmed yet. Call, or message them on WhatsApp.${heldNowLine}`;
   } else if (item && words) {
     // The setter's one queue (2026-11-05): the voice note, the call to
     // mark, a reply still waiting, a cancelled intro to rebook.
@@ -4104,6 +4151,9 @@ function LeadPane({
             notesLoaded={Boolean(activity.data) || Boolean(activity.error)}
             reload={activity.reload}
             attemptId={attemptId}
+            // An intro's confirmation call: Book the demo waits for Did the
+            // intro now, so the intro is marked held before the demo.
+            heldFirst={introHeldFirst(item, appointments, Date.now())}
             onBooked={() => {
               onTyping();
               onStay(contactId);
@@ -4175,6 +4225,7 @@ function ScriptTab({
   notesLoaded,
   reload,
   attemptId,
+  heldFirst,
   onBooked,
 }: {
   me: Me;
@@ -4185,6 +4236,8 @@ function ScriptTab({
   notesLoaded: boolean;
   reload: () => void;
   attemptId: string | null;
+  /** The intro this confirmation call is for, not held yet (introHeldFirst). */
+  heldFirst: { start_at: string | null } | null;
   onBooked: () => void;
 }) {
   const [key, setKey] = useState<Key>(as === "closer" ? "demo" : "intro");
@@ -4202,6 +4255,7 @@ function ScriptTab({
       notesLoaded={notesLoaded}
       reload={reload}
       attemptId={attemptId}
+      heldFirst={heldFirst}
       onBooked={onBooked}
     />
   );

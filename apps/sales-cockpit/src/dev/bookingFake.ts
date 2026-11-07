@@ -29,7 +29,19 @@
  *           reads the hours above, the host's calls, and a meeting every
  *           Tuesday 1 pm to 2 pm)
  *   reach   60   (days the cockpit books ahead: booking.reach_days)
+ *   closers ok | none | unread | off   (the demo's closer picker, 2026-11-07:
+ *           book.slots with `closers` and `closer_id`, book.check and
+ *           book.create with `closer_id`; the people and rules are in
+ *           closerFake.ts)
  */
+import {
+  closerDaysOf,
+  closerListFake,
+  closerRefusalFake,
+  DEMO_TEAM,
+  LATER_CLOSER,
+  seatOf,
+} from "./closerFake";
 import * as F from "./fixtures";
 
 type Row = Record<string, unknown>;
@@ -51,6 +63,7 @@ export const bookKnobs = {
   far: "on",
   custom: "auto",
   reach: "60",
+  closers: "ok",
 };
 {
   const params = new URLSearchParams(window.location.search);
@@ -117,7 +130,8 @@ const HOSTS: Record<string, { id: string; name: string }> = {
 /** Each calendar's team, in the calendar's order. */
 const TEAM: Record<string, string[]> = {
   intro: ["u-sara", "u-noor"],
-  demo: ["u-omar", "u-aziz"],
+  // Two closers and a manager seat (closerFake.ts), for the closer picker.
+  demo: DEMO_TEAM.map(p => p.user_id),
   follow_up: ["u-omar", "u-aziz", "u-sara"],
 };
 
@@ -196,7 +210,10 @@ function words(iso: string): string {
 function person(id: string | null | undefined) {
   if (!id) return null;
   const p = F.PEOPLE.find(x => x.ghl_user_id === id);
-  return p ? { user_id: id, name: String(p.name) } : null;
+  if (p) return { user_id: id, name: String(p.name) };
+  // The made-up closer on the Demo calendar who has no seat in the fixtures.
+  const extra = DEMO_TEAM.find(x => x.user_id === id);
+  return extra ? { user_id: id, name: extra.name } : null;
 }
 const first = (name: string | null | undefined) =>
   String(name ?? "").split(/\s+/)[0] || "The host";
@@ -339,9 +356,8 @@ function landMove(a: Row, start: string, userId: string | null, now: number) {
   a.needs_mark = false;
   let changed = false;
   if (userId && userId !== a.assigned_user_id) {
-    const p = F.PEOPLE.find(x => x.ghl_user_id === userId);
     a.assigned_user_id = userId;
-    a.assigned_user_name = p?.name ?? "Omar Haddad";
+    a.assigned_user_name = person(userId)?.name ?? "Omar Haddad";
     changed = true;
   }
   return { from, changed };
@@ -455,6 +471,41 @@ function farPart(o: {
   };
 }
 
+/**
+ * The demo's closer picker: only a demo, and a closer sales-api would take
+ * (closerFake.ts); the second closer's calendar fails with closers=unread.
+ */
+function pickGuard(kind: string, closerId: string | null, userId: unknown) {
+  if (kind !== "demo")
+    throw new BookRefusal(
+      "Only a demo can go on a picked closer's calendar.",
+      400,
+      "host",
+    );
+  if (!closerId) return;
+  const no = closerRefusalFake({
+    id: closerId,
+    kind,
+    userId: userId ? String(userId) : null,
+  });
+  if (no) throw new BookRefusal(no.message, no.status, no.code);
+  if (closerId === LATER_CLOSER && bookKnobs.closers === "unread")
+    throw new BookRefusal("HighLevel said 500: Internal server error", 502);
+}
+
+/** A person's own free times on the Demo calendar (closerFake.ts closerDaysOf). */
+function closerDays(id: string, now: number) {
+  if (id === LATER_CLOSER && bookKnobs.closers === "none") return [];
+  const salt = id === LATER_CLOSER ? 2 : id === "u-aziz" ? 1 : 0;
+  return closerDaysOf(id, freeDays("demo", now, salt), now);
+}
+
+/** Who Custom time can go to with the closer picker: the listed closers only. */
+const closerHosts = () =>
+  DEMO_TEAM.filter(p => seatOf(p.user_id))
+    .map(p => person(p.user_id))
+    .filter(Boolean);
+
 function slots(b: Row, now: number): Row {
   if (bookKnobs.slots === "fail")
     throw new BookRefusal(
@@ -553,6 +604,76 @@ function slots(b: Row, now: number): Row {
   // As sales-api's bookingPlan: "with me" only when I am on the calendar's
   // team; otherwise the team's times (and Custom time asks who takes it).
   const onTeam = TEAM[kind].includes(String(F.ME.ghl_user_id));
+  // The demo's closer picker (closers, closer_id): only when asked.
+  const closerId = b.closer_id ? String(b.closer_id) : null;
+  const asksList = b.closers === true;
+  if (closerId || asksList) pickGuard(kind, closerId, null);
+  const list =
+    asksList && bookKnobs.closers !== "off"
+      ? closerListFake(
+          id =>
+            id === LATER_CLOSER && bookKnobs.closers === "unread"
+              ? null
+              : closerDays(id, now),
+          now,
+        )
+      : undefined;
+  const existingOf = () =>
+    had
+      ? {
+          id: had.appointment_id,
+          start: had.start_at,
+          words: words(String(had.start_at)),
+          kind,
+        }
+      : null;
+  if (closerId) {
+    // One closer's own times, each named with them; Custom time fixed to them.
+    const own = closerDays(closerId, now);
+    const far = old
+      ? null
+      : farPart({
+          kind,
+          from: b.from,
+          now,
+          hostId: closerId,
+          team: false,
+          windowDays: own,
+        });
+    const host = person(closerId);
+    const shown = far ? far.days : own;
+    return {
+      kind,
+      calendar_id: cal.id,
+      calendar: cal.name,
+      minutes: cal.minutes,
+      with: "anyone",
+      fallback: false,
+      on_team: onTeam,
+      host,
+      notice: `${cal.name} opens up to ${cal.days} days ahead, from 2 hours ahead.`,
+      until: far ? far.until : windowUntil(kind, now),
+      days: shown,
+      slot_hosts: Object.fromEntries(
+        shown.flatMap(d => d.slots.map(s => [s, host])),
+      ),
+      existing: existingOf(),
+      booking_url: `https://api.leadconnectorhq.com/widget/booking/${cal.id}`,
+      reschedule_link: null,
+      ...(far
+        ? {
+            window_until: far.window_until,
+            reach_until: far.reach_until,
+            page: far.page,
+            far: far.far,
+            host_hours: far.host_hours,
+            custom: { host, hosts: closerHosts(), step_min: 5 },
+          }
+        : {}),
+      closer: host,
+      ...(list !== undefined ? { closers: list } : {}),
+    };
+  }
   const mine = onTeam && b.with !== "anyone";
   const none = bookKnobs.slots === "none" && mine;
   const days = none ? [] : freeDays(kind, now, mine ? 0 : 1);
@@ -600,11 +721,14 @@ function slots(b: Row, now: number): Row {
           host_hours: onTeam ? far.host_hours : null,
           custom: {
             host: onTeam ? person(String(F.ME.ghl_user_id)) : null,
-            hosts: TEAM[kind].map(person).filter(Boolean),
+            hosts: asksList
+              ? closerHosts()
+              : TEAM[kind].map(person).filter(Boolean),
             step_min: 5,
           },
         }
       : {}),
+    ...(list !== undefined ? { closers: list } : {}),
   };
 }
 
@@ -647,6 +771,11 @@ function timeCheck(b: Row, now: number) {
       : null;
   }
   if (b.user_id) hostId = String(b.user_id);
+  // The demo's closer picker: the closer picked is who it is checked for.
+  if (b.closer_id && !b.appointment_id) {
+    pickGuard(kind, String(b.closer_id), b.user_id);
+    hostId = String(b.closer_id);
+  }
   const host = person(hostId);
   const cal = CAL[kind] ?? CAL.intro;
   const t = Date.parse(String(b.start ?? ""));
@@ -783,6 +912,9 @@ function create(b: Row, now: number): Row {
       "Write a line on the call, so whoever takes it knows what was said.",
     );
   const kind = kindOf(b.kind);
+  // The demo's closer picker: who takes it, refused as sales-api refuses.
+  const closerId = b.closer_id ? String(b.closer_id) : null;
+  if (closerId) pickGuard(kind, closerId, b.user_id);
   const had = F.APPOINTMENTS.find(
     a =>
       a.contact_id === contact &&
@@ -803,7 +935,20 @@ function create(b: Row, now: number): Row {
       "taken",
     );
   const placement = placeOf(b, kind, now);
-  const named = person(b.user_id ? String(b.user_id) : null);
+  // A time on the booking page that is not the closer's own: gone.
+  if (
+    closerId &&
+    placement === "window" &&
+    !closerDays(closerId, now).some(d =>
+      d.slots.includes(new Date(Date.parse(String(b.start))).toISOString()),
+    )
+  )
+    throw new BookRefusal(
+      "That time was just taken. Pick another.",
+      409,
+      "taken",
+    );
+  const named = person(closerId ?? (b.user_id ? String(b.user_id) : null));
   const host = named
     ? { id: named.user_id, name: named.name }
     : b.with === "me"
