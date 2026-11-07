@@ -153,7 +153,7 @@ const CONSTRAINT_STAGE: Record<string, string> = {
   "leads to intros": "intros",
   // The label before 2026-10-18, on a payload stored before then.
   "leads to intros booked": "intros",
-  "intros to confirmed intros": "confirmed",
+  // Confirmed leads and showed intros are different cohorts; do not outline either.
 };
 
 function adsManagerUrl(
@@ -253,7 +253,7 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
       hint: INTROS_HINT,
     },
     {
-      key: "confirmed",
+      key: "intro-showed",
       label: "Intros showed",
       value: held.shown === null ? <Na hint={held.na} /> : count(held.shown),
       facts: [
@@ -314,7 +314,7 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
  * phone, three on a tablet, five on a laptop, and the reading order never
  * changes. A campaign's ribbon, which opens with its spend, is two rows of
  * four on a laptop: what Meta delivered, then what the CRM made of it, so
- * intros and confirmed intros always sit side by side. The stage a campaign
+ * intros and intros showed always sit side by side. The stage a campaign
  * is stuck on is outlined, so the eye lands on the fix. The spend leads the
  * ribbon unless a tile beside it already shows it.
  */
