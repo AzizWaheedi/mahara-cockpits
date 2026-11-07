@@ -19,6 +19,7 @@ export type MetricCol = {
   fmt: (v: number) => string;
   low?: boolean;
   intro?: boolean;
+  appointmentMetric?: boolean;
 };
 
 const times = (v: number) => `${(Math.round(v * 10) / 10).toFixed(1)}×`;
