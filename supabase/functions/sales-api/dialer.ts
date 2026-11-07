@@ -1370,6 +1370,14 @@ export interface MaqsamCall {
   timestamp?: number | string;
   calleeNumber?: string | null;
   callee?: string | null;
+  /**
+   * The other end of the line (Maqsam's raw records, read from B2B on
+   * 2026-11-07): an outbound call carries the lead in calleeNumber, an
+   * inbound one in callerNumber; `type` and `direction` say which.
+   */
+  callerNumber?: string | null;
+  caller?: string | null;
+  direction?: string | null;
   agents?: (string | { email?: string | null; identifier?: string | null; id?: string | number | null })[];
 }
 
@@ -1647,7 +1655,12 @@ export const HELD_NOW_CALL_AGE = 2 * HOUR;
 /** Maqsam states of a call that did not connect, so no intro was had on it. */
 const NOT_CONNECTED = new Set(["no_answer", "no-answer", "unanswered", "busy", "failed", "blocked", "abandoned"]);
 
-/** What a refused "Did the intro now" says: what happened, then what to do. */
+/**
+ * What a refused "Did the intro now" says: what happened, then what to do.
+ * `elsewhere` is heldNowCheck's word for "no dialer call for this
+ * confirmation"; dial.save then asks Maqsam (softphoneHeld), so the setter
+ * sees one of the softphone lines instead (fix pass 2, 2026-11-07).
+ */
 export const HELD_NOW_LINES = {
   elsewhere: "Do the intro from the dialer's call with them. A call made elsewhere is marked at the intro's time.",
   demo: "Only an intro can be marked held on its confirmation call. Mark a demo at its time.",
@@ -1659,6 +1672,13 @@ export const HELD_NOW_LINES = {
     "Maqsam's record shows no talk time on this call, so the intro cannot be marked held from it. If you did talk, press Save again in a minute, once the record is complete.",
   short:
     "Under 3 minutes on this call is too short for the intro. Do the intro, then press Did the intro now, or save Confirmed and mark the intro at its time.",
+  noSeat:
+    "Your seat has no Maqsam address, so this call cannot be checked. Save Confirmed, and mark the intro at its time.",
+  noPhone:
+    "This lead has no phone number in the cockpit, so this call cannot be checked. Save Confirmed, and mark the intro at its time.",
+  unread: "Maqsam could not be read just now, so this call cannot be checked. Try again in a minute.",
+  noCall:
+    "Maqsam shows no call between your seat and this lead in the last two hours. Do the intro on a call with them, then press Did the intro now.",
 } as const;
 
 /**
@@ -1674,15 +1694,20 @@ export const HELD_NOW_LINES = {
  * - a refusal: one plain sentence, said before anything is saved.
  * - heldNow true: markAppointment judges the early-mark rule at the start.
  *
- * The intro must be had on the dialer's own call for this confirm item
- * (an attempt, not a manual save), be an intro (a demo is marked at its
- * time), start at most a day ahead, and Maqsam's record must not say the
- * call did not connect. A call Maqsam refused to place (failed, and not
- * "uncertain") did not connect either. The call must still be the open one
- * (not let go, placed in the last two hours) and long enough for an intro:
- * three minutes since it was placed while Maqsam's record is not in, or
- * three minutes of talk once it is. A zero-second answer has no talk: it
- * is said apart, since Maqsam's record can be incomplete for a moment.
+ * The intro must be an intro (a demo is marked at its time) and start at
+ * most a day ahead; these are judged first, whatever the call. Then the
+ * call: the dialer's own call for this confirm item (an attempt, not a
+ * manual save, for this appointment). Without one the answer is
+ * `elsewhere` with `softphone: true`, and dial.save asks Maqsam whether
+ * the seat had the intro on a softphone call with this lead
+ * (softphoneHeld, fix pass 2). On the dialer's call, Maqsam's record must
+ * not say the call did not connect. A call Maqsam refused to place
+ * (failed, and not "uncertain") did not connect either. The call must
+ * still be the open one (not let go, placed in the last two hours) and
+ * long enough for an intro: three minutes since it was placed while
+ * Maqsam's record is not in, or three minutes of talk once it is. A
+ * zero-second answer has no talk: it is said apart, since Maqsam's record
+ * can be incomplete for a moment.
  */
 export function heldNowCheck(s: {
   asked: boolean;
@@ -1692,11 +1717,13 @@ export function heldNowCheck(s: {
   appointmentId: string | null;
   appt: { call_type?: unknown; start_at?: unknown } | null;
   now: number;
-}): { heldNow: boolean; refusal: string | null } {
+}): { heldNow: boolean; refusal: string | null; softphone?: true } {
   const none = { heldNow: false, refusal: null };
   if (!s.asked || s.kind !== "confirm" || s.outcome !== "showed" || !s.appt) return none;
   const start = s.appt.start_at ? Date.parse(String(s.appt.start_at)) : Number.NaN;
   if (!Number.isFinite(start) || start <= s.now + MARK_GRACE) return none;
+  if (s.appt.call_type !== "intro") return { heldNow: false, refusal: HELD_NOW_LINES.demo };
+  if (start > s.now + HELD_NOW_AHEAD) return { heldNow: false, refusal: HELD_NOW_LINES.far };
   const a = s.attempt;
   if (
     !a ||
@@ -1705,9 +1732,7 @@ export function heldNowCheck(s: {
     !s.appointmentId ||
     String(a.appointment_id ?? "") !== s.appointmentId
   )
-    return { heldNow: false, refusal: HELD_NOW_LINES.elsewhere };
-  if (s.appt.call_type !== "intro") return { heldNow: false, refusal: HELD_NOW_LINES.demo };
-  if (start > s.now + HELD_NOW_AHEAD) return { heldNow: false, refusal: HELD_NOW_LINES.far };
+    return { heldNow: false, refusal: HELD_NOW_LINES.elsewhere, softphone: true };
   const state = String(a.call_state ?? "").toLowerCase();
   if (NOT_CONNECTED.has(state) || (a.state === "failed" && state !== "uncertain"))
     return { heldNow: false, refusal: HELD_NOW_LINES.notConnected };
@@ -1725,6 +1750,119 @@ export function heldNowCheck(s: {
     : Number.isFinite(placed) && s.now - placed >= HELD_NOW_MIN_CALL;
   if (!long) return { heldNow: false, refusal: HELD_NOW_LINES.short };
   return { heldNow: true, refusal: null };
+}
+
+/** How far ahead of now a Maqsam call's start may be (clocks drift a little). */
+export const SOFTPHONE_SKEW = MIN;
+/**
+ * How long a call Maqsam still lists as going counts as the intro (review,
+ * 2026-11-07): an intro takes about 15 minutes, so a call still "going" an
+ * hour after it started is a record that never finished, not the intro.
+ */
+export const HELD_NOW_LIVE_MAX = HOUR;
+/**
+ * Maqsam's word for a call still going: `in_progress`, the only state outside
+ * the final ones in every call the desk read (cockpit_sales_dials, 60 days to
+ * 2026-11-07). Any other word is not taken as a live call.
+ */
+const LIVE = new Set(["in_progress", "in-progress"]);
+
+/** The last 8 digits of a number: the same lead on +965 5000 4321 and 50004321. */
+const phoneKey = (v: unknown) => digits(v).slice(-8);
+
+/** The lead's own number on a Maqsam call: callee on an outbound call, caller on an inbound one, either when it does not say. */
+function leadNumbers(c: MaqsamCall): unknown[] {
+  const way = String(c.type ?? c.direction ?? "").toLowerCase();
+  const out = [c.calleeNumber, c.callee];
+  const inn = [c.callerNumber, c.caller];
+  if (way.startsWith("out")) return out;
+  if (way.startsWith("in")) return inn;
+  return [...out, ...inn];
+}
+
+/**
+ * Did the intro now on a call made from the Maqsam softphone (fix pass 2,
+ * 2026-11-07: on production every call the setter makes is a softphone call
+ * saved by hand, so the dialer-call rule refused every press). Judged on
+ * Maqsam's own list of the seat's calls (GET /v3/calls, read live by
+ * dial.save), never on the page's word:
+ *
+ * - a candidate is a call of this seat (its agents include the seat's
+ *   Maqsam address, as matchCall reads it) with this lead (the lead's
+ *   number by its last 8 digits: callee on an outbound call, caller on an
+ *   inbound one), that started in the last two hours (`HELD_NOW_CALL_AGE`),
+ *   not more than a minute in the future, and not before the intro was
+ *   booked (`bookedAt`: the call the intro was booked on is not the intro);
+ * - held when any candidate is answered with at least 3 minutes of talk
+ *   (`HELD_NOW_MIN_CALL`), or is still going (Maqsam says `in_progress`)
+ *   and started from 3 minutes to an hour ago (`HELD_NOW_LIVE_MAX`);
+ * - otherwise refused, in the words for the newest candidate: none at all,
+ *   too short (going under 3 minutes, or answered under 3 minutes), did
+ *   not connect, or no talk (connected with none, a state Maqsam has not
+ *   finished or that is not its word for a live call, or "going" for over
+ *   an hour).
+ *
+ * The call it went by (Maqsam's v3 id, its reference id, which the dial log
+ * keys calls by, its state and talk seconds) is returned for the audit row.
+ * No phone number leaves this function.
+ */
+export function softphoneHeld(s: {
+  calls: readonly MaqsamCall[];
+  phone: string;
+  email: string;
+  now: number;
+  /** When the intro was booked (ms), when known. */
+  bookedAt?: number | null;
+}): {
+  held: boolean;
+  refusal: string | null;
+  call: { id: string; ref: string | null; state: string; seconds: number } | null;
+} {
+  const lead = phoneKey(s.phone);
+  const email = lineAddress(s.email);
+  const booked = typeof s.bookedAt === "number" && Number.isFinite(s.bookedAt) ? s.bookedAt : null;
+  const found = s.calls
+    .map(c => {
+      const t = Number(c.timestamp);
+      return { c, when: t < 1e12 ? t * 1000 : t };
+    })
+    .filter(({ c, when }) => {
+      const seat = (c.agents ?? []).some(x =>
+        typeof x === "string" ? lineAddress(x) === email : lineAddress(x?.email) === email,
+      );
+      return (
+        Boolean(email) &&
+        lead.length === 8 &&
+        seat &&
+        leadNumbers(c).some(n => phoneKey(n) === lead) &&
+        Number.isFinite(when) &&
+        when >= s.now - HELD_NOW_CALL_AGE &&
+        when <= s.now + SOFTPHONE_SKEW &&
+        (booked === null || when >= booked)
+      );
+    })
+    .sort((x, y) => y.when - x.when);
+  const said = (c: MaqsamCall) => {
+    const sum = callSummary(c) as NonNullable<ReturnType<typeof callSummary>>;
+    const state = String(c.state ?? "").toLowerCase();
+    const call = { id: String(c.id ?? ""), ref: String(c.referenceId ?? "") || null, state, seconds: sum.seconds };
+    return { call, sum, live: !sum.final && LIVE.has(state) };
+  };
+  const ok = found.find(({ c, when }) => {
+    const { sum, live } = said(c);
+    if (sum.final) return sum.answered && sum.seconds * 1000 >= HELD_NOW_MIN_CALL;
+    return live && s.now - when >= HELD_NOW_MIN_CALL && s.now - when <= HELD_NOW_LIVE_MAX;
+  });
+  if (ok) return { held: true, refusal: null, call: said(ok.c).call };
+  const newest = found[0];
+  if (!newest) return { held: false, refusal: HELD_NOW_LINES.noCall, call: null };
+  const { call, sum, live } = said(newest.c);
+  const refusal = sum.answered || (live && s.now - newest.when < HELD_NOW_MIN_CALL)
+    ? HELD_NOW_LINES.short
+    : NOT_CONNECTED.has(call.state)
+      ? HELD_NOW_LINES.notConnected
+      : HELD_NOW_LINES.noTalk;
+  return { held: false, refusal, call };
 }
 
 /** The next working morning at 10:00 Kuwait time (Friday is off). */

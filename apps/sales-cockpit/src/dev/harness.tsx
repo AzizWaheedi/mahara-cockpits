@@ -23,11 +23,12 @@
  * as it does live: a call opens, rings and ends; a saved lead leaves the
  * queue; a save sent again is the same save; HighLevel's slow half shows as
  * saved work. A held mark more than ten minutes before the call is refused,
- * except Did the intro now on the confirmation call's own dialer call (the
- * "Confirm, 2.5 h before" lead: press Call, stay on it three minutes, the
- * least for an intro, then Did the intro now, then the held step's Book the
- * demo; the Script tab's Book the demo says to do the intro first until
- * then). Book the demo (the held step's button,
+ * except Did the intro now on the confirmation call (the "Confirm, 2.5 h
+ * before" lead: press Call, stay on it three minutes, the least for an
+ * intro, then Did the intro now, then the held step's Book the demo; or save
+ * it without pressing Call, as after a softphone call, and knob `softphone`
+ * says what the fake Maqsam has; the Script tab's Book the demo advises Did
+ * the intro now above its picker until then). Book the demo (the held step's button,
  * Booked → Demo, or the script's block) shows "Who takes the demo": Anyone
  * free, or one of two made-up closers on the Demo calendar with different
  * soonest times, and a press books on the closer picked (bookingFake.ts and
@@ -37,6 +38,9 @@
  *
  *   agent    available | absent | busy | switched_off | no_address | not_found
  *   call     answer | noanswer | refuse | slow   (dial.call, then Maqsam's record)
+ *   softphone talk | short | none | unread   (Did the intro now saved by hand:
+ *            a 3-minute answered softphone call with the lead, one under 3
+ *            minutes, no call, or Maqsam not readable)
  *   save     ok | slow | fail     (slow: stored at once, answered after 60 s, once)
  *   book     verified | unverified | slow | taken
  *   resync   ok | done | fail
@@ -128,6 +132,8 @@ type Row = Record<string, unknown>;
 const knobs = {
   agent: "available",
   call: "answer",
+  /** Did the intro now with no dialer call: what the fake Maqsam has (heldNowFake.ts softphoneRefusal). */
+  softphone: "talk",
   save: "ok",
   book: "verified",
   resync: "ok",
@@ -844,6 +850,7 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
             now - Date.parse(String(r.lead_in_at)) <= 3 * 60 * MIN,
         ),
         now,
+        softphone: knobs.softphone,
       });
       if (early) throw new Refusal(early, 403);
       a ??= newAttempt(contact, {

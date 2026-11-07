@@ -147,9 +147,10 @@ export function ScriptRunner({
   /** The dialer's open call with this lead: a booking saves it as booked. */
   attemptId?: string | null;
   /**
-   * The dialer only: the intro this confirmation call is for, not held yet.
-   * Book the demo then waits for Did the intro now (BookDemoBlock). The call
-   * page never sets it, so its block books as before.
+   * The dialer only: the intro this confirmation call is for, not held yet,
+   * that this seat may mark. Book the demo then advises Did the intro now
+   * above its picker, and still books (BookDemoBlock). The call page never
+   * sets it, so its block books as before.
    */
   heldFirst?: { start_at: string | null } | null;
   /** The demo was booked from the script (the dialer keeps the lead on screen). */

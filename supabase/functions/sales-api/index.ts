@@ -81,7 +81,11 @@ import {
   ghlTime,
   heat,
   HELD_NOW_AHEAD,
+  HELD_NOW_CALL_AGE,
+  HELD_NOW_LINES,
   heldNowCheck,
+  SOFTPHONE_SKEW,
+  softphoneHeld,
   isNoAnswer,
   kuwaitAt,
   kuwaitWords,
@@ -663,9 +667,11 @@ async function markAppointment(
     /** A showed mark whose call was had on video before its booked time (a confirmation call's room the lead joined). */
     heldEarly?: boolean;
     /**
-     * A showed mark for an intro had on the dialer's confirmation call before
-     * its booked time (Did the intro now, 2026-11-07; dial.save checked the
-     * call first, dialer.ts heldNowCheck). Only dial.save passes it.
+     * A showed mark for an intro had on the confirmation call before its
+     * booked time (Did the intro now, 2026-11-07): the dialer's own call
+     * (dialer.ts heldNowCheck) or, since fix pass 2, a Maqsam softphone call
+     * with the lead (dialer.ts softphoneHeld). dial.save checked the call
+     * first. Only dial.save passes it.
      */
     heldNow?: boolean;
   } = {},
@@ -3858,7 +3864,8 @@ async function ghlUsers(who: Who) {
 
 const MAQSAM = "https://api.mq.maqsam.com";
 
-async function maqsam(path: string, method = "GET", values: Record<string, string> = {}): Promise<Row> {
+/** One Maqsam request. `signal` gives it a deadline (the held-now read); without one it waits as it always has. */
+async function maqsam(path: string, method = "GET", values: Record<string, string> = {}, signal?: AbortSignal): Promise<Row> {
   const key = env("SALES_MAQSAM_ACCESS_KEY");
   const secret = env("SALES_MAQSAM_SECRET");
   if (!key || !secret) throw new Refusal("Maqsam is not connected to the cockpit yet.", 503);
@@ -3870,6 +3877,7 @@ async function maqsam(path: string, method = "GET", values: Record<string, strin
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: method === "GET" ? undefined : new URLSearchParams(values),
+    ...(signal ? { signal } : {}),
   });
   const text = await res.text();
   if (res.status === 429) throw new Refusal("Maqsam asked us to slow down. Wait a minute, then call again.", 429);
@@ -4987,18 +4995,39 @@ async function dialCall(who: Who, b: Row) {
   return { attempt, route: { country: r.route.country, caller: r.route.caller } };
 }
 
-/** Maqsam's history of the rep's calls since a moment (newest pages first, at most three). */
-async function maqsamCalls(email: string, fromMs: number): Promise<MaqsamCall[]> {
+/** How many calls Maqsam puts on one page of GET /v3/calls (hermes/sales-desk/desk/maqsam_calls.py PAGE). */
+const MAQSAM_PAGE = 100;
+
+/**
+ * Maqsam's history of the rep's calls since a moment (newest pages first, at
+ * most three). dial.status reads it as it always has. `checked` is the
+ * held-now read (review of fix pass 2, 2026-11-07), shaped like the desk's
+ * proven reader (maqsam_calls.py Maqsam.calls): it sends end_time, stops at
+ * a page under a hundred calls, takes an answer with no list of calls as an
+ * error (missing is never zero), and gives up at the signal's deadline.
+ */
+async function maqsamCalls(
+  email: string,
+  fromMs: number,
+  checked?: { toMs: number; signal: AbortSignal },
+): Promise<MaqsamCall[]> {
   const all: MaqsamCall[] = [];
   for (let page = 1; page <= 3; page++) {
-    const d = await maqsam("/v3/calls", "GET", {
-      email,
-      start_time: String(Math.floor(fromMs / 1000)),
-      page: String(page),
-    });
+    const d = await maqsam(
+      "/v3/calls",
+      "GET",
+      {
+        email,
+        start_time: String(Math.floor(fromMs / 1000)),
+        ...(checked ? { end_time: String(Math.ceil(checked.toMs / 1000)) } : {}),
+        page: String(page),
+      },
+      checked?.signal,
+    );
+    if (checked && !Array.isArray(d.message)) throw new Error("Maqsam's answer had no list of calls in it");
     const list = Array.isArray(d.message) ? (d.message as MaqsamCall[]) : [];
     all.push(...list);
-    if (!list.length) break;
+    if (!list.length || (checked && list.length < MAQSAM_PAGE)) break;
   }
   return all;
 }
@@ -5026,6 +5055,8 @@ async function saveOutcome(
     requestId?: string | null;
     /** Did the intro now: the intro held on this confirmation call before its time (dial.save checked it). */
     heldNow?: boolean;
+    /** With heldNow, for the dial.save audit row: which call it was had on (held_now_via, and Maqsam's call for the softphone). */
+    heldNowAudit?: Row;
   } = {},
 ): Promise<{ attempt: Row; state: Row; stage_move?: Row | null; next_step?: Row | null; hot_offer?: Row | null } | null> {
   const now = Date.now();
@@ -5200,7 +5231,7 @@ async function saveOutcome(
       state,
       kind,
       ...(marked ? { mark: marked.status, mark_crm: marked.crm } : {}),
-      ...(extra.heldNow && marked ? { held_now: true } : {}),
+      ...(extra.heldNow && marked ? { held_now: true, ...(extra.heldNowAudit ?? {}) } : {}),
     },
   );
   const moving = wantMove && (rolesFor(null).length > 0 || next?.closed === "unreachable");
@@ -5603,20 +5634,42 @@ async function dialSave(who: Who, b: Row) {
   const kind = (["intro", "confirm"].includes(kindAsked) ? kindAsked : "lead") as ItemKind;
   const requestId = /^[0-9a-f-]{36}$/i.test(String(b.request_id ?? "")) ? String(b.request_id) : null;
   const appointmentId = cleanText(b.appointment_id, 80) || ((a?.appointment_id as string) ?? null);
-  // Did the intro now (the CEO, 2026-11-07): the intro had on the dialer's
+  // Did the intro now (the CEO, 2026-11-07): the intro had on the
   // confirmation call, marked held before its booked time so the demo is
-  // booked on the same call. Checked before anything is saved; without
-  // held_now, or once the intro is ten minutes away, the save is as before.
+  // booked on the same call. The dialer's own call is judged on its record
+  // (heldNowCheck); with none, Maqsam is asked for the seat's softphone call
+  // with this lead (softphoneHeldNow, fix pass 2). Checked before anything
+  // is saved; without held_now, or once the intro is ten minutes away, the
+  // save is as before.
   let heldNow = false;
+  let heldNowAudit: Row | undefined;
   if (b.held_now === true && kind === "confirm" && outcome === "showed" && appointmentId) {
-    const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}&select=call_type,start_at`))[0] ?? null;
+    const appt =
+      (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}&select=call_type,start_at,booked_at`))[0] ?? null;
     const check = heldNowCheck({ asked: true, kind, outcome, attempt: a, appointmentId, appt, now: Date.now() });
+    let refusal = check.refusal;
+    if (check.softphone) {
+      const bookedAt = appt?.booked_at ? Date.parse(String(appt.booked_at)) : null;
+      const soft = await softphoneHeldNow(who, contactId, bookedAt, Date.now());
+      refusal = soft.refusal;
+      if (!refusal) {
+        heldNow = true;
+        heldNowAudit = {
+          held_now_via: "softphone",
+          maqsam_call_id: soft.call?.id ?? null,
+          maqsam_ref: soft.call?.ref ?? null,
+          maqsam_state: soft.call?.state ?? null,
+          maqsam_seconds: soft.call?.seconds ?? null,
+        };
+      }
+    } else if (!refusal && check.heldNow) {
+      heldNow = true;
+      heldNowAudit = { held_now_via: "dialer" };
+    }
     // The lead joined this call's video room and the page had not caught up
     // (it sent held_now): the room's join passes the save as it does
     // without held_now, so held_now is dropped rather than refused.
-    if (check.refusal) {
-      if ((await joinedForCall(contactId, appointmentId, Date.now())) === null) throw new Refusal(check.refusal, 403);
-    } else heldNow = check.heldNow;
+    if (refusal && (await joinedForCall(contactId, appointmentId, Date.now())) === null) throw new Refusal(refusal, 403);
   }
   try {
     const out = await saveOutcome(who, a, contactId, outcome, note, callbackAt, {
@@ -5625,7 +5678,7 @@ async function dialSave(who: Who, b: Row) {
       kind,
       appointmentId,
       requestId,
-      ...(heldNow ? { heldNow: true } : {}),
+      ...(heldNow ? { heldNow: true, heldNowAudit } : {}),
     });
     return out ?? {};
   } catch (e) {
@@ -5636,6 +5689,44 @@ async function dialSave(who: Who, b: Row) {
     }
     throw e;
   }
+}
+
+/** How long dial.save waits for Maqsam's list on a held-now press, every page together: a hung Maqsam is "could not be read", never a hung Save. */
+const HELD_NOW_MAQSAM_MS = 10_000;
+
+/**
+ * Did the intro now with no dialer call for this confirmation (fix pass 2,
+ * 2026-11-07): the setter calls from the Maqsam softphone and saves by hand.
+ * Maqsam's live list of the seat's calls from the last two hours (maqsamCalls,
+ * the dial.status reader, in its checked form) says whether the intro was had
+ * on a call with this lead since it was booked (dialer.ts softphoneHeld).
+ * Without the seat's Maqsam address, the lead's number or Maqsam's answer
+ * within ten seconds, the press is refused: it is never accepted without
+ * Maqsam's word.
+ */
+async function softphoneHeldNow(
+  who: Who,
+  contactId: string,
+  bookedAt: number | null,
+  now: number,
+): Promise<{ refusal: string | null; call: { id: string; ref: string | null; state: string; seconds: number } | null }> {
+  const email = lineAddress(who.maqsam_email);
+  if (!email) return { refusal: HELD_NOW_LINES.noSeat, call: null };
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=phone`))[0];
+  const phone = String(lead?.phone ?? "");
+  if (phone.replace(/\D/g, "").length < 8) return { refusal: HELD_NOW_LINES.noPhone, call: null };
+  let calls: MaqsamCall[];
+  try {
+    calls = await maqsamCalls(email, now - HELD_NOW_CALL_AGE, {
+      toMs: now + SOFTPHONE_SKEW,
+      signal: AbortSignal.timeout(HELD_NOW_MAQSAM_MS),
+    });
+  } catch (e) {
+    console.error("held now: Maqsam unread", redact(String((e as Error)?.message ?? e)));
+    return { refusal: HELD_NOW_LINES.unread, call: null };
+  }
+  const v = softphoneHeld({ calls, phone, email, now, bookedAt });
+  return { refusal: v.refusal, call: v.call };
 }
 
 /**
