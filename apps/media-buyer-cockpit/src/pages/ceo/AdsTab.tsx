@@ -59,13 +59,16 @@ import {
   constraintText,
   coverageLine,
   DEMO_PROGRESSION_HINT,
+  DEMO_SHOW_RATE_HINT,
   demoFigures,
   Fact,
   FIT_HINT,
   frequencyFact,
   frequencyHint,
+  INTRO_SHOWED_HINT,
   INTROS_HINT,
   introFigures,
+  introShowedFigures,
   LEAD_TO_INTRO_HINT,
   LEADS_HINT,
   NA_ZERO,
@@ -189,6 +192,7 @@ type Stage = {
 function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
   const i = introFigures(w);
   const d = demoFigures(w);
+  const held = introShowedFigures(w);
   return [
     {
       key: "impressions",
@@ -249,20 +253,20 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
       hint: INTROS_HINT,
     },
     {
-      // Out of the intros above it, so the step reads at a glance: "2 of 9".
       key: "confirmed",
-      label: "Confirmed intros",
-      value:
-        i.confirmed === null ? (
-          <Na hint={i.na} />
-        ) : (
-          `${count(i.confirmed)}${i.intros ? ` of ${count(i.intros)}` : ""}`
-        ),
+      label: "Intros showed",
+      value: held.shown === null ? <Na hint={held.na} /> : count(held.shown),
       facts: [
-        { label: "Of intros", v: i.confirmedShare, f: pct, na: i.na },
-        { label: "Cost", v: i.costPerConfirmed, f: money, na: i.na },
+        { label: "Cost", v: held.cost, f: money, na: held.na },
+        {
+          label: "Confirmed leads",
+          v: i.confirmed,
+          f: count,
+          hint: CONFIRMED_INTROS_HINT,
+          na: i.na,
+        },
       ],
-      hint: CONFIRMED_INTROS_HINT,
+      hint: INTRO_SHOWED_HINT,
     },
     {
       key: "demos",
@@ -271,6 +275,13 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
       facts: [
         { label: "Intro to demo", v: d.rate, f: pct, na: d.na },
         { label: "Attended", v: d.attended, f: count, na: d.na },
+        {
+          label: "Show rate",
+          v: held.demoRate,
+          f: pct,
+          hint: DEMO_SHOW_RATE_HINT,
+          na: held.na,
+        },
       ],
       hint: DEMO_PROGRESSION_HINT,
     },
@@ -373,7 +384,13 @@ function FunnelRibbon({
 
 /** Anything to read in a window: spend, or a lead or close it produced. An intro is always a lead's. */
 function hasActivity(w: B2bAdWindow): boolean {
-  return w.spend > 0 || w.leads > 0 || w.closes > 0;
+  return (
+    w.spend > 0 ||
+    w.leads > 0 ||
+    w.closes > 0 ||
+    (w.introShowedLeads ?? 0) > 0 ||
+    w.demosDue > 0
+  );
 }
 
 /**
@@ -391,6 +408,7 @@ function CompactLine({
 }) {
   const i = introFigures(w);
   const d = demoFigures(w);
+  const held = introShowedFigures(w);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
       <Fact label="Spend">{money(w.spend)}</Fact>
@@ -398,12 +416,18 @@ function CompactLine({
       <Fact label="CPL">
         <Num v={w.cpl} f={money} />
       </Fact>
-      {w.leads > 0 ? (
+      {w.leads > 0 || (w.introShowedLeads ?? 0) > 0 || w.demosDue > 0 ? (
         <>
           <Fact label="Intros" hint={INTROS_HINT}>
             <Num v={i.intros} f={count} na={i.na} />
           </Fact>
-          <Fact label="Confirmed" hint={CONFIRMED_INTROS_HINT}>
+          <Fact label="Intros showed" hint={INTRO_SHOWED_HINT}>
+            <Num v={held.shown} f={count} na={held.na} />
+          </Fact>
+          <Fact label="Cost per intro showed" hint={INTRO_SHOWED_HINT}>
+            <Num v={held.cost} f={money} na={held.na} />
+          </Fact>
+          <Fact label="Confirmed leads" hint={CONFIRMED_INTROS_HINT}>
             <Num v={i.confirmed} f={count} na={i.na} />
           </Fact>
           <Fact label="Demos" hint={DEMO_PROGRESSION_HINT}>
@@ -414,6 +438,9 @@ function CompactLine({
           </Fact>
           <Fact label="Demo attended" hint={DEMO_PROGRESSION_HINT}>
             <Num v={d.attended} f={count} na={d.na} />
+          </Fact>
+          <Fact label="Demo show rate" hint={DEMO_SHOW_RATE_HINT}>
+            <Num v={held.demoRate} f={pct} na={held.na} />
           </Fact>
         </>
       ) : null}
@@ -758,6 +785,8 @@ type Col = {
   low?: boolean;
   /** An intro figure: n/a on a payload stored before intros were counted once per lead. */
   intro?: boolean;
+  /** New appointment metrics can be absent on an older cached snapshot. */
+  appointmentMetric?: boolean;
 };
 
 const COLS: Col[] = [
@@ -808,6 +837,31 @@ const COLS: Col[] = [
     fmt: money,
     low: true,
     intro: true,
+  },
+  {
+    key: "introsShowed",
+    appointmentMetric: true,
+    label: "Intros showed",
+    title: INTRO_SHOWED_HINT,
+    get: w => introShowedFigures(w).shown,
+    fmt: count,
+  },
+  {
+    key: "costPerIntroShowed",
+    appointmentMetric: true,
+    label: "$/intro showed",
+    title: INTRO_SHOWED_HINT,
+    get: w => introShowedFigures(w).cost,
+    fmt: money,
+    low: true,
+  },
+  {
+    key: "demoShowRate",
+    appointmentMetric: true,
+    label: "Demo show rate",
+    title: DEMO_SHOW_RATE_HINT,
+    get: w => introShowedFigures(w).demoRate,
+    fmt: pct,
   },
   {
     key: "confirmed",
@@ -1009,7 +1063,13 @@ function AdTable({
                     <Num
                       v={c.get(w)}
                       f={c.fmt}
-                      na={c.intro ? introFigures(w).na : undefined}
+                      na={
+                        c.appointmentMetric
+                          ? introShowedFigures(w).na
+                          : c.intro
+                            ? introFigures(w).na
+                            : undefined
+                      }
                     />
                   </td>
                 ))}
@@ -1273,6 +1333,7 @@ export function AdsTab({ sections, now }: CeoTabProps) {
       : null;
   const cplTone = gateTone(a.cpl, CPL_GATE);
   const ai = introFigures(a);
+  const held = introShowedFigures(a);
   // The adapter's "nothing is delivering" note is about the account before a
   // change here turned something on; it comes back if the hold gives way.
   const notes =
@@ -1329,7 +1390,7 @@ export function AdsTab({ sections, now }: CeoTabProps) {
       >
         {() => (
           <div className="grid gap-6">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @2xl:grid-cols-6">
               <StatTile
                 variant="plain"
                 label="Lead-gen spend"
@@ -1359,15 +1420,34 @@ export function AdsTab({ sections, now }: CeoTabProps) {
               />
               <StatTile
                 variant="plain"
-                label="Cost per confirmed intro"
-                value={dash(ai.costPerConfirmed, money)}
-                naHint={ai.na}
+                label="Intros showed"
+                value={dash(held.shown, count)}
+                naHint={held.na}
                 sub={
-                  ai.intros === null || ai.confirmed === null
+                  ai.confirmed === null
                     ? undefined
-                    : `${count(ai.confirmed)} of ${plural(ai.intros, "intro")} confirmed`
+                    : `${count(ai.confirmed)} confirmed leads`
                 }
-                hint={CONFIRMED_INTROS_HINT}
+                hint={INTRO_SHOWED_HINT}
+              />
+              <StatTile
+                variant="plain"
+                label="Cost per intro showed"
+                value={dash(held.cost, money)}
+                naHint={held.na}
+                hint={INTRO_SHOWED_HINT}
+              />
+              <StatTile
+                variant="plain"
+                label="Demo show rate"
+                value={dash(held.demoRate, pct)}
+                naHint={held.na}
+                sub={
+                  held.shown === null
+                    ? undefined
+                    : `${count(a.demosShown)} shown of ${count(a.demosDue)} due`
+                }
+                hint={DEMO_SHOW_RATE_HINT}
               />
               <StatTile
                 variant="plain"
