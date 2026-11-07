@@ -26,7 +26,7 @@ const DISABLE_REASON: Record<number, string> = {
 // not known (null), and the sums and rates over them have to carry that.
 const COUNTS = [
   'impressions', 'clicks', 'metaLeads', 'leads', 'qualifiedLeads', 'notReadyLeads', 'leadsToIntro', 'leadsToConfirmedIntro', 'leadsToDemo', 'leadsToProgressedDemo', 'leadsToDemoAttended',
-  'introsBooked', 'introsDue', 'introsShown', 'introsQualified', 'introsCancelled', 'introsAdvanced',
+  'introShowedLeads', 'introsBooked', 'introsDue', 'introsShown', 'introsQualified', 'introsCancelled', 'introsAdvanced',
   'demosBooked', 'demosDue', 'demosShown', 'demosQualified', 'demosShownMature', 'demosCancelled', 'closes',
 ] as const;
 type CountKey = (typeof COUNTS)[number];
@@ -35,7 +35,7 @@ const COLUMN: Record<CountKey, string> = {
   leads: 'leads', qualifiedLeads: 'qualified_leads', notReadyLeads: 'not_ready_leads',
   leadsToIntro: 'leads_to_intro', leadsToConfirmedIntro: 'leads_to_confirmed_intro', leadsToDemo: 'leads_to_demo',
   leadsToProgressedDemo: 'leads_to_progressed_demo', leadsToDemoAttended: 'leads_to_demo_attended',
-  introsBooked: 'intros_booked', introsDue: 'intros_due', introsShown: 'intros_shown',
+  introShowedLeads: 'intro_showed_leads', introsBooked: 'intros_booked', introsDue: 'intros_due', introsShown: 'intros_shown',
   introsQualified: 'intros_qualified', introsCancelled: 'intros_cancelled', introsAdvanced: 'intros_advanced',
   demosBooked: 'demos_booked', demosDue: 'demos_due', demosShown: 'demos_shown',
   demosQualified: 'demos_qualified', demosShownMature: 'demos_shown_mature', demosCancelled: 'demos_cancelled', closes: 'closes',
@@ -50,7 +50,7 @@ export type B2bAdWindow = {
    * establishes confirmed intro progression; attendance requires showed.
    */
   leadsToIntro: number; leadsToConfirmedIntro: number; leadsToDemo: number; leadsToProgressedDemo: number; leadsToDemoAttended: number;
-  introsBooked: number; introsDue: number; introsShown: number;
+  introShowedLeads: number; introsBooked: number; introsDue: number; introsShown: number;
   introsQualified: number; introsCancelled: number; introsAdvanced: number; demosBooked: number; demosDue: number;
   demosShown: number; demosQualified: number;
   /** Demos shown at least seven days before the window's last day: old enough to have closed. */
@@ -200,7 +200,7 @@ function emptyWindow(): B2bAdWindow {
   const window = {
     spend: 0, impressions: 0, clicks: 0, linkClicks: 0, metaLeads: 0, leads: 0, qualifiedLeads: 0, notReadyLeads: 0,
     leadsToIntro: 0, leadsToConfirmedIntro: 0, leadsToDemo: 0, leadsToProgressedDemo: 0, leadsToDemoAttended: 0,
-    introsBooked: 0, introsDue: 0, introsShown: 0, introsQualified: 0, introsCancelled: 0, introsAdvanced: 0,
+    introShowedLeads: 0, introsBooked: 0, introsDue: 0, introsShown: 0, introsQualified: 0, introsCancelled: 0, introsAdvanced: 0,
     demosBooked: 0, demosDue: 0, demosShown: 0, demosQualified: 0, demosShownMature: 0, demosCancelled: 0, closes: 0, contracted: 0, cash: 0,
     frequency: null, cpm: null, ctr: null, ctrLink: null, cpc: null, cpl: null, qualifiedPct: null, costPerQualified: null,
     bookRate: null, costPerIntroBooked: null, introShowRate: null, costPerIntroShown: null, introToDemo: null,
@@ -219,7 +219,7 @@ function windowOf(row: Row, prefix: 'w7' | 'w30'): B2bAdWindow {
     linkClicks: optionalNumber(row[`${prefix}_link_clicks`], `${prefix} link clicks`), metaLeads: get('meta_leads'),
     leads: get('leads'), qualifiedLeads: get('qualified_leads'), notReadyLeads: get('not_ready_leads'),
     leadsToIntro: get('leads_to_intro'), leadsToConfirmedIntro: get('leads_to_confirmed_intro'), leadsToDemo: get('leads_to_demo'), leadsToProgressedDemo: get('leads_to_progressed_demo'), leadsToDemoAttended: get('leads_to_demo_attended'),
-    introsBooked: get('intros_booked'), introsDue: get('intros_due'), introsShown: get('intros_shown'),
+    introShowedLeads: get('intro_showed_leads'), introsBooked: get('intros_booked'), introsDue: get('intros_due'), introsShown: get('intros_shown'),
     introsQualified: get('intros_qualified'), introsCancelled: get('intros_cancelled'), introsAdvanced: get('intros_advanced'),
     demosBooked: get('demos_booked'), demosDue: get('demos_due'), demosShown: get('demos_shown'),
     demosQualified: get('demos_qualified'), demosShownMature: get('demos_shown_mature'), demosCancelled: get('demos_cancelled'), closes: get('closes'),
@@ -273,7 +273,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
   const demo = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and coalesce(d.status, '') <> 'cancelled')`;
   const intro = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and coalesce(b.status, '') <> 'cancelled')`;
   const confirmed = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and (b.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and b.start_at <= now() and b.status in ('showed','confirmed'))`;
-  const demoAttended = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and (d.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and d.start_at <= now() and d.status = 'showed')`;
+  const demoAttended = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and (d.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} and d.start_at <= now() and d.status in ('showed','confirmed','invalid'))`;
   // `status` narrows which of the lead's calls count; null counts every call.
   const leadsBooked = (type: 'intro' | 'demo', as: string, status: string | null = null) => `count(*) filter (where ${roasLead} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}'${status ? ` and ${status}` : ''} and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)})) as ${as}`;
   const funnel = (from: string, alias: 'w7' | 'w30') => `
@@ -293,7 +293,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
       -- Per lead, never per appointment (the CEO, 2026-10-18: "it should just
       -- count once"): a lead with a no-show and a rebooked intro is one intro.
       -- A non-cancelled demo establishes intro progression, and a demo is
-      -- attended only when explicitly marked showed by the end of the window.
+      -- attended when a past demo is marked showed or confirmed by the end of the window.
       count(*) filter (where ${roasLead} and (${intro} or ${demo})) as leads_to_intro,
       count(*) filter (where ${roasLead} and (${confirmed} or ${demo})) as leads_to_confirmed_intro,
       ${leadsBooked('demo', 'leads_to_demo')},
@@ -303,6 +303,16 @@ export function treeSql(from7: string, from30: string, to: string): string {
     where l.ad_id is not null
       and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)}
     group by 1),
+  ${alias}_intro_showed as (
+    select ad_id, count(*) as intro_showed_leads from (
+      select distinct on (c.contact_id) c.contact_id, c.ad_id
+      from credited_calls c
+      where c.call_type='intro' and nullif(c.contact_id,'') is not null and c.ad_id is not null
+        and exists (select 1 from public.meta_ad_snapshots s where s.ad_id=c.ad_id and s.date <= ${dateLiteral(to)})
+        and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)}
+        and c.start_at <= now() and c.status in ('showed','confirmed')
+      order by c.contact_id, c.start_at desc, c.ad_id
+    ) shown group by ad_id),
   ${alias}_calls as (
     select c.ad_id,
       count(*) filter (where c.call_type='intro' and (c.booked_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)}) as intros_booked,
@@ -314,9 +324,9 @@ export function treeSql(from7: string, from30: string, to: string): string {
         and exists (select 1 from public.calls d where d.contact_id = c.contact_id and d.call_type='demo' and d.booked_at >= c.start_at)) as intros_advanced,
       count(*) filter (where c.call_type='demo' and (c.booked_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)}) as demos_booked,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and c.start_at <= now()) as demos_due,
-      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown,
-      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as demos_qualified,
-      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} - 7 and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown_mature,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.start_at <= now() and c.status in ('showed','confirmed','invalid'))) as demos_shown,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.start_at <= now() and c.status in ('showed','confirmed'))) as demos_qualified,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} - 7 and (c.start_at <= now() and c.status in ('showed','confirmed','invalid'))) as demos_shown_mature,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and c.status='cancelled') as demos_cancelled
     from credited_calls c
     where c.ad_id is not null
@@ -346,6 +356,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
     coalesce(${prefix}_leads.leads_to_demo,0) as ${prefix}_leads_to_demo,
     coalesce(${prefix}_leads.leads_to_progressed_demo,0) as ${prefix}_leads_to_progressed_demo,
     coalesce(${prefix}_leads.leads_to_demo_attended,0) as ${prefix}_leads_to_demo_attended,
+    coalesce(${prefix}_intro_showed.intro_showed_leads,0) as ${prefix}_intro_showed_leads,
     coalesce(${prefix}_calls.intros_booked,0) as ${prefix}_intros_booked,
     coalesce(${prefix}_calls.intros_due,0) as ${prefix}_intros_due,
     coalesce(${prefix}_calls.intros_shown,0) as ${prefix}_intros_shown,
@@ -433,10 +444,12 @@ select ident.*, public.b2b_campaign_type(ident.campaign_name) as campaign_type,
 from ident
 left join w7_ads on w7_ads.ad_id = ident.ad_id
 left join w7_leads on w7_leads.ad_id = ident.ad_id
+left join w7_intro_showed on w7_intro_showed.ad_id = ident.ad_id
 left join w7_calls on w7_calls.ad_id = ident.ad_id
 left join w7_deals on w7_deals.ad_id = ident.ad_id
 left join w30_ads on w30_ads.ad_id = ident.ad_id
 left join w30_leads on w30_leads.ad_id = ident.ad_id
+left join w30_intro_showed on w30_intro_showed.ad_id = ident.ad_id
 left join w30_calls on w30_calls.ad_id = ident.ad_id
 left join w30_deals on w30_deals.ad_id = ident.ad_id
 left join setters on setters.ad_id = ident.ad_id
@@ -633,7 +646,7 @@ function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshn
   });
   payload.notes.push({
     level: 'info',
-    text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro or demo booked at or after they came in that was not cancelled. An intro marked invalid still counts. A confirmed intro is one whose intro showed or is still confirmed after its time, or whose non-cancelled demo was booked by the end of the period. A demo establishes intro progression even when the intro record is missing. Demos attended count only an explicit showed status, by the period end. These use current CRM statuses, so later corrections can change past periods. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
+    text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro or demo booked at or after they came in that was not cancelled. An intro marked invalid still counts. A confirmed intro is one whose intro showed or is still confirmed after its time, or whose non-cancelled demo was booked by the end of the period. A demo establishes intro progression even when the intro record is missing. Demos attended count a past demo marked showed, confirmed or invalid (disqualified) by the period end; confirmed is an assumption, not proof of attendance. These use current CRM statuses, so later corrections can change past periods. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
   });
   payload.notes.push({
     level: 'info',
@@ -933,7 +946,7 @@ per as (
     count(*) as contacts,
     count(*) filter (where roas_lead) as leads,
     count(*) filter (where exists (select 1 from public.calls c where c.contact_id = t.contact_id and c.call_type in ('intro','demo'))) as booked,
-    count(*) filter (where exists (select 1 from public.calls c where c.contact_id = t.contact_id and c.call_type = 'demo' and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now())))) as demos_shown,
+    count(*) filter (where exists (select 1 from public.calls c where c.contact_id = t.contact_id and c.call_type = 'demo' and (c.start_at <= now() and c.status in ('showed','confirmed','invalid')))) as demos_shown,
     count(*) filter (where exists (select 1 from public.closed_deals d where d.contact_id = t.contact_id and ${NOT_VOIDED('d')})) as closes,
     coalesce(sum((select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where d.contact_id = t.contact_id and ${NOT_VOIDED('d')})),0) as contracted,
     coalesce(sum((select coalesce(sum(d.cash_collected),0) from public.closed_deals d where d.contact_id = t.contact_id and ${NOT_VOIDED('d')})),0) as cash

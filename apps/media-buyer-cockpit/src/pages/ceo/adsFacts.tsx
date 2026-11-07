@@ -145,6 +145,24 @@ export function introFigures(w: B2bAdWindow): IntroFigures {
   };
 }
 
+/** Intros held on their appointment day, each person credited to one ad. */
+export const INTRO_SHOWED_HINT =
+  "People with an intro marked showed or still confirmed after its time, on their appointment date. Each person is counted once and credited to one ad. A past confirmed status is an assumption, not proof of attendance. Intros without a contact or ad cannot be credited here.";
+export const DEMO_SHOW_RATE_HINT =
+  "Demos shown divided by all demos whose appointment time passed in these dates, including no-shows and cancellations. A past demo marked showed, confirmed, or invalid (disqualified) counts as shown. A past confirmed status is an assumption, not proof of attendance.";
+export function introShowedFigures(w: B2bAdWindow) {
+  const shown = w.introShowedLeads ?? null;
+  return {
+    shown,
+    cost:
+      shown !== null && shown > 0
+        ? Math.round((w.spend / shown) * 100) / 100
+        : null,
+    demoRate: shown !== null ? w.demoShowRate : null,
+    na: shown === null ? NA_REFRESH : NA_ZERO,
+  };
+}
+
 /** Frequency the way Ads Manager shows it: two decimals. */
 export const frequency = (n: number) => n.toFixed(2);
 
@@ -253,7 +271,7 @@ export const CONFIRMED_INTROS_HINT =
   "Each lead once: an intro marked showed or still confirmed after its time, or a non-cancelled demo booked for the same contact. A demo is treated as evidence of intro progression. Cost is spend over these leads.";
 
 export const DEMO_PROGRESSION_HINT =
-  "Leads from this period with a non-cancelled demo booked by the end of the period. Each lead counts once. A demo establishes intro progression even if the intro record is missing. Demo attended counts only a demo explicitly marked showed by the period end; it is not inferred from a booking.";
+  "Leads from this period with a non-cancelled demo booked by the end of the period. Each lead counts once. A demo establishes intro progression even if the intro record is missing. Demo attended counts a past demo marked showed, confirmed or invalid (disqualified), by the period end. A past confirmed status is an assumption, not proof of attendance. This follows leads created in these days; Sales counts calls on their appointment date, including calls without a linked ad.";
 
 export function demoFigures(w: B2bAdWindow) {
   const demos = w.leadsToProgressedDemo ?? null;

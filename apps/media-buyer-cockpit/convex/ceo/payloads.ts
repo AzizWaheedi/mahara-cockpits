@@ -1595,6 +1595,8 @@ export type B2bAdWindow = {
   qualifiedLeads: number;
   /** `roas-unprepared` contacts, shown but not in `leads`. */
   notReadyLeads: number;
+  /** Unique contacts with a past showed or confirmed intro in the selected appointment dates, credited to one ad. */
+  introShowedLeads?: number;
   introsBooked: number;
   /** Intros whose time has passed, the denominator of a show rate. */
   introsDue: number;

@@ -32,7 +32,7 @@ import { NOT_VOIDED, VOIDED, voidedDeals } from "../voids.js";
  * blame the creative for all of them.
  *
  * The ad funnel counts each lead once through intro, confirmed intro and demo.
- * Demo attendance requires an explicit showed status; a non-cancelled demo
+ * Demo attendance counts a past showed, confirmed or disqualified appointment; a non-cancelled demo
  * also establishes intro progression even when the intro record is missing.
  *
  * Seven days judges freshness and cost. Thirty days judges the funnel, because
@@ -96,7 +96,7 @@ export function treeSql(from7, from30, to) {
     const demo = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and coalesce(d.status, '') <> 'cancelled')`;
     const intro = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and coalesce(b.status, '') <> 'cancelled')`;
     const confirmed = `exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = 'intro' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and (b.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and b.start_at <= now() and b.status in ('showed','confirmed'))`;
-    const demoAttended = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and (d.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and d.start_at <= now() and d.status = 'showed')`;
+    const demoAttended = `exists (select 1 from public.calls d where d.contact_id = l.contact_id and d.call_type = 'demo' and d.booked_at >= l.lead_created_at and (d.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and (d.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} and d.start_at <= now() and d.status in ('showed','confirmed','invalid'))`;
     // `status` narrows which of the lead's calls count; null counts every call.
     const leadsBooked = (type, as, status = null) => `count(*) filter (where ${ROAS_LEAD} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}'${status ? ` and ${status}` : ""} and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)})) as ${as}`;
     const funnel = (from, alias) => `
@@ -119,7 +119,7 @@ export function treeSql(from7, from30, to) {
       -- count once"): a lead with a no-show and a rebooked intro is one intro.
       -- Booked at or after the lead arrived, by the window's last day, on the
       -- lead's own ad. A non-cancelled demo establishes intro progression.
-      -- Attendance counts only demos explicitly marked showed by the end date.
+      -- Attendance counts past demos marked showed, confirmed or invalid (disqualified) by the end date.
       count(*) filter (where ${ROAS_LEAD} and (${intro} or ${demo})) as leads_to_intro,
       count(*) filter (where ${ROAS_LEAD} and (${confirmed} or ${demo})) as leads_to_confirmed_intro,
       ${leadsBooked("demo", "leads_to_demo")},
@@ -129,6 +129,16 @@ export function treeSql(from7, from30, to) {
     where l.ad_id is not null
       and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
     group by 1),
+  ${alias}_intro_showed as (
+    select ad_id, count(*) as intro_showed_leads from (
+      select distinct on (c.contact_id) c.contact_id, c.ad_id
+      from credited_calls c
+      where c.call_type='intro' and nullif(c.contact_id,'') is not null and c.ad_id is not null
+        and exists (select 1 from public.meta_ad_snapshots s where s.ad_id=c.ad_id and s.date <= ${day(to)})
+        and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+        and c.start_at <= now() and c.status in ('showed','confirmed')
+      order by c.contact_id, c.start_at desc, c.ad_id
+    ) shown group by ad_id),
   ${alias}_calls as (
     -- The dashboard's dating (b2b_window_metrics): a booking counts on the
     -- day it was booked; due, shown, qualified and cancelled count on the
@@ -143,11 +153,11 @@ export function treeSql(from7, from30, to) {
         and exists (select 1 from public.calls d where d.contact_id = c.contact_id and d.call_type='demo' and d.booked_at >= c.start_at)) as intros_advanced,
       count(*) filter (where c.call_type='demo' and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}) as demos_booked,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.start_at <= now()) as demos_due,
-      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown,
-      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as demos_qualified,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.start_at <= now() and c.status in ('showed','confirmed','invalid'))) as demos_shown,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.start_at <= now() and c.status in ('showed','confirmed'))) as demos_qualified,
       -- Shown at least seven days before the window's last day: old enough for
       -- a close to have happened. Kept in the payload; no verdict reads it since 2026-10-18.
-      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} - 7 and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown_mature,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} - 7 and (c.start_at <= now() and c.status in ('showed','confirmed','invalid'))) as demos_shown_mature,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.status='cancelled') as demos_cancelled
     from credited_calls c
     where c.ad_id is not null
@@ -179,6 +189,7 @@ export function treeSql(from7, from30, to) {
     coalesce(${a}_leads.leads_to_demo,0) as ${a}_leads_to_demo,
     coalesce(${a}_leads.leads_to_progressed_demo,0) as ${a}_leads_to_progressed_demo,
     coalesce(${a}_leads.leads_to_demo_attended,0) as ${a}_leads_to_demo_attended,
+    coalesce(${a}_intro_showed.intro_showed_leads,0) as ${a}_intro_showed_leads,
     coalesce(${a}_calls.intros_booked,0) as ${a}_intros_booked,
     coalesce(${a}_calls.intros_due,0) as ${a}_intros_due,
     coalesce(${a}_calls.intros_shown,0) as ${a}_intros_shown,
@@ -267,10 +278,12 @@ select ident.*, public.b2b_campaign_type(ident.campaign_name) as campaign_type,
 from ident
 left join w7_ads on w7_ads.ad_id = ident.ad_id
 left join w7_leads on w7_leads.ad_id = ident.ad_id
+left join w7_intro_showed on w7_intro_showed.ad_id = ident.ad_id
 left join w7_calls on w7_calls.ad_id = ident.ad_id
 left join w7_deals on w7_deals.ad_id = ident.ad_id
 left join w30_ads on w30_ads.ad_id = ident.ad_id
 left join w30_leads on w30_leads.ad_id = ident.ad_id
+left join w30_intro_showed on w30_intro_showed.ad_id = ident.ad_id
 left join w30_calls on w30_calls.ad_id = ident.ad_id
 left join w30_deals on w30_deals.ad_id = ident.ad_id
 left join setters on setters.ad_id = ident.ad_id
@@ -294,6 +307,7 @@ const COUNTS = [
     "leadsToDemo",
     "leadsToProgressedDemo",
     "leadsToDemoAttended",
+    "introShowedLeads",
     "introsBooked",
     "introsDue",
     "introsShown",
@@ -320,6 +334,7 @@ const COLUMN = {
     leadsToDemo: "leads_to_demo",
     leadsToProgressedDemo: "leads_to_progressed_demo",
     leadsToDemoAttended: "leads_to_demo_attended",
+    introShowedLeads: "intro_showed_leads",
     introsBooked: "intros_booked",
     introsDue: "intros_due",
     introsShown: "intros_shown",
@@ -1071,7 +1086,7 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
         });
         notes.push({
             level: "info",
-            text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro or demo booked at or after they came in that was not cancelled. An intro marked invalid still counts. A confirmed intro is one whose intro showed or is still confirmed after its time, or whose non-cancelled demo was booked by the end of the period. A demo establishes intro progression even when the intro record is missing. Demos attended count only an explicit showed status, by the period end. These use current CRM statuses, so later corrections can change past periods. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before these thirty days still shows here, at $0 spend, when its leads, calls or deals fall inside them. Seven days judges cost and freshness; thirty days judges the funnel, because an intro takes days to be held. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
+            text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro or demo booked at or after they came in that was not cancelled. An intro marked invalid still counts. A confirmed intro is one whose intro showed or is still confirmed after its time, or whose non-cancelled demo was booked by the end of the period. A demo establishes intro progression even when the intro record is missing. Demos attended count a past demo marked showed, confirmed or invalid (disqualified) by the period end; confirmed is an assumption, not proof of attendance. These use current CRM statuses, so later corrections can change past periods. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before these thirty days still shows here, at $0 spend, when its leads, calls or deals fall inside them. Seven days judges cost and freshness; thirty days judges the funnel, because an intro takes days to be held. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
         });
         notes.push({
             level: "info",
