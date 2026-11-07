@@ -1,0 +1,2177 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="Thank You! Watch This Video Before Your Strategy Call." />
+<meta property="og:description" content="Thank You! Watch This Video Before Your Strategy Call." />
+<meta property="og:title" content="MaharaMedia | Construction &amp; Design Growth" />
+<link rel="icon" type="image/png" href="/assets/favicon.png" />
+<link rel="preconnect" href="https://connect.facebook.net" />
+<!-- Meta Pixel: PageView only. Lead and Schedule are sent server-side (CAPI). -->
+<script>
+!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+fbq('init','850580864362564');
+fbq('track','PageView');
+</script>
+<title>MaharaMedia | Construction &amp; Design Growth</title>
+
+<!--
+  GHL CUSTOM VALUES used in this page (replace at render time):
+  &#8226; {{contact.first_name}}  &#8212; buyer's first name (greeting)
+  &#8226; {{appointment.start_time}}  &#8212; human-formatted appointment time
+    (e.g. "Today at 10 AM" / "&#1575;&#1604;&#1610;&#1608;&#1605; &#1575;&#1604;&#1587;&#1575;&#1593;&#1577; 10 &#1589;&#1576;&#1575;&#1581;&#1575;&#1611;" &#8212; format via GHL workflow
+     into a custom value if your GHL build doesn't produce that string natively)
+  &#8226; {{contact.whatsapp_link}}  &#8212; pre-filled WhatsApp wa.me link (optional;
+     fallback shown below uses Mahara Media's main WhatsApp)
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500&family=Rubik:wght@300;400;500;600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'" /><noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500&family=Rubik:wght@300;400;500;600;700;800&display=swap" /></noscript>
+
+<style>
+  :root {
+    --deep-space: #091333;
+    --bg-elevated: #0E1A42;
+    --bg-card: #111e4d;
+    --mahara-teal: #00CFC8;
+    --teal-bright: #1BD9D2;
+    --teal-press: #00B3AD;
+    --teal-soft: rgba(0,207,200,0.12);
+    --royal-blue: #2E5BD6;
+    --fg: #f4f6fb;
+    --fg-muted: #aab3d1;
+    --fg-faint: #6b7497;
+    --border: rgba(255,255,255,0.09);
+    --border-strong: rgba(255,255,255,0.22);
+    --terracotta: #ff7a5c;
+    --success: #4ade80;
+    --mahara-gradient: linear-gradient(135deg, #2E5BD6 0%, #00CFC8 100%);
+    --glow-teal: 0 0 40px rgba(0,207,200,0.35);
+    --glow-teal-soft: 0 0 24px rgba(0,207,200,0.18);
+    --ease-brand: cubic-bezier(0.25, 0.1, 0.25, 1);
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+    --font-en: "Geist", "Helvetica Neue", system-ui, sans-serif;
+    --font-ar: "Rubik", "Geist", system-ui, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, monospace;
+    --content-max: 760px;
+    --content-pad: clamp(20px, 5vw, 48px);
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--deep-space); color: var(--fg);
+    font-family: var(--font-ar); font-size: 17px; line-height: 1.7; font-weight: 400;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+    padding-bottom: 80px;
+  }
+  body[data-lang="en"] { font-family: var(--font-en); direction: ltr; }
+  body[data-lang="ar"] { font-family: var(--font-ar); }
+  ::selection { background: var(--mahara-teal); color: var(--deep-space); }
+
+  /* ------- AMBIENT ------- */
+  .ambient {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(46,91,214,0.22), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 90% 30%, rgba(0,207,200,0.10), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 10% 70%, rgba(46,91,214,0.10), transparent 60%);
+  }
+  .grid-overlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, #000 30%, transparent 80%);
+  }
+
+  /* ------- TOPBAR ------- */
+  .topbar {
+    position: fixed; top: 16px; left: 0; right: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 var(--content-pad); pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(9,19,51,0.6);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 10px 18px; text-decoration: none;
+    transition: border-color 280ms var(--ease-out-quart), background 280ms;
+  }
+  .brand:hover { border-color: rgba(0,207,200,0.4); background: rgba(9,19,51,0.85); }
+  .brand img { height: 18px; width: auto; display: block; filter: drop-shadow(0 0 12px rgba(0,207,200,0.25)); }
+
+  .lang-toggle {
+    display: inline-flex;
+    background: rgba(9,19,51,0.65);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px;
+    font-family: var(--font-en); font-size: 12px; font-weight: 600; letter-spacing: 0.06em;
+    position: relative;
+  }
+  .lang-toggle button {
+    background: transparent; border: 0; color: #d6dcee;
+    padding: 8px 14px; border-radius: 999px; cursor: pointer;
+    z-index: 2; position: relative;
+    transition: color 200ms var(--ease-brand);
+    font-family: inherit; font-size: inherit; font-weight: inherit; letter-spacing: inherit;
+  }
+  .lang-toggle button.active { color: var(--deep-space); }
+  .lang-toggle .pill {
+    position: absolute; top: 4px; bottom: 4px;
+    width: calc(50% - 4px); background: var(--mahara-teal);
+    border-radius: 999px;
+    transition: transform 320ms var(--ease-brand);
+    z-index: 1; box-shadow: 0 0 18px rgba(0,207,200,0.4);
+  }
+  body[dir="rtl"][data-lang="ar"] .lang-toggle .pill { left: auto; right: 4px; transform: translateX(0); }
+  body[dir="rtl"][data-lang="en"] .lang-toggle .pill { left: auto; right: 4px; transform: translateX(100%); }
+  body[dir="ltr"][data-lang="en"] .lang-toggle .pill { left: 4px; transform: translateX(100%); }
+  body[dir="ltr"][data-lang="ar"] .lang-toggle .pill { left: 4px; transform: translateX(0); }
+
+  /* lang vis */
+  [data-only="ar"], [data-only="en"] { display: none; }
+  body[data-lang="ar"] [data-only="ar"] { display: revert; }
+  body[data-lang="en"] [data-only="en"] { display: revert; }
+
+  /* ------- LAYOUT ------- */
+  main { position: relative; z-index: 1; }
+  .section {
+    max-width: var(--content-max); margin: 0 auto;
+    padding: clamp(32px, 5vw, 56px) var(--content-pad);
+    position: relative;
+  }
+  body[data-lang="ar"] .section { text-align: right; }
+  body[data-lang="en"] .section { text-align: left; }
+
+  h1, h2, h3, h4 { font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 24px; }
+  body[data-lang="ar"] h1, body[data-lang="ar"] h2, body[data-lang="ar"] h3, body[data-lang="ar"] h4 { letter-spacing: 0; line-height: 1.3; }
+  h1 { font-size: clamp(32px, 5.4vw, 56px); font-weight: 800; letter-spacing: -0.03em; }
+  h2 { font-size: clamp(26px, 3.4vw, 36px); }
+  h3 { font-size: clamp(20px, 2.4vw, 26px); }
+  h4 { font-size: clamp(17px, 1.8vw, 20px); }
+  p { margin: 0 0 16px; color: var(--fg); }
+  p.lead { font-size: clamp(18px, 2vw, 21px); line-height: 1.6; color: var(--fg-muted); }
+  .muted { color: var(--fg-muted); }
+  strong, b { font-weight: 700; color: #fff; }
+
+  /* ------- HERO ------- */
+  .hero {
+    padding-top: clamp(120px, 16vh, 170px);
+    padding-bottom: clamp(40px, 5vw, 60px);
+    text-align: center; max-width: 820px;
+  }
+  body[data-lang="ar"] .hero, body[data-lang="en"] .hero { text-align: center; }
+  .hero .eyebrow { margin: 0 auto 20px; }
+  .hero h1 { margin-bottom: 24px; }
+  .hero h1 .name {
+    background: var(--mahara-gradient);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+  }
+  .hero h1 .appt {
+    background: var(--mahara-gradient);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+    white-space: nowrap;
+  }
+  .hero .lead { max-width: 620px; margin: 0 auto 28px; font-size: clamp(17px, 1.8vw, 19px); color: var(--fg-muted); }
+  .add-cal {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--font-en); font-size: 13px; font-weight: 600;
+    padding: 10px 18px; border-radius: 999px;
+    background: rgba(255,255,255,0.05); color: var(--fg);
+    border: 1px solid var(--border); text-decoration: none;
+    transition: border-color 200ms, background 200ms;
+  }
+  body[data-lang="ar"] .add-cal { font-family: var(--font-ar); }
+  .add-cal:hover { border-color: rgba(0,207,200,0.4); background: rgba(0,207,200,0.06); }
+  .atc-wrap { display: flex; justify-content: center; margin-top: 40px; position: relative; z-index: 30; }
+  .mah-atc { position: relative; }
+  .mah-atc-btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: #00CFC8; color: #fff; border: 0; border-radius: 999px;
+    padding: 11px 20px; font-size: 15px; font-weight: 700; font-family: inherit;
+    cursor: pointer; box-shadow: 0 4px 10px -2px rgba(0,0,0,.2); transition: background 150ms;
+  }
+  .mah-atc-btn:hover { background: #1d4ed8; }
+  body[data-lang="ar"] .mah-atc-btn { font-family: var(--font-ar); }
+  .mah-atc-menu {
+    position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+    min-width: 220px; background: #ffffff; border-radius: 14px;
+    box-shadow: 0 14px 40px rgba(0,0,0,.35); padding: 6px; display: none; z-index: 2147483000;
+  }
+  .mah-atc.open .mah-atc-menu { display: block; }
+  .mah-atc-menu a {
+    display: block; padding: 10px 14px; border-radius: 9px; color: #1f2937;
+    text-decoration: none; font-size: 14.5px; font-weight: 600; text-align: center;
+    direction: ltr; transition: background 150ms;
+  }
+  .mah-atc-menu a:hover { background: #f3f4f6; color: #111827; }
+
+  /* ------- EYEBROW ------- */
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--font-en); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--mahara-teal); margin-bottom: 16px;
+    padding: 6px 12px; border: 1px solid rgba(0,207,200,0.3);
+    border-radius: 999px; background: rgba(0,207,200,0.05);
+  }
+  .eyebrow-num { font-family: var(--font-mono); color: var(--fg-muted); }
+
+  /* ------- BUTTONS ------- */
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--font-en); font-size: 15px; font-weight: 600;
+    letter-spacing: 0.01em; padding: 16px 28px;
+    border-radius: 12px; border: 0; cursor: pointer; text-decoration: none;
+    transition: transform 200ms var(--ease-brand), background 200ms, box-shadow 300ms;
+    white-space: nowrap;
+  }
+  body[data-lang="ar"] .btn { font-family: var(--font-ar); letter-spacing: 0; }
+  .btn-primary { background: var(--mahara-teal); color: var(--deep-space); box-shadow: var(--glow-teal-soft); }
+  .btn-primary:hover { background: var(--teal-bright); box-shadow: var(--glow-teal); transform: translateY(-1px); }
+  .btn-primary:active { transform: scale(0.98); background: var(--teal-press); }
+  .btn-ghost { background: transparent; color: var(--fg); border: 1px solid var(--border-strong); }
+  .btn-ghost:hover { border-color: #fff; color: #fff; }
+  .btn .arrow { transition: transform 240ms var(--ease-brand); display: inline-block; }
+  body[data-lang="ar"] .btn .arrow { transform: scaleX(-1); }
+  .btn:hover .arrow { transform: translateX(4px); }
+  body[data-lang="ar"] .btn:hover .arrow { transform: scaleX(-1) translateX(4px); }
+  :focus-visible { outline: 2px solid var(--mahara-teal); outline-offset: 3px; border-radius: 4px; }
+
+  /* ------- CALL PREVIEW (what we'll cover) ------- */
+  .call-preview {
+    margin-top: 36px;
+    padding: 28px clamp(20px, 3vw, 32px) 32px;
+    background:
+      radial-gradient(ellipse 60% 40% at 50% 0%, rgba(0,207,200,0.08), transparent 70%),
+      linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.01));
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    text-align: start;
+    position: relative;
+    overflow: hidden;
+  }
+  .call-preview-head { margin-bottom: 22px; text-align: center; }
+  .call-preview-eye {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-en); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--mahara-teal); padding: 5px 12px;
+    border: 1px solid rgba(0,207,200,0.3); border-radius: 999px;
+    background: rgba(0,207,200,0.05); margin-bottom: 14px;
+  }
+  body[data-lang="ar"] .call-preview-eye { font-family: var(--font-ar); letter-spacing: 0.05em; }
+  .call-preview h3 { margin: 0; font-size: clamp(20px, 2.4vw, 26px); letter-spacing: -0.01em; }
+  .call-preview-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px;
+  }
+  .preview-item {
+    display: grid; grid-template-columns: auto 1fr; gap: 14px;
+    padding: 16px; background: rgba(255,255,255,0.025);
+    border: 1px solid var(--border); border-radius: 12px;
+    transition: border-color 220ms, background 220ms, transform 220ms var(--ease-out-quart);
+  }
+  .preview-item:hover { border-color: rgba(0,207,200,0.35); background: rgba(0,207,200,0.05); transform: translateY(-1px); }
+  .preview-num {
+    font-family: var(--font-mono); font-size: 13px;
+    color: var(--mahara-teal); background: var(--teal-soft);
+    border: 1px solid rgba(0,207,200,0.3);
+    padding: 4px 8px; border-radius: 8px;
+    height: fit-content; line-height: 1; letter-spacing: 0.04em;
+  }
+  .preview-text strong { font-size: 14px; color: #fff; display: block; margin-bottom: 4px; line-height: 1.4; }
+  .preview-text p { font-size: 13px; color: var(--fg-muted); line-height: 1.55; margin: 0; }
+  @media (max-width: 640px) {
+    .call-preview-grid { grid-template-columns: 1fr; }
+  }
+
+
+  /* ------- LIVE COUNTDOWN CHIP ------- */
+  .hero-pills {
+    display: inline-flex; align-items: center; gap: 10px;
+    flex-wrap: wrap; justify-content: center;
+  }
+  .countdown {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--mahara-teal);
+    padding: 9px 14px;
+    background: var(--teal-soft);
+    border: 1px solid rgba(0,207,200,0.35);
+    border-radius: 999px;
+    transition: color 240ms, background 240ms, border-color 240ms;
+  }
+  body[data-lang="ar"] .countdown { font-family: var(--font-ar); letter-spacing: 0; }
+  .countdown-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--mahara-teal);
+    box-shadow: 0 0 8px var(--mahara-teal);
+    animation: livePulse 1.6s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  .countdown.urgent { color: #FFD400; background: rgba(255,212,0,0.10); border-color: rgba(255,212,0,0.45); }
+  .countdown.urgent .countdown-dot { background: #FFD400; box-shadow: 0 0 10px #FFD400; }
+  .countdown.live { color: var(--terracotta); background: rgba(255,122,92,0.12); border-color: rgba(255,122,92,0.45); }
+  .countdown.live .countdown-dot { background: var(--terracotta); box-shadow: 0 0 10px var(--terracotta); }
+
+  /* ------- WHATSAPP SHORTCUT (small option below main confirm) ------- */
+  .wa-confirm {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-top: 14px;
+    padding: 9px 16px;
+    font-family: var(--font-en); font-size: 13px; font-weight: 600;
+    color: #25D366;
+    background: rgba(37,211,102,0.08);
+    border: 1px solid rgba(37,211,102,0.32);
+    border-radius: 999px;
+    text-decoration: none;
+    transition: background 200ms, border-color 200ms, transform 200ms var(--ease-out-quart);
+    align-self: center;
+  }
+  body[data-lang="ar"] .wa-confirm { font-family: var(--font-ar); }
+  .wa-confirm:hover {
+    background: rgba(37,211,102,0.18);
+    border-color: #25D366;
+    transform: translateY(-1px);
+  }
+  .wa-confirm svg { width: 14px; height: 14px; }
+  .wa-confirm .wa-arrow { transition: transform 200ms; font-family: var(--font-mono); }
+  body[data-lang="ar"] .wa-confirm .wa-arrow { transform: scaleX(-1); }
+  .wa-confirm:hover .wa-arrow { transform: translateX(3px); }
+  body[data-lang="ar"] .wa-confirm:hover .wa-arrow { transform: scaleX(-1) translateX(3px); }
+  .confirm-wrap { display: flex; flex-direction: column; align-items: stretch; }
+
+  /* ------- PRE-CALL CHECKLIST ------- */
+  .checklist {
+    display: flex; flex-direction: column; gap: 12px;
+    margin: 22px 0 18px;
+  }
+  .check-item {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 16px 18px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color 240ms var(--ease-out-quart), background 240ms;
+    position: relative;
+  }
+  .check-item:hover { border-color: rgba(0,207,200,0.32); background: rgba(0,207,200,0.04); }
+  .check-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    width: 0; height: 0;
+  }
+  .check-mark {
+    width: 24px; height: 24px;
+    border-radius: 7px;
+    border: 1.5px solid var(--border-strong);
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 280ms var(--ease-out-quart);
+    color: transparent;
+  }
+  .check-mark svg { width: 14px; height: 14px; transform: scale(0.4); opacity: 0; transition: all 240ms var(--ease-out-quart); }
+  .check-input:checked ~ .check-mark {
+    background: var(--mahara-teal);
+    border-color: var(--mahara-teal);
+    box-shadow: 0 0 14px rgba(0,207,200,0.4);
+    color: var(--deep-space);
+  }
+  .check-input:checked ~ .check-mark svg { transform: scale(1); opacity: 1; }
+  .check-text {
+    flex: 1;
+    font-size: 15px; line-height: 1.5;
+    color: var(--fg);
+    transition: color 240ms, opacity 240ms;
+  }
+  .check-item:has(.check-input:checked) {
+    background: rgba(0,207,200,0.05);
+    border-color: rgba(0,207,200,0.35);
+  }
+  .check-item:has(.check-input:checked) .check-text {
+    color: var(--fg-muted);
+  }
+  .checklist-status {
+    margin-top: 8px; padding: 14px 18px;
+    background: linear-gradient(90deg, rgba(0,207,200,0.08), rgba(46,91,214,0.04));
+    border: 1px solid rgba(0,207,200,0.25);
+    border-radius: 12px;
+    font-size: 14px; color: var(--fg);
+    display: flex; align-items: center; gap: 10px;
+    opacity: 0.55; transition: opacity 320ms, background 320ms, border-color 320ms;
+  }
+  .checklist-status.ready { opacity: 1; background: linear-gradient(90deg, rgba(0,207,200,0.18), rgba(46,91,214,0.10)); border-color: var(--mahara-teal); }
+  .checklist-status .ready-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--mahara-teal); color: var(--deep-space);
+    font-weight: 700;
+    transition: transform 320ms var(--ease-out-quart);
+  }
+  .checklist-status.ready .ready-badge { transform: scale(1.08); box-shadow: 0 0 16px rgba(0,207,200,0.5); }
+
+  /* ------- VIDEO ------- */
+  .video {
+    position: relative; border-radius: 16px; overflow: hidden;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    aspect-ratio: 16 / 9;
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,0.6);
+    margin-top: 28px;
+  }
+  .video iframe, .video wistia-player { width: 100%; height: 100%; position: absolute; inset: 0; border: 0; display: block; }
+  .faq-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 26px; }
+  .faq-grid .video { margin-top: 0; }
+  @media (max-width: 880px) { .faq-grid { grid-template-columns: 1fr; } .testimonials { grid-template-columns: 1fr; } }
+  .faq-v-featured { position: relative; }
+  .faq-v-featured .video { border: 1.5px solid rgba(0,207,200,0.65); box-shadow: 0 0 30px -6px rgba(0,207,200,0.55); }
+  .proof-more {
+    margin-top: 26px; padding: 18px; border-radius: 14px;
+    border: 1px solid rgba(0,207,200,0.35); background: var(--teal-soft);
+  }
+  .proof-more-title { margin: 0 0 14px; font-weight: 700; font-size: 15px; text-align: center; color: #fff; }
+  .proof-more .video { margin-top: 0; }
+  .faq-v-badge {
+    position: absolute; top: -12px; inset-inline-start: 14px; z-index: 3;
+    background: var(--mahara-teal); color: #04121a;
+    font-size: 11.5px; font-weight: 800; letter-spacing: 0.01em;
+    padding: 4px 11px; border-radius: 999px; white-space: nowrap;
+    box-shadow: 0 4px 12px -2px rgba(0,0,0,0.4);
+  }
+  .doc-modal { position: fixed; inset: 0; z-index: 9999; display: none; background: rgba(3,7,23,0.86); backdrop-filter: blur(4px); }
+  .doc-modal.open { display: flex; flex-direction: column; }
+  .doc-modal-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: var(--bg-elevated); border-bottom: 1px solid var(--border); }
+  .doc-modal-title { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); font-family: var(--font-mono); }
+  .doc-modal-close { appearance: none; border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: #fff; width: 34px; height: 34px; border-radius: 50%; font-size: 15px; line-height: 1; cursor: pointer; transition: 150ms; }
+  .doc-modal-close:hover { background: var(--mahara-teal); color: #04121a; border-color: var(--mahara-teal); }
+  .doc-modal iframe { flex: 1 1 auto; width: 100%; border: 0; background: #0b1020; }
+  body.doc-open { overflow: hidden; }
+  .reveal > .step-tag, .reveal > .eyebrow { display: flex; width: fit-content; margin-inline: auto; }
+  .reveal > h2 { text-align: center; }
+  .reveal > p.muted { text-align: center; }
+  .faq-grid { margin-top: 20px; }
+
+  /* ------- STEP CARD ------- */
+  .step-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: clamp(28px, 4vw, 44px);
+    position: relative; overflow: hidden;
+  }
+  .step-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--mahara-teal);
+    padding: 6px 12px;
+    background: var(--teal-soft);
+    border: 1px solid rgba(0,207,200,0.3);
+    border-radius: 999px;
+    margin-bottom: 18px;
+  }
+  .step-tag .step-sub {
+    font-family: inherit; color: var(--fg-muted);
+    letter-spacing: 0.14em;
+  }
+
+  /* Confirm channels (WhatsApp / Email) */
+  .channels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 20px 0 24px;
+  }
+  .channel {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    transition: border-color 240ms var(--ease-out-quart), background 240ms;
+  }
+  .channel:hover { border-color: var(--border-strong); background: rgba(255,255,255,0.05); }
+  .channel-head {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px;
+  }
+  .channel-icon {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .channel-icon.wa { background: rgba(37,211,102,0.15); color: #25D366; }
+  .channel-icon.em { background: var(--teal-soft); color: var(--mahara-teal); }
+  .channel-icon svg { width: 20px; height: 20px; }
+  .channel-name {
+    font-family: var(--font-en); font-weight: 700; font-size: 15px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  body[data-lang="ar"] .channel-name { font-family: var(--font-ar); letter-spacing: 0; text-transform: none; }
+  .channel p { font-size: 14px; color: var(--fg-muted); margin: 0; line-height: 1.6; }
+  .yes-key {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--mahara-gradient);
+    color: var(--deep-space);
+    border-radius: 4px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    letter-spacing: 0.05em;
+  }
+  .or-divider {
+    display: flex; align-items: center; gap: 14px;
+    margin: 22px 0; color: var(--fg-faint);
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em;
+  }
+  .or-divider::before, .or-divider::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+  }
+
+  /* confirm button */
+  .confirm-btn {
+    width: 100%; padding: 18px 24px;
+    border: 0; border-radius: 14px;
+    background: var(--mahara-gradient);
+    color: #fff; font-family: var(--font-en);
+    font-weight: 700; font-size: 17px; letter-spacing: 0.01em;
+    cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    transition: transform 200ms var(--ease-out-quart), box-shadow 300ms, filter 240ms;
+    box-shadow: 0 8px 30px -8px rgba(0,207,200,0.4);
+  }
+  body[data-lang="ar"] .confirm-btn { font-family: var(--font-ar); }
+  .confirm-btn:hover { transform: translateY(-2px); box-shadow: 0 14px 40px -10px rgba(0,207,200,0.55); filter: brightness(1.08); }
+  .confirm-btn:active { transform: scale(0.99); }
+  .confirm-btn .check {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(255,255,255,0.25);
+    display: flex; align-items: center; justify-content: center;
+    transition: background 280ms, transform 280ms;
+  }
+  .confirm-btn .check svg { width: 13px; height: 13px; }
+  .confirm-btn.confirmed { background: linear-gradient(135deg, #4ade80 0%, #00CFC8 100%); }
+  .confirm-btn.confirmed .check { background: rgba(255,255,255,0.35); transform: rotate(360deg); }
+
+  /* ------- DUE DILIGENCE BUTTONS (made obviously button-like) ------- */
+  .dd-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin-top: 24px;
+  }
+  .dd-card {
+    background: linear-gradient(180deg, rgba(0,207,200,0.10), rgba(46,91,214,0.04));
+    border: 1.5px solid rgba(0,207,200,0.4);
+    border-radius: 16px;
+    padding: 22px 24px;
+    text-decoration: none;
+    color: var(--fg);
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    transition: transform 280ms var(--ease-out-quart), border-color 280ms, background 280ms, box-shadow 280ms;
+    position: relative; overflow: hidden;
+    box-shadow: 0 4px 20px -8px rgba(0,207,200,0.25);
+  }
+  .dd-card::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(0,207,200,0.18), transparent 60%);
+    opacity: 0; transition: opacity 300ms;
+    pointer-events: none;
+  }
+  .dd-card:hover {
+    border-color: var(--mahara-teal);
+    transform: translateY(-3px);
+    box-shadow: 0 14px 36px -10px rgba(0,207,200,0.5);
+  }
+  .dd-card:hover::after { opacity: 1; }
+  .dd-icon {
+    width: 48px; height: 48px; flex-shrink: 0;
+    border-radius: 12px;
+    background: var(--mahara-teal);
+    color: var(--deep-space);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 24px rgba(0,207,200,0.45);
+    position: relative; z-index: 1;
+  }
+  .dd-icon svg { width: 24px; height: 24px; }
+  .dd-body { flex: 1; position: relative; z-index: 1; }
+  .dd-title {
+    font-weight: 700; font-size: 16px; margin: 0 0 4px; color: #fff; line-height: 1.3;
+  }
+  .dd-card p { font-size: 13px; color: var(--fg-muted); margin: 0 0 10px; line-height: 1.5; }
+  .dd-cta {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-en);
+    font-size: 12px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--mahara-teal);
+    padding: 5px 10px;
+    background: rgba(0,207,200,0.12);
+    border: 1px solid rgba(0,207,200,0.4);
+    border-radius: 999px;
+    transition: background 200ms, color 200ms;
+  }
+  body[data-lang="ar"] .dd-cta { font-family: var(--font-ar); letter-spacing: 0.04em; text-transform: none; }
+  .dd-card:hover .dd-cta {
+    background: var(--mahara-teal);
+    color: var(--deep-space);
+  }
+  .dd-cta-arrow {
+    transition: transform 240ms var(--ease-out-quart);
+    display: inline-block;
+  }
+  body[data-lang="ar"] .dd-cta-arrow { transform: scaleX(-1); }
+  .dd-card:hover .dd-cta-arrow { transform: translateX(3px); }
+  body[data-lang="ar"] .dd-card:hover .dd-cta-arrow { transform: scaleX(-1) translateX(3px); }
+
+  /* ------- FAQ ACCORDION ------- */
+  .faq-list { display: flex; flex-direction: column; }
+  .faq-item { border-bottom: 1px solid var(--border); }
+  .faq-item:first-child { border-top: 1px solid var(--border); }
+  .faq-trigger {
+    width: 100%; background: transparent; border: 0;
+    padding: 24px 4px; cursor: pointer;
+    display: flex; align-items: flex-start; gap: 20px;
+    color: var(--fg); font-family: inherit;
+    font-size: 18px; font-weight: 600; line-height: 1.4;
+    transition: color 200ms;
+  }
+  body[data-lang="en"] .faq-trigger { text-align: left; }
+  body[data-lang="ar"] .faq-trigger { text-align: right; }
+  .faq-trigger:hover { color: #fff; }
+  .faq-num {
+    font-family: var(--font-mono); font-size: 13px;
+    color: var(--mahara-teal); min-width: 28px; padding-top: 4px;
+    letter-spacing: 0.04em;
+  }
+  .faq-q { flex: 1; }
+  .faq-chevron {
+    width: 28px; height: 28px; border-radius: 8px;
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: transform 260ms var(--ease-brand), border-color 200ms, background 200ms;
+    color: var(--fg-muted);
+  }
+  .faq-trigger:hover .faq-chevron { border-color: var(--mahara-teal); color: var(--mahara-teal); }
+  .faq-item.open .faq-chevron { transform: rotate(180deg); background: var(--teal-soft); border-color: var(--mahara-teal); color: var(--mahara-teal); }
+  .faq-body { max-height: 0; overflow: hidden; transition: max-height 360ms var(--ease-brand); }
+  .faq-body-inner { padding: 0 4px 28px; padding-inline-start: 48px; color: var(--fg-muted); }
+  .faq-body-inner .video { margin-top: 20px; }
+
+  /* ------- TESTIMONIALS ------- */
+  .testimonials {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 16px; margin-top: 24px;
+  }
+  .testimonial {
+    padding: 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    transition: transform 240ms var(--ease-out-quart), border-color 240ms;
+  }
+  .testimonial:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+  .testimonial .video { margin-top: 0; aspect-ratio: 16/9; }
+  .testimonial .video.ar-43 { aspect-ratio: 4/3; }
+
+  /* ------- REVIEWS ------- */
+  .reviews-wrap {
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 20px; margin-top: 32px; min-height: 200px; position: relative;
+  }
+  .reviews-wrap::before {
+    content: "Google Reviews";
+    display: block; font-family: var(--font-en); font-size: 11px;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--fg-muted); margin-bottom: 12px;
+  }
+
+  /* ------- RESEARCH BLOCK ------- */
+  .research {
+    margin-top: 24px;
+    padding: 28px 32px;
+    background: linear-gradient(180deg, rgba(0,207,200,0.06), rgba(46,91,214,0.04));
+    border: 1px solid rgba(0,207,200,0.25);
+    border-radius: 18px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 20px;
+    align-items: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .research::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 80% 30%, rgba(0,207,200,0.08), transparent 60%);
+    pointer-events: none;
+  }
+  .research-icon {
+    width: 56px; height: 56px;
+    border-radius: 14px;
+    background: var(--teal-soft);
+    border: 1px solid rgba(0,207,200,0.3);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--mahara-teal);
+    position: relative;
+  }
+  .research-icon svg { width: 28px; height: 28px; }
+  .research-icon::after {
+    content: ""; position: absolute;
+    inset-inline-end: -3px; top: -3px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--mahara-teal);
+    box-shadow: 0 0 12px var(--mahara-teal);
+    animation: researchPulse 2s ease-in-out infinite;
+  }
+  @keyframes researchPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50%      { transform: scale(1.25); opacity: 0.7; }
+  }
+  .research-body h4 { margin: 0 0 6px; font-size: 17px; color: #fff; }
+  .research-body p { margin: 0; font-size: 14px; color: var(--fg-muted); line-height: 1.6; }
+
+  /* ------- STICKY BOTTOM REMINDER ------- */
+  .sticky-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+    background: rgba(9,19,51,0.92);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-top: 1px solid var(--border);
+    padding: 12px var(--content-pad);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px;
+    transform: translateY(100%);
+    transition: transform 400ms var(--ease-out-quart);
+  }
+  .sticky-bar.visible { transform: translateY(0); }
+  .sticky-bar.confirmed { transform: translateY(100%); }
+  .sticky-text {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 14px; color: var(--fg);
+  }
+  .sticky-text .live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--terracotta);
+    animation: livePulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes livePulse {
+    0%, 100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 0 rgba(255,122,92,0.6); }
+    50%      { transform: scale(1.15); opacity: 0.85; box-shadow: 0 0 0 8px rgba(255,122,92,0); }
+  }
+  .sticky-bar .btn { padding: 10px 18px; font-size: 13px; }
+
+  /* ------- REVEAL ANIMATIONS ------- */
+  .reveal { transition: transform 900ms var(--ease-out-expo), filter 1100ms var(--ease-out-expo), opacity 1100ms var(--ease-out-expo); }
+  .js-reveal .reveal { transform: translate3d(0, 32px, 0); }
+  .reveal.in, .js-reveal .reveal.in { transform: translate3d(0, 0, 0); filter: none; }
+  .reveal.fade-in { transition: opacity 1100ms var(--ease-out-expo), transform 900ms var(--ease-out-expo); }
+  .js-reveal .reveal.fade-in { opacity: 0; transform: translate3d(0, 14px, 0); }
+  .reveal.fade-in.in, .js-reveal .reveal.fade-in.in { opacity: 1; transform: translate3d(0, 0, 0); }
+
+  @supports (animation-timeline: view()) {
+    .js-reveal .reveal, .js-reveal .reveal.in {
+      transition: none;
+      animation: rev linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 30%;
+    }
+    .js-reveal .reveal.fade-in, .js-reveal .reveal.fade-in.in {
+      transition: none;
+      animation: revFade linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 35%;
+    }
+    @keyframes rev { from { transform: translate3d(0, 40px, 0); } to { transform: none; } }
+    @keyframes revFade { from { opacity: 0; transform: translate3d(0, 20px, 0); } to { opacity: 1; transform: none; } }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal, .reveal.fade-in { transition: none; transform: none; opacity: 1; }
+    .research-icon::after, .sticky-text .live-dot { animation: none; }
+  }
+
+  /* ------- RESPONSIVE ------- */
+  @media (max-width: 720px) {
+    .channels, .dd-grid { grid-template-columns: 1fr; }
+    .testimonials { grid-template-columns: 1fr; gap: 12px; }
+    .research { grid-template-columns: 1fr; }
+    body { padding-bottom: 110px; }
+    .sticky-bar { flex-direction: column; gap: 8px; align-items: stretch; padding: 10px 16px; }
+    .sticky-bar .btn { width: 100%; justify-content: center; }
+  }
+  @media (max-width: 560px) {
+    .brand { display: none; }
+  }
+
+  /* ------- CONFETTI CANVAS ------- */
+  #confetti-canvas {
+    position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  }
+
+  /* ============ GHL PARAGRAPH BRIDGE ============
+     Hide any element with class 'ghl-bridge' (added by user to a GHL Text
+     element that contains substituted tokens for our JS to read). */
+  .ghl-bridge, [class*="ghl-bridge"] { display: none !important; height: 0 !important; overflow: hidden !important; }
+</style>
+<style>body>*{line-height:normal}html{overflow-x:clip}</style>
+</head>
+<body data-lang="ar" dir="rtl">
+<noscript><img height="1" width="1" style="display:none" alt="" src="https://www.facebook.com/tr?id=850580864362564&ev=PageView&noscript=1"/></noscript>
+
+<div class="ambient" aria-hidden="true"></div>
+<div class="grid-overlay" aria-hidden="true"></div>
+
+<header class="topbar">
+  <a href="#" class="brand" aria-label="Mahara Media">
+    <img src="/assets/img/40d80223dceb.png" alt="Mahara Media" />
+  </a>
+  <div class="lang-toggle" role="tablist" aria-label="Language">
+    <span class="pill" aria-hidden="true"></span>
+    <button type="button" role="tab" data-lang-btn="ar" class="active" aria-selected="true">AR</button>
+    <button type="button" role="tab" data-lang-btn="en" aria-selected="false">EN</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ HERO ============ -->
+  <section class="section hero">
+    <div class="reveal fade-in">
+      <div class="eyebrow">
+        <span class="eyebrow-num">&#9679;</span>
+        <span data-only="ar">&#1582;&#1591;&#1608;&#1577; &#1608;&#1581;&#1583;&#1577; &#1576;&#1575;&#1602;&#1610;&#1577;</span>
+        <span data-only="en">One step left</span>
+      </div>
+
+      <h1>
+        <span data-only="ar">&#1575;&#1606;&#1578;&#1592;&#1585;<span class="name-slot">&#1548; <span class="name">{{contact.first_name}}</span></span>!</span>
+        <span data-only="en">Wait<span class="name-slot">, <span class="name">{{contact.first_name}}</span></span>!</span>
+        <br/>
+        <span data-only="ar">&#1588;&#1608;&#1601; &#1607;&#1584;&#1575; &#1602;&#1576;&#1604; &#1605;&#1603;&#1575;&#1604;&#1605;&#1578;&#1606;&#1575;<span class="appt-slot"> <span class="appt">{{appointment.start_time}}</span></span>.</span>
+        <span data-only="en">Watch this before our call<span class="appt-slot"> <span class="appt">{{appointment.start_time}}</span></span>.</span>
+      </h1>
+
+      <div class="hero-pills">
+        <span id="ghl-appt-time" style="display:none" aria-hidden="true">{{appointment.start_time}}</span>
+        <div class="countdown">
+          <span class="countdown-dot"></span>
+          <span class="countdown-text">&#8212;</span>
+        </div>
+        <span id="ghl-cal-link" style="display:none" aria-hidden="true">{{appointment.add_to_google_calendar_link}}</span>
+      </div>
+    </div>
+
+    <div class="video main-video">
+      <div id="vidalytics_embed_q1tyrkn6TsMMBLOR" style="width: 100%; position:relative; padding-top: 56.25%;"></div>
+      <script type="text/javascript">
+      (function (v, i, d, a, l, y, t, c, s) {
+          y='_'+d.toLowerCase();c=d+'L';if(!v[d]){v[d]={};}if(!v[c]){v[c]={};}if(!v[y]){v[y]={};}var vl='Loader',vli=v[y][vl],vsl=v[c][vl + 'Script'],vlf=v[c][vl + 'Loaded'],ve='Embed';
+          if (!vsl){vsl=function(u,cb){
+              if(t){cb();return;}s=i.createElement("script");s.type="text/javascript";s.async=1;s.src=u;
+              if(s.readyState){s.onreadystatechange=function(){if(s.readyState==="loaded"||s.readyState=="complete"){s.onreadystatechange=null;vlf=1;cb();}};}else{s.onload=function(){vlf=1;cb();};}
+              i.getElementsByTagName("head")[0].appendChild(s);
+          };}
+          vsl(l+'loader.min.js',function(){if(!vli){var vlc=v[c][vl];vli=new vlc();}vli.loadScript(l+'player.min.js',function(){var vec=v[d][ve];t=new vec();t.run(a);});});
+      })(window, document, 'Vidalytics', 'vidalytics_embed_q1tyrkn6TsMMBLOR', 'https://fast.vidalytics.com/embeds/PkVfYw7p/q1tyrkn6TsMMBLOR/');
+      </script>
+    </div>
+
+    <div class="atc-wrap">
+      <div class="mah-atc" id="mah-atc">
+        <button type="button" class="mah-atc-btn" id="mah-atc-btn" aria-haspopup="true" aria-expanded="false">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span data-only="ar">&#1571;&#1590;&#1601; &#1573;&#1604;&#1609; &#1575;&#1604;&#1578;&#1602;&#1608;&#1610;&#1605;</span>
+          <span data-only="en">Add to Calendar</span>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.6"/><line x1="2" y1="6" x2="14" y2="6" stroke="currentColor" stroke-width="1.6"/><line x1="5" y1="1.5" x2="5" y2="4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="11" y1="1.5" x2="11" y2="4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <div class="mah-atc-menu" id="mah-atc-menu" role="menu" aria-label="Add to calendar options">
+          <a id="mah-atc-google" href="#" target="_blank" rel="noopener" role="menuitem">Google Calendar</a>
+          <a id="mah-atc-apple" href="#" download="mahara-demo.ics" role="menuitem">Apple Calendar</a>
+          <a id="mah-atc-outlook" href="#" target="_blank" rel="noopener" role="menuitem">Outlook</a>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ============ PRE-CALL CHECKLIST ============ -->
+  <section class="section">
+    <div class="step-card reveal">
+      <div class="step-tag">
+        <span>Pre-Call</span>
+        <span class="step-sub" data-only="ar">&#183; &#1580;&#1607;&#1617;&#1586; &#1606;&#1601;&#1587;&#1603; &#1604;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;</span>
+        <span class="step-sub" data-only="en">&#183; Get Ready For The Call</span>
+      </div>
+      <h2>
+        <span data-only="ar">&#1635; &#1582;&#1591;&#1608;&#1575;&#1578; &#1587;&#1585;&#1610;&#1593;&#1577; &#1593;&#1588;&#1575;&#1606; &#1606;&#1587;&#1578;&#1601;&#1610;&#1583; &#1603;&#1604;&#1606;&#1575; &#1605;&#1606; &#1575;&#1604;&#1608;&#1602;&#1578;.</span>
+        <span data-only="en">3 quick things to set us up for a great call.</span>
+      </h2>
+      <p class="muted">
+        <span data-only="ar">&#1575;&#1582;&#1578;&#1610;&#1575;&#1585;&#1610;&#1548; &#1576;&#1587; &#1603;&#1604; &#1608;&#1581;&#1583;&#1577; &#1605;&#1606;&#1607;&#1575; &#1578;&#1601;&#1585;&#1602;.</span>
+        <span data-only="en">Optional but every one of them makes a difference.</span>
+      </p>
+
+      <div class="checklist">
+        <label class="check-item">
+          <input type="checkbox" class="check-input" />
+          <span class="check-mark"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5 7 12l5.5-7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="check-text">
+            <strong><span data-only="ar">&#1575;&#1583;&#1582;&#1604; &#1605;&#1606; &#1603;&#1605;&#1576;&#1610;&#1608;&#1578;&#1585;&#1548; &#1605;&#1608; &#1605;&#1606; &#1575;&#1604;&#1578;&#1604;&#1601;&#1608;&#1606;.</span><span data-only="en">Join from a laptop or desktop, not your phone.</span></strong>
+            <br/>
+            <span class="muted" style="font-size:14px"><span data-only="ar">&#1593;&#1588;&#1575;&#1606; &#1606;&#1602;&#1583;&#1585; &#1606;&#1588;&#1585;&#1581;&#1603; &#1575;&#1604;&#1582;&#1591;&#1577; &#1603;&#1575;&#1605;&#1604;&#1577; &#1576;&#1588;&#1603;&#1604; &#1608;&#1575;&#1590;&#1581;.</span><span data-only="en">So we can walk you through the full plan properly.</span></span>
+          </span>
+        </label>
+        <label class="check-item">
+          <input type="checkbox" class="check-input" />
+          <span class="check-mark"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5 7 12l5.5-7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="check-text">
+            <strong><span data-only="ar">&#1582;&#1584; &#1605;&#1593;&#1603; &#1571;&#1610; &#1588;&#1582;&#1589; &#1610;&#1602;&#1585;&#1617;&#1585; &#1605;&#1593;&#1603;.</span><span data-only="en">Bring anyone who decides with you.</span></strong>
+            <br/>
+            <span class="muted" style="font-size:14px"><span data-only="ar">&#1588;&#1585;&#1610;&#1603;&#1603;&#1548; &#1575;&#1604;&#1605;&#1587;&#1572;&#1608;&#1604; &#1575;&#1604;&#1605;&#1575;&#1604;&#1610;&#1548; &#1571;&#1608; &#1571;&#1610; &#1588;&#1582;&#1589; &#1610;&#1608;&#1602;&#1617;&#1593; &#1593;&#1604;&#1609; &#1575;&#1604;&#1602;&#1585;&#1575;&#1585;.</span><span data-only="en">Your partner, finance lead, or whoever signs off.</span></span>
+          </span>
+        </label>
+        <label class="check-item">
+          <input type="checkbox" class="check-input" />
+          <span class="check-mark"><svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5 7 12l5.5-7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="check-text">
+            <strong><span data-only="ar">&#1588;&#1608;&#1601; &#1575;&#1604;&#1601;&#1610;&#1583;&#1610;&#1608; &#1601;&#1608;&#1602; &#1603;&#1575;&#1605;&#1604; &#1602;&#1576;&#1604; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;.</span><span data-only="en">Watch the full video above before we hop on.</span></strong>
+            <br/>
+            <span class="muted" style="font-size:14px"><span data-only="ar">&#1610;&#1582;&#1604;&#1617;&#1610;&#1606;&#1575; &#1606;&#1608;&#1601;&#1617;&#1585; &#1571;&#1608;&#1604; 10 &#1583;&#1602;&#1575;&#1610;&#1602; &#1608;&#1606;&#1588;&#1578;&#1594;&#1604; &#1593;&#1604;&#1609; &#1588;&#1585;&#1603;&#1578;&#1603; &#1605;&#1576;&#1575;&#1588;&#1585;&#1577;.</span><span data-only="en">It saves the first 10 minutes so we go straight to working on your firm.</span></span>
+          </span>
+        </label>
+      </div>
+
+      <div class="checklist-status" id="checklist-status">
+        <span class="ready-badge"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5 7 12l5.5-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span>
+          <span data-only="ar"><strong class="check-count">0/3</strong> &#8212; &#1578;&#1605;. &#1588;&#1603;&#1585;&#1575;&#1611;&#1548; &#1606;&#1588;&#1608;&#1601;&#1603; &#1593;&#1604;&#1609; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;.</span>
+          <span data-only="en"><strong class="check-count">0/3</strong> &#8212; checked. See you on the call.</span>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FAQ SECTION ============ -->
+  <section class="section" id="section-faq">
+    <div class="reveal">
+      <div class="step-tag">
+        <span>Step 01</span>
+        <span class="step-sub" data-only="ar">&#183; &#1575;&#1604;&#1571;&#1587;&#1574;&#1604;&#1577; &#1575;&#1604;&#1588;&#1575;&#1574;&#1593;&#1577;</span>
+        <span class="step-sub" data-only="en">&#183; Frequently Asked Questions</span>
+      </div>
+      <h2>
+        <span data-only="ar">&#1575;&#1604;&#1571;&#1587;&#1574;&#1604;&#1577; &#1575;&#1604;&#1604;&#1610; &#1571;&#1603;&#1610;&#1583; &#1593;&#1604;&#1609; &#1576;&#1575;&#1604;&#1603;.</span>
+        <span data-only="en">Questions you most likely have.</span>
+      </h2>
+    </div>
+
+    <div class="faq-grid reveal">
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/mu2uz77b3c?web_component=true&seo=true" title="How do you get projects" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v faq-v-featured">
+        <span class="faq-v-badge"><span data-only="ar">&#1605;&#1608; &#1605;&#1578;&#1571;&#1603;&#1583; &#1605;&#1606; &#1575;&#1604;&#1606;&#1578;&#1575;&#1574;&#1580;&#1567; &#1588;&#1608;&#1601; &#1607;&#1584;&#1575;</span><span data-only="en">Unsure about the results? Watch this</span></span>
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/e9waytnetf?web_component=true&seo=true" title="How do I know the results are real" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/noaod9s9y2?web_component=true&seo=true" title="Lead quality" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/lo415yf3xj?web_component=true&seo=true" title="Who records the ads" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/3sol3f4slk?web_component=true&seo=true" title="How long to results" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/utwdee19vz?web_component=true&seo=true" title="ROI" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/256zp7pj74?web_component=true&seo=true" title="Sales team" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/8pwjxfx240?web_component=true&seo=true" title="Pricing" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/h4s8qq7ed6?web_component=true&seo=true" title="Guarantee" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/0xvl47wlhb?web_component=true&seo=true" title="Marketing doesn't work" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/e5wsq7s6ch?web_component=true&seo=true" title="Who will record the ads" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/p7fyfn4czq?web_component=true&seo=true" title="How do you make us stand out" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/09m1x3acz7?web_component=true&seo=true" title="Market is dead, I'll start later" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/dkb5e0lb4u?web_component=true&seo=true" title="Do you take a percentage of projects" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/4nr769jprd?web_component=true&seo=true" title="How do you work with us from another country" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+      <div class="faq-v"><div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/17jtimyjrv?web_component=true&seo=true" title="What services and industries do you advertise for" allow="autoplay; fullscreen" frameborder="0"></iframe></div></div>
+    </div>
+
+    <div class="proof-more reveal">
+      <p class="proof-more-title">
+        <span data-only="ar">&#1604;&#1587;&#1575; &#1605;&#1608; &#1605;&#1578;&#1571;&#1603;&#1583;&#1567; &#1607;&#1584;&#1575; &#1578;&#1601;&#1589;&#1610;&#1604; &#1603;&#1575;&#1605;&#1604; &#1604;&#1581;&#1605;&#1604;&#1577; &#1581;&#1602;&#1610;&#1602;&#1610;&#1577;&#1548; &#1605;&#1606; &#1583;&#1575;&#1582;&#1604; &#1581;&#1587;&#1575;&#1576; &#1575;&#1604;&#1573;&#1593;&#1604;&#1575;&#1606;&#1575;&#1578;:</span>
+        <span data-only="en">Still unsure? Here is a full breakdown of a real campaign, straight from the ad account:</span>
+      </p>
+      <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/y623bv16mm?web_component=true&seo=true" title="Proof Campaign Breakdown" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+    </div>
+  </section>
+
+  <!-- ============ CLIENT STORIES ============ -->
+  <section class="section" id="section-proof">
+    <div class="reveal">
+      <div class="eyebrow">
+        <span data-only="ar">&#1602;&#1589;&#1589; &#1575;&#1604;&#1593;&#1605;&#1604;&#1575;&#1569;</span>
+        <span data-only="en">Client Stories</span>
+      </div>
+      <h2>
+        <span data-only="ar">&#1588;&#1608;&#1601; &#1605;&#1610;&#1606; &#1610;&#1579;&#1602; &#1601;&#1610;&#1606;&#1575;&#1548; &#1608;&#1588; &#1581;&#1602;&#1617;&#1602;&#1608;&#1575;.</span>
+        <span data-only="en">See who trusts us, and what they've built.</span>
+      </h2>
+    </div>
+
+    <div class="testimonials reveal">
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/qecv9jfnwp?web_component=true&seo=true" title="Testimonial 1" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/4gt6ep2jxr?web_component=true&seo=true" title="Testimonial 2" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/avt9fu3h06?web_component=true&seo=true" title="Testimonial 3" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video ar-43"><iframe data-src="https://fast.wistia.net/embed/iframe/tkduyx1smp?web_component=true&seo=true" title="Testimonial 4" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/6dlcwraqde?web_component=true&seo=true" title="Joe And Sera Testimonial" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/kvtchezxg3?web_component=true&seo=true" title="Ahmed Life Depth Testimonial" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/gcht7a3snc?web_component=true&seo=true" title="Haneen Testimonial" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/ia1s7iyb4s?web_component=true&seo=true" title="Abdullah Safad Testimonial" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/elepqr6ktp?web_component=true&seo=true" title="Elite Excellence Testimonial" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+      <article class="testimonial">
+        <div class="video"><iframe data-src="https://fast.wistia.net/embed/iframe/entuml38ni?web_component=true&seo=true" title="Mass Design Testimonial" allow="autoplay; fullscreen" frameborder="0"></iframe></div>
+      </article>
+    </div>
+
+    <div class="reviews-wrap reveal">
+      <!-- Elfsight Google Reviews | Untitled Google Reviews -->
+      <script>
+/* Google reviews widget: load it only when the reviews section is close to the screen. */
+(function(){var t=document.querySelector('[class*="elfsight-app-"]');function go(){var s=document.createElement('script');s.src='https://elfsightcdn.com/platform.js';s.async=true;document.body.appendChild(s);}
+if(!t)return;if(!('IntersectionObserver' in window)){go();return;}
+var io=new IntersectionObserver(function(es){for(var i=0;i<es.length;i++){if(es[i].isIntersecting){io.disconnect();go();return;}}},{rootMargin:'1200px 0px'});io.observe(t);})();
+</script>
+      <div class="elfsight-app-d9f457bd-b090-4968-ad84-2277074b6373" data-elfsight-app-lazy></div>
+    </div>
+  </section>
+
+  <!-- ============ STEP 01 - CONFIRM ============ -->
+  <section class="section">
+    <div class="step-card reveal">
+      <div class="step-tag">
+        <span>Step 02</span>
+        <span class="step-sub" data-only="ar">&#183; &#1571;&#1603;&#1617;&#1583; &#1605;&#1603;&#1575;&#1604;&#1605;&#1578;&#1603;</span>
+        <span class="step-sub" data-only="en">&#183; Confirm Your Call</span>
+      </div>
+
+      <h2>
+        <span data-only="ar">&#1585;&#1583; <span class="yes-key">&#1606;&#1593;&#1605;</span> &#1593;&#1604;&#1609; &#1608;&#1575;&#1578;&#1587;&#1575;&#1576; &#1571;&#1608; &#1575;&#1604;&#1573;&#1610;&#1605;&#1610;&#1604;</span>
+        <span data-only="en">Reply <span class="yes-key">YES</span> to our WhatsApp or email</span>
+      </h2>
+
+      <p class="muted">
+        <span data-only="ar">&#1593;&#1588;&#1575;&#1606; &#1606;&#1593;&#1585;&#1601; &#1573;&#1606;&#1603; &#1580;&#1575;&#1610; &#1593;&#1604;&#1609; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;&#1548; &#1585;&#1583; &#1593;&#1604;&#1609; &#1573;&#1581;&#1583;&#1609; &#1575;&#1604;&#1585;&#1587;&#1575;&#1604;&#1578;&#1610;&#1606; &#1578;&#1581;&#1578; &#1576;&#1600; "&#1606;&#1593;&#1605;" &#1571;&#1608; "YES".</span>
+        <span data-only="en">So we know you're showing up, reply to one of the messages below with "YES".</span>
+      </p>
+
+      <div class="channels">
+        <div class="channel">
+          <div class="channel-head">
+            <div class="channel-icon wa">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9s-.5-.1-.6.1c-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-.3-.1-1.2-.5-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.4.1-.6l.4-.5c.1-.2.2-.3.2-.5s-.1-.4-.2-.5c-.1-.1-.6-1.5-.8-2-.2-.5-.4-.5-.6-.5h-.6c-.2 0-.5.1-.7.4-.3.3-1 1-1 2.5s1 2.9 1.1 3.1c.1.2 2 3 4.8 4.2 1.6.7 2.3.8 3.2.6.5-.1 1.7-.7 1.9-1.4.2-.7.2-1.2.2-1.4-.1-.2-.2-.2-.5-.3z"/><path d="M12 2C6.5 2 2 6.5 2 12c0 1.7.5 3.4 1.3 4.8L2 22l5.3-1.4c1.4.8 3 1.2 4.7 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2zm0 18c-1.5 0-3-.4-4.2-1.1l-.3-.2-3.1.8.8-3-.2-.3C4.4 15 4 13.5 4 12c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8z"/></svg>
+            </div>
+            <div class="channel-name">
+              <span data-only="ar">&#1608;&#1575;&#1578;&#1587;&#1575;&#1576;</span>
+              <span data-only="en">WhatsApp</span>
+            </div>
+          </div>
+          <p data-only="ar">&#1585;&#1583; &#1593;&#1604;&#1609; &#1585;&#1587;&#1575;&#1604;&#1577; &#1575;&#1604;&#1608;&#1575;&#1578;&#1587;&#1575;&#1576; &#1575;&#1604;&#1604;&#1610; &#1608;&#1589;&#1604;&#1578;&#1603; &#1578;&#1608;&#1617;&#1575; &#1576;&#1600; <span class="yes-key">&#1606;&#1593;&#1605;</span>.</p>
+          <p data-only="en">Reply to the WhatsApp message we just sent you with <span class="yes-key">YES</span>.</p>
+        </div>
+
+        <div class="channel">
+          <div class="channel-head">
+            <div class="channel-icon em">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            </div>
+            <div class="channel-name">
+              <span data-only="ar">&#1573;&#1610;&#1605;&#1610;&#1604;</span>
+              <span data-only="en">Email</span>
+            </div>
+          </div>
+          <p data-only="ar">&#1585;&#1583; &#1593;&#1604;&#1609; &#1573;&#1610;&#1605;&#1610;&#1604; &#1575;&#1604;&#1578;&#1571;&#1603;&#1610;&#1583; &#1605;&#1606; &#1606;&#1591;&#1575;&#1602; <span class="yes-key">@maharamedia.com</span> &#1576;&#1600; <span class="yes-key">&#1606;&#1593;&#1605;</span>.</p>
+          <p data-only="en">Reply to our confirmation email from the <span class="yes-key">@maharamedia.com</span> domain with <span class="yes-key">YES</span>.</p>
+        </div>
+      </div>
+
+      <div class="or-divider">
+        <span data-only="ar">&#1571;&#1608;</span>
+        <span data-only="en">OR</span>
+      </div>
+
+      <p class="muted" style="text-align:center; margin-bottom: 22px;">
+        <span data-only="ar">&#1573;&#1584;&#1575; &#1582;&#1604;&#1617;&#1589;&#1578;&#1548; &#1575;&#1590;&#1594;&#1591; &#1575;&#1604;&#1586;&#1585;&#1575;&#1585; &#1578;&#1581;&#1578;.</span>
+        <span data-only="en">Once you're done, hit the button below.</span>
+      </p>
+
+      <div class="confirm-wrap">
+        <button type="button" class="confirm-btn" id="confirm-btn">
+        <span class="check" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5 7 12l5.5-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="confirm-label">
+          <span data-only="ar">&#1606;&#1593;&#1605;&#1548; &#1571;&#1603;&#1617;&#1583;&#1578; &#1605;&#1603;&#1575;&#1604;&#1605;&#1578;&#1610;</span>
+          <span data-only="en">Yes, I've confirmed my call</span>
+        </span>
+      </button>
+        <a class="wa-confirm" href="https://wa.me/96590054963?text=YES" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9s-.5-.1-.6.1c-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-.3-.1-1.2-.5-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.4.1-.6l.4-.5c.1-.2.2-.3.2-.5s-.1-.4-.2-.5c-.1-.1-.6-1.5-.8-2-.2-.5-.4-.5-.6-.5h-.6c-.2 0-.5.1-.7.4-.3.3-1 1-1 2.5s1 2.9 1.1 3.1c.1.2 2 3 4.8 4.2 1.6.7 2.3.8 3.2.6.5-.1 1.7-.7 1.9-1.4.2-.7.2-1.2.2-1.4-.1-.2-.2-.2-.5-.3z"/><path d="M12 2C6.5 2 2 6.5 2 12c0 1.7.5 3.4 1.3 4.8L2 22l5.3-1.4c1.4.8 3 1.2 4.7 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2zm0 18c-1.5 0-3-.4-4.2-1.1l-.3-.2-3.1.8.8-3-.2-.3C4.4 15 4 13.5 4 12c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8z"/></svg>
+          <span data-only="ar">&#1571;&#1608; &#1571;&#1585;&#1587;&#1604; "&#1606;&#1593;&#1605;" &#1593;&#1604;&#1609; &#1608;&#1575;&#1578;&#1587;&#1575;&#1576; &#1605;&#1576;&#1575;&#1588;&#1585;&#1577;</span>
+          <span data-only="en">Or send "YES" on WhatsApp instantly</span>
+          <span class="wa-arrow">&#8594;</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STEP 02 - EXTRA DUE DILIGENCE ============ -->
+  <section class="section">
+    <div class="reveal">
+      <div class="step-tag">
+        <span>Step 03</span>
+        <span class="step-sub" data-only="ar">&#183; &#1575;&#1582;&#1578;&#1610;&#1575;&#1585;&#1610; &#183; &#1605;&#1586;&#1610;&#1583; &#1605;&#1606; &#1575;&#1604;&#1578;&#1581;&#1602;&#1602;</span>
+        <span class="step-sub" data-only="en">&#183; Optional &#183; Extra Due Diligence</span>
+      </div>
+      <h2>
+        <span data-only="ar">&#1578;&#1576;&#1594;&#1609; &#1578;&#1578;&#1571;&#1603;&#1583; &#1571;&#1603;&#1579;&#1585; &#1602;&#1576;&#1604; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;&#1567;</span>
+        <span data-only="en">Want to dig deeper before we hop on?</span>
+      </h2>
+      <p class="muted">
+        <span data-only="ar">&#1575;&#1582;&#1578;&#1610;&#1575;&#1585;&#1610; &#1576;&#1575;&#1604;&#1603;&#1575;&#1605;&#1604;&#1548; &#1576;&#1587; &#1607;&#1575;&#1604;&#1575;&#1579;&#1606;&#1610;&#1606; &#1610;&#1587;&#1575;&#1593;&#1583;&#1608;&#1606;&#1603; &#1578;&#1587;&#1578;&#1601;&#1610;&#1583; &#1571;&#1603;&#1579;&#1585; &#1605;&#1606; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;.</span>
+        <span data-only="en">Totally optional, but these two help you get the most out of the call.</span>
+      </p>
+    </div>
+
+    <div class="dd-grid reveal">
+      <button type="button" class="dd-card offer-doc-link" id="open-offer-doc">
+        <div class="dd-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>
+        </div>
+        <div class="dd-body">
+          <div class="dd-title">
+            <span data-only="ar">&#1575;&#1602;&#1585;&#1575; &#1593;&#1606; &#1575;&#1604;&#1593;&#1585;&#1590;</span>
+            <span data-only="en">Read About The Offer</span>
+          </div>
+          <p data-only="ar">&#1588;&#1585;&#1581; &#1603;&#1575;&#1605;&#1604; &#1604;&#1600; Project To Profit Funnel&#8482;. &#1603;&#1604; &#1588;&#1610; &#1576;&#1606;&#1594;&#1591;&#1617;&#1610;&#1607; &#1593;&#1604;&#1609; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;.</p>
+          <p data-only="en">A full breakdown of the Project To Profit Funnel&#8482;. Everything we'll cover on the call.</p>
+          <span class="dd-cta"><span data-only="ar">&#1575;&#1601;&#1578;&#1581; &#1575;&#1604;&#1605;&#1604;&#1601;</span><span data-only="en">Open Doc</span><span class="dd-cta-arrow">&#8594;</span></span>
+        </div>
+      </button>
+
+      <a class="dd-card" href="#section-faq">
+        <div class="dd-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+        </div>
+        <div class="dd-body">
+          <div class="dd-title">
+            <span data-only="ar">&#1588;&#1608;&#1601; &#1601;&#1610;&#1583;&#1610;&#1608;&#1607;&#1575;&#1578; &#1575;&#1604;&#1571;&#1587;&#1574;&#1604;&#1577; &#1575;&#1604;&#1588;&#1575;&#1574;&#1593;&#1577;</span>
+            <span data-only="en">Watch Pre-Call FAQ Videos</span>
+          </div>
+          <p data-only="ar">&#1573;&#1580;&#1575;&#1576;&#1575;&#1578; &#1602;&#1589;&#1610;&#1585;&#1577; &#1593;&#1604;&#1609; &#1575;&#1604;&#1571;&#1587;&#1574;&#1604;&#1577; &#1575;&#1604;&#1604;&#1610; &#1571;&#1603;&#1610;&#1583; &#1593;&#1604;&#1609; &#1576;&#1575;&#1604;&#1603;. &#1588;&#1608;&#1601;&#1607;&#1575; &#1601;&#1608;&#1602;.</p>
+          <p data-only="en">Short answers to the questions you most likely have. Watch above.</p>
+          <span class="dd-cta"><span data-only="ar">&#1588;&#1608;&#1601; &#1575;&#1604;&#1601;&#1610;&#1583;&#1610;&#1608;&#1607;&#1575;&#1578;</span><span data-only="en">Watch Videos</span><span class="dd-cta-arrow">&#8594;</span></span>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <!-- ============ MARKET RESEARCH BEING PREPARED ============ -->
+  <section class="section">
+    <div class="research reveal">
+      <div class="research-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="21" y1="21" x2="16.5" y2="16.5"/>
+          <line x1="11" y1="8" x2="11" y2="14"/>
+          <line x1="8" y1="11" x2="14" y2="11"/>
+        </svg>
+      </div>
+      <div class="research-body">
+        <h4>
+          <span data-only="ar">&#1601;&#1585;&#1610;&#1602;&#1606;&#1575; &#1575;&#1604;&#1581;&#1610;&#1606; &#1610;&#1580;&#1607;&#1617;&#1586; &#1578;&#1602;&#1585;&#1610;&#1585; &#1583;&#1585;&#1575;&#1587;&#1577; &#1575;&#1604;&#1587;&#1608;&#1602; &#1604;&#1588;&#1585;&#1603;&#1578;&#1603;.</span>
+          <span data-only="en">Our team is preparing your market research report.</span>
+        </h4>
+        <p>
+          <span data-only="ar">&#1576;&#1606;&#1593;&#1585;&#1590; &#1593;&#1604;&#1610;&#1603; &#1575;&#1604;&#1578;&#1602;&#1585;&#1610;&#1585; &#1603;&#1575;&#1605;&#1604; &#1593;&#1604;&#1609; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;. &#1605;&#1575; &#1610;&#1581;&#1578;&#1575;&#1580; &#1578;&#1587;&#1608;&#1610; &#1571;&#1610; &#1588;&#1610; &#1605;&#1606; &#1580;&#1607;&#1578;&#1603;.</span>
+          <span data-only="en">We'll walk you through the full report on the call. Nothing for you to prepare on your end.</span>
+        </p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+  <!-- ============ CALL PREVIEW (moved to bottom) ============ -->
+  <section class="section">
+    <div class="call-preview reveal fade-in">
+      <div class="call-preview-head">
+        <div class="call-preview-eye">
+          <span data-only="ar">&#1593;&#1604;&#1609; &#1575;&#1604;&#1605;&#1603;&#1575;&#1604;&#1605;&#1577;</span>
+          <span data-only="en">On the Call</span>
+        </div>
+        <h3>
+          <span data-only="ar">&#1588;&#1606;&#1608; &#1576;&#1606;&#1594;&#1591;&#1617;&#1610; &#1601;&#1610; &#1575;&#1604;&#1600; 45 &#1573;&#1604;&#1609; 60 &#1583;&#1602;&#1610;&#1602;&#1577;</span>
+          <span data-only="en">What we will cover in 45 to 60 minutes</span>
+        </h3>
+      </div>
+      <div class="call-preview-grid">
+        <div class="preview-item">
+          <div class="preview-num">01</div>
+          <div class="preview-text">
+            <strong><span data-only="ar">&#1571;&#1585;&#1602;&#1575;&#1605;&#1603; &#1575;&#1604;&#1601;&#1593;&#1604;&#1610;&#1577;</span><span data-only="en">Your actual numbers</span></strong>
+            <p><span data-only="ar">&#1606;&#1605;&#1584;&#1580;&#1577; &#1575;&#1604;&#1593;&#1575;&#1574;&#1583; &#1576;&#1606;&#1575;&#1569;&#1611; &#1593;&#1604;&#1609; &#1605;&#1578;&#1608;&#1587;&#1617;&#1591; &#1581;&#1580;&#1605; &#1605;&#1588;&#1575;&#1585;&#1610;&#1593;&#1603; &#1608;&#1606;&#1587;&#1576;&#1577; &#1573;&#1602;&#1601;&#1575;&#1604;&#1603;.</span><span data-only="en">We model the return on investment using your average project size and your close rate.</span></p>
+          </div>
+        </div>
+        <div class="preview-item">
+          <div class="preview-num">02</div>
+          <div class="preview-text">
+            <strong><span data-only="ar">&#1578;&#1602;&#1585;&#1610;&#1585; &#1583;&#1585;&#1575;&#1587;&#1577; &#1575;&#1604;&#1587;&#1608;&#1602;</span><span data-only="en">Your market research</span></strong>
+            <p><span data-only="ar">&#1606;&#1588;&#1585;&#1581;&#1603; &#1578;&#1602;&#1585;&#1610;&#1585; &#1583;&#1585;&#1575;&#1587;&#1577; &#1575;&#1604;&#1587;&#1608;&#1602; &#1575;&#1604;&#1605;&#1582;&#1589;&#1617;&#1589; &#1604;&#1588;&#1585;&#1603;&#1578;&#1603; &#1608;&#1605;&#1606;&#1591;&#1602;&#1578;&#1603;.</span><span data-only="en">We walk you through the market research report tailored to your firm and your region.</span></p>
+          </div>
+        </div>
+        <div class="preview-item">
+          <div class="preview-num">03</div>
+          <div class="preview-text">
+            <strong><span data-only="ar">&#1582;&#1591;&#1577; &#1575;&#1604;&#1600; 90 &#1610;&#1608;&#1605;</span><span data-only="en">The 90-day plan</span></strong>
+            <p><span data-only="ar">&#1575;&#1604;&#1582;&#1591;&#1608;&#1575;&#1578; &#1576;&#1575;&#1604;&#1590;&#1576;&#1591; &#1575;&#1604;&#1604;&#1610; &#1576;&#1606;&#1588;&#1594;&#1617;&#1604;&#1607;&#1575; &#1604;&#1608;&#1589;&#1608;&#1604;&#1603; &#1604;&#1600; 30 &#1601;&#1585;&#1589;&#1577; &#1605;&#1588;&#1585;&#1608;&#1593; &#1605;&#1572;&#1607;&#1604;&#1577;.</span><span data-only="en">The exact steps we would run to get you to 30 qualified project opportunities.</span></p>
+          </div>
+        </div>
+        <div class="preview-item">
+          <div class="preview-num">04</div>
+          <div class="preview-text">
+            <strong><span data-only="ar">&#1575;&#1604;&#1582;&#1591;&#1608;&#1575;&#1578; &#1575;&#1604;&#1578;&#1575;&#1604;&#1610;&#1577; &#1608;&#1571;&#1587;&#1574;&#1604;&#1578;&#1603;</span><span data-only="en">Next steps and your questions</span></strong>
+            <p><span data-only="ar">&#1606;&#1580;&#1575;&#1608;&#1576; &#1593;&#1604;&#1609; &#1571;&#1587;&#1574;&#1604;&#1578;&#1603; &#1576;&#1583;&#1602;&#1617;&#1577;&#1548; &#1608;&#1606;&#1578;&#1601;&#1602; &#1593;&#1604;&#1609; &#1575;&#1604;&#1582;&#1591;&#1608;&#1577; &#1575;&#1604;&#1580;&#1575;&#1610;&#1577; &#1573;&#1584;&#1575; &#1603;&#1575;&#1606;&#1578; &#1575;&#1604;&#1588;&#1585;&#1575;&#1603;&#1577; &#1605;&#1606;&#1575;&#1587;&#1576;&#1577;.</span><span data-only="en">We answer your specific questions and agree on the next step if the partnership is a fit.</span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+<!-- ============ STICKY BOTTOM REMINDER ============ -->
+<aside class="sticky-bar" id="sticky-bar" aria-live="polite">
+  <div class="sticky-text">
+    <span class="live-dot" aria-hidden="true"></span>
+    <span data-only="ar">&#1604;&#1575; &#1578;&#1606;&#1587;&#1609;. &#1585;&#1583; <span class="yes-key">&#1606;&#1593;&#1605;</span> &#1604;&#1578;&#1571;&#1603;&#1610;&#1583; &#1605;&#1603;&#1575;&#1604;&#1605;&#1578;&#1603;.</span>
+    <span data-only="en">Don't forget. Reply <span class="yes-key">YES</span> to confirm your call.</span>
+  </div>
+  <a class="btn btn-primary" href="#" onclick="document.querySelector('.video').scrollIntoView({behavior:'smooth',block:'center'}); return false;">
+    <span data-only="ar">&#1588;&#1608;&#1601; &#1575;&#1604;&#1601;&#1610;&#1583;&#1610;&#1608;</span>
+    <span data-only="en">Watch the video</span>
+  </a>
+</aside>
+
+<canvas id="confetti-canvas" aria-hidden="true" style="display:none"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<script src="https://fast.wistia.net/player.js" async></script>
+
+<script>
+(function(){
+  document.documentElement.classList.add('js-reveal');
+
+
+  // ---------- GHL PARAGRAPH BRIDGE ----------
+  // User adds a GHL Text/Paragraph element with custom class 'ghl-bridge'
+  // and content like:
+  //   {{contact.first_name}}|{{appointment.start_time}}|{{appointment.add_to_google_calendar_link}}
+  // GHL substitutes inside that paragraph, then we read the text from here.
+  window.GHL_BRIDGE = (function(){
+    var el = document.querySelector('.ghl-bridge, [class*="ghl-bridge"]');
+    if (!el) return null;
+    var raw = (el.textContent || '').trim();
+    if (!raw || raw.indexOf('{{') !== -1) return null;
+    var parts = raw.split('|').map(function(s){ return s.trim(); });
+    return {
+      firstName: parts[0] || '',
+      apptTime:  parts[1] || '',
+      calLink:   parts[2] || ''
+    };
+  })();
+  // ---------- URL PARAMETER BRIDGE ----------
+  // Works regardless of GHL token substitution. Append params like:
+  //   ?first_name=Aziz&appt_time=2026-05-19T15:00:00&cal_link=https%3A%2F%2F...
+  // Production: a GHL workflow can build the redirect URL with these params.
+  window.GHL_URL = (function(){
+    function paramsFrom(qs){
+      try { return new URLSearchParams(qs || ''); } catch(e){ return new URLSearchParams(); }
+    }
+    // GHL may render this Custom Code element inside an <iframe>. In that case
+    // window.location.search is the IFRAME's URL (no params). So gather query
+    // strings from every place the real page URL might live:
+    //   1. this frame's search   2. this frame's hash (?a=b after #)
+    //   3. the top frame (same-origin)   4. document.referrer (the GHL page
+    //      that embedded this iframe -- carries the workflow redirect params).
+    var sources = [];
+    if (window.location.search) sources.push(window.location.search);
+    var h = window.location.hash || '';
+    if (h.indexOf('?') !== -1) sources.push(h.slice(h.indexOf('?')));
+    try { if (window.top && window.top !== window && window.top.location && window.top.location.search) sources.push(window.top.location.search); } catch(e){}
+    try { if (document.referrer && document.referrer.indexOf('?') !== -1) sources.push(document.referrer.slice(document.referrer.indexOf('?'))); } catch(e){}
+    function get() {
+      for (var s = 0; s < sources.length; s++) {
+        var p = paramsFrom(sources[s]);
+        for (var i = 0; i < arguments.length; i++) {
+          var v = p.get(arguments[i]);
+          if (v && v.trim()) return v.trim();
+        }
+      }
+      return '';
+    }
+    return {
+      firstName: get('first_name', 'firstName', 'fname'),
+      apptTime:  get('appt_time', 'apptTime', 'appointment_time', 'appointment_start_time', 'start_time', 'roasform_start'),
+      calLink:   get('cal_link', 'calLink', 'add_to_calendar', 'calendar_link')
+    };
+  })();
+
+  // Lang state used by both formatAppt and the toggle
+  let lang = 'ar';
+
+  // ---------- HUMAN APPOINTMENT TIME ----------
+  // Reads data-appt from each .appt span (raw GHL placeholder), parses, and
+  // renders "Today / Tomorrow / Tuesday at 3:00 PM" in current language.
+  // ---------- ARABIC-INDIC DIGITS ----------
+  const AR_DIGITS = '\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669';
+  function toArDigits(s){ return ('' + s).replace(/[0-9]/g, function(d){ return AR_DIGITS[+d]; }); }
+  function formatAppt(raw, lang) {
+    if (!raw || raw.indexOf('{{') === 0) return null; // placeholder not replaced
+    // Trim & try Date()
+    const d = new Date(raw.trim());
+    if (isNaN(d.getTime())) return null;
+    const now = new Date();
+    const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+    const dayDiff = Math.round((startOf(d) - startOf(now)) / 86400000);
+    const hours24 = d.getHours();
+    const minutes = d.getMinutes();
+    const h12 = ((hours24 + 11) % 12) + 1;
+    const mm = minutes.toString().padStart(2, '0');
+
+    if (lang === 'ar') {
+      const days = ['\u0627\u0644\u0623\u062D\u062F','\u0627\u0644\u0625\u062B\u0646\u064A\u0646','\u0627\u0644\u062B\u0644\u0627\u062B\u0627\u0621','\u0627\u0644\u0623\u0631\u0628\u0639\u0627\u0621','\u0627\u0644\u062E\u0645\u064A\u0633','\u0627\u0644\u062C\u0645\u0639\u0629','\u0627\u0644\u0633\u0628\u062A'];
+      let prefix;
+      if (dayDiff === 0) prefix = '\u0627\u0644\u064A\u0648\u0645';
+      else if (dayDiff === 1) prefix = '\u0628\u0643\u0631\u0627';
+      else if (dayDiff === -1) prefix = '\u0623\u0645\u0633';
+      else prefix = days[d.getDay()];
+      let suffix;
+      if (hours24 < 12) suffix = '\u0635\u0628\u0627\u062D\u0627\u064B';
+      else if (hours24 < 17) suffix = '\u0638\u0647\u0631\u0627\u064B';
+      else suffix = '\u0645\u0633\u0627\u0621\u064B';
+      const timeStr = minutes === 0 ? `${h12}` : `${h12}:${mm}`;
+      return toArDigits(`${prefix} \u0627\u0644\u0633\u0627\u0639\u0629 ${timeStr} ${suffix}`);
+    } else {
+      const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      let prefix;
+      if (dayDiff === 0) prefix = 'Today';
+      else if (dayDiff === 1) prefix = 'Tomorrow';
+      else if (dayDiff === -1) prefix = 'Yesterday';
+      else prefix = days[d.getDay()];
+      const ampm = hours24 < 12 ? 'AM' : 'PM';
+      const timeStr = minutes === 0 ? `${h12}` : `${h12}:${mm}`;
+      return `${prefix} at ${timeStr} ${ampm}`;
+    }
+  }
+  // Resolve the raw appointment time string from any available source.
+  function getApptRaw() {
+    if (window.GHL_URL && window.GHL_URL.apptTime) return window.GHL_URL.apptTime;
+    if (window.GHL_BRIDGE && window.GHL_BRIDGE.apptTime) return window.GHL_BRIDGE.apptTime;
+    var el = document.querySelector('.appt');
+    var raw = el ? (el.dataset.original || (el.textContent || '').trim()) : '';
+    return (raw && raw.indexOf('{{') === -1) ? raw : '';
+  }
+  // Build a Google Calendar "Add event" link purely from the start time, so we
+  // never have to pass the long {{appointment.add_to_google_calendar_link}}
+  // through a URL param (its own ? and & would corrupt the query string).
+  // Demo call = 60 minutes.
+  function buildGoogleCalLink(raw) {
+    var d = new Date((raw || '').trim());
+    if (isNaN(d.getTime())) return '';
+    var end = new Date(d.getTime() + 60 * 60000);
+    function z(n){ return (n < 10 ? '0' : '') + n; }
+    function fmt(x){
+      return x.getUTCFullYear() + z(x.getUTCMonth()+1) + z(x.getUTCDate()) +
+             'T' + z(x.getUTCHours()) + z(x.getUTCMinutes()) + z(x.getUTCSeconds()) + 'Z';
+    }
+    var title = 'Mahara Media \u2014 Strategy Demo';
+    var details = 'Your strategy demo call with Mahara Media.';
+    return 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
+           '&text=' + encodeURIComponent(title) +
+           '&dates=' + fmt(d) + '/' + fmt(end) +
+           '&details=' + encodeURIComponent(details);
+  }
+
+  function renderAppt() {
+    document.querySelectorAll('.appt').forEach(function(el){
+      if (typeof el.dataset.original === 'undefined') {
+        el.dataset.original = (el.textContent || '').trim();
+      }
+      var raw = el.dataset.original;
+      // Resolution order: URL params > GHL paragraph bridge > textContent
+      if (window.GHL_URL && window.GHL_URL.apptTime) raw = window.GHL_URL.apptTime;
+      else if (window.GHL_BRIDGE && window.GHL_BRIDGE.apptTime) raw = window.GHL_BRIDGE.apptTime;
+      var slot = el.closest('.appt-slot');
+      var human = raw && raw.indexOf('{{') === -1 ? formatAppt(raw, lang) : null;
+      if (human) {
+        el.textContent = human;
+        if (slot) slot.style.display = '';
+      } else {
+        el.textContent = '';
+        if (slot) slot.style.display = 'none';
+      }
+    });
+
+    // Add to Google Calendar button:
+    //   1. explicit calLink (URL param / bridge / a pre-substituted href)
+    //   2. else build one client-side from the appointment start time
+    //   3. else hide the button
+    document.querySelectorAll('a.add-cal').forEach(function(a){
+      var calLink = (window.GHL_URL && window.GHL_URL.calLink) || (window.GHL_BRIDGE && window.GHL_BRIDGE.calLink) || '';
+      if (!calLink) {
+        var href = (a.getAttribute('href') || '').trim();
+        if (href && href.indexOf('{{') === -1 && href !== '#') calLink = href;
+      }
+      if (!calLink) calLink = buildGoogleCalLink(getApptRaw());
+      if (calLink) {
+        a.setAttribute('href', calLink);
+        a.style.display = '';
+      } else {
+        a.style.display = 'none';
+      }
+    });
+    // WA + offer doc buttons are hard-coded now; no JS hiding needed for them.
+  }
+  renderAppt();
+
+  // ---------- BILINGUAL FIRST NAME ----------
+  // Translates Arabic <-> English first names. Uses a curated dictionary of
+  // common Gulf names; falls back to algorithmic transliteration for Arabic ->
+  // English, and to keeping the original spelling for English -> Arabic.
+  // ---------- NAME LOCALIZATION (bidirectional, ~210 names + variants) ----------
+  const NAME_AR_TO_EN = {
+    '\u0622\u064A\u0629':'Aya','\u0622\u064A\u0647':'Aya','\u0623\u062D\u0645\u062F':'Ahmed','\u0623\u0631\u064A\u062C':'Areej',
+    '\u0623\u0633\u0627\u0645\u0629':'Osama','\u0623\u0633\u0627\u0645\u0647':'Osama','\u0623\u0633\u0645\u0627\u0621':'Asma','\u0623\u0634\u0648\u0627\u0642':'Ashwaq',
+    '\u0623\u0641\u0631\u0627\u062D':'Afrah','\u0623\u0643\u0631\u0645':'Akram','\u0623\u0645\u0627\u0646\u064A':'Amani','\u0623\u0645\u0644':'Amal',
+    '\u0623\u0646\u0633':'Anas','\u0623\u0646\u0641\u0627\u0644':'Anfal','\u0623\u0646\u0648\u0631':'Anwar','\u0623\u064A\u0645\u0646':'Ayman',
+    '\u0623\u064A\u0648\u0628':'Ayoub','\u0625\u0628\u0631\u0627\u0647\u064A\u0645':'Ibrahim','\u0625\u0633\u0631\u0627\u0621':'Israa','\u0625\u0633\u0645\u0627\u0639\u064A\u0644':'Ismail',
+    '\u0625\u064A\u0627\u062F':'Iyad','\u0625\u064A\u0645\u0627\u0646':'Eman','\u0627\u0628\u062A\u0633\u0627\u0645':'Ebtisam','\u0627\u0628\u0631\u0627\u0647\u064A\u0645':'Ibrahim',
+    '\u0627\u062D\u0645\u062F':'Ahmed','\u0627\u0631\u064A\u062C':'Areej','\u0627\u0633\u0627\u0645\u0629':'Osama','\u0627\u0633\u0631\u0627\u0621':'Israa',
+    '\u0627\u0633\u0645\u0627\u0621':'Asma','\u0627\u0633\u0645\u0627\u0639\u064A\u0644':'Ismail','\u0627\u0634\u0648\u0627\u0642':'Ashwaq','\u0627\u0641\u0631\u0627\u062D':'Afrah',
+    '\u0627\u0643\u0631\u0645':'Akram','\u0627\u0645\u0627\u0646\u064A':'Amani','\u0627\u0645\u0644':'Amal','\u0627\u0646\u0633':'Anas',
+    '\u0627\u0646\u0641\u0627\u0644':'Anfal','\u0627\u0646\u0648\u0631':'Anwar','\u0627\u064A\u0627\u062F':'Iyad','\u0627\u064A\u0629':'Aya',
+    '\u0627\u064A\u0645\u0627\u0646':'Eman','\u0627\u064A\u0645\u0646':'Ayman','\u0627\u064A\u0648\u0628':'Ayoub','\u0628\u0627\u0633\u0644':'Basel',
+    '\u0628\u062F\u0631':'Bader','\u0628\u0631\u0627\u0643':'Barrak','\u0628\u0633\u0627\u0645':'Bassam','\u0628\u0634\u0627\u0631':'Bashar',
+    '\u0628\u0634\u0627\u064A\u0631':'Bashayer','\u0628\u0644\u0627\u0644':'Bilal','\u0628\u0646\u062F\u0631':'Bandar','\u062A\u0627\u0644\u0627':'Tala',
+    '\u062A\u0627\u0645\u0631':'Tamer','\u062A\u0631\u0643\u064A':'Turki','\u062A\u0647\u0627\u0646\u064A':'Tahani','\u062A\u0648\u0641\u064A\u0642':'Tawfiq',
+    '\u062B\u0627\u0645\u0631':'Thamer','\u062B\u0631\u064A\u0627':'Thuraya','\u062C\u0627\u0628\u0631':'Jaber','\u062C\u0627\u062F':'Jad',
+    '\u062C\u0627\u0633\u0645':'Jassim','\u062C\u0631\u0627\u062D':'Jarrah','\u062C\u0645\u0627\u0644':'Jamal','\u062C\u0645\u0627\u0646\u0629':'Jumana',
+    '\u062C\u0645\u0627\u0646\u0647':'Jumana','\u062C\u0646\u0649':'Jana','\u062C\u0646\u064A':'Jana','\u062C\u0648\u0627\u062F':'Jawad',
+    '\u062C\u0648\u0627\u0647\u0631':'Jawaher','\u062C\u0648\u062F':'Joud','\u062C\u0648\u0631\u064A':'Jouri','\u062D\u0627\u062A\u0645':'Hatem',
+    '\u062D\u0627\u0645\u062F':'Hamed','\u062D\u0628\u064A\u0628':'Habib','\u062D\u0633\u0627\u0645':'Hussam','\u062D\u0633\u0646':'Hassan',
+    '\u062D\u0633\u064A\u0646':'Hussein','\u062D\u0635\u0629':'Hessa','\u062D\u0635\u0647':'Hessa','\u062D\u0644\u064A\u0645\u0629':'Halima',
+    '\u062D\u0644\u064A\u0645\u0647':'Halima','\u062D\u0645\u062F':'Hamad','\u062D\u0645\u0632\u0629':'Hamza','\u062D\u0645\u0632\u0647':'Hamza',
+    '\u062D\u0645\u0648\u062F':'Hamoud','\u062D\u0645\u064A\u062F':'Hameed','\u062D\u0646\u0627\u0646':'Hanan','\u062D\u0648\u0631':'Hoor',
+    '\u062D\u064A\u062F\u0631':'Haidar','\u062E\u0627\u0644\u062F':'Khaled','\u062E\u062F\u064A\u062C\u0629':'Khadijah','\u062E\u062F\u064A\u062C\u0647':'Khadijah',
+    '\u062E\u0637\u0627\u0628':'Khattab','\u062E\u0644\u0648\u062F':'Kholoud','\u062E\u0644\u064A\u0641\u0629':'Khalifa','\u062E\u0644\u064A\u0641\u0647':'Khalifa',
+    '\u062E\u0644\u064A\u0644':'Khalil','\u062E\u0648\u0644\u0629':'Khawla','\u062E\u0648\u0644\u0647':'Khawla','\u062F\u0627\u0644\u064A\u0627':'Dalia',
+    '\u062F\u0627\u0646\u0629':'Dana','\u062F\u0627\u0646\u0647':'Dana','\u062F\u0627\u0648\u062F':'Dawood','\u062F\u0639\u064A\u062C':'Duaij',
+    '\u062F\u0644\u0627\u0644':'Dalal','\u062F\u064A\u0645\u0627':'Deema','\u0631\u0627\u0626\u062F':'Raed','\u0631\u0627\u0634\u062F':'Rashed',
+    '\u0631\u0627\u0643\u0627\u0646':'Rakan','\u0631\u0627\u0645\u064A':'Rami','\u0631\u0627\u0646\u064A\u0627':'Rania','\u0631\u0628\u0649':'Ruba',
+    '\u0631\u0628\u064A':'Ruba','\u0631\u0632\u0627\u0646':'Razan','\u0631\u0634\u0627':'Rasha','\u0631\u0639\u062F':'Raad',
+    '\u0631\u063A\u062F':'Raghad','\u0631\u0642\u064A\u0629':'Ruqaya','\u0631\u0642\u064A\u0647':'Ruqaya','\u0631\u0645\u0632\u064A':'Ramzi',
+    '\u0631\u0646\u0627':'Rana','\u0631\u0646\u0627\u062F':'Renad','\u0631\u0647\u0641':'Rahaf','\u0631\u0648\u0627\u0646':'Rawan',
+    '\u0631\u064A\u0627\u0636':'Riyadh','\u0631\u064A\u0627\u0646':'Rayan','\u0631\u064A\u0645':'Reem','\u0631\u064A\u0645\u0627':'Reema',
+    '\u0631\u064A\u0645\u0627\u0633':'Rimas','\u0632\u0627\u0647\u0631':'Zaher','\u0632\u0627\u064A\u062F':'Zayed','\u0632\u0643\u0631\u064A\u0627':'Zakaria',
+    '\u0632\u0643\u064A':'Zaki','\u0632\u0647\u0631\u0627\u0621':'Zahra','\u0632\u0647\u0631\u0629':'Zahra','\u0632\u0647\u0631\u0647':'Zahra',
+    '\u0632\u0647\u064A\u0631':'Zuhair','\u0632\u064A\u0627\u062F':'Ziad','\u0632\u064A\u062F':'Zaid','\u0632\u064A\u0646':'Zain',
+    '\u0632\u064A\u0646\u0628':'Zainab','\u0633\u0627\u0631\u0629':'Sara','\u0633\u0627\u0631\u0647':'Sara','\u0633\u0627\u0644\u0645':'Salem',
+    '\u0633\u0627\u0645\u062D':'Sameh','\u0633\u0627\u0645\u064A':'Sami','\u0633\u062D\u0631':'Sahar','\u0633\u062F\u064A\u0645':'Sadeem',
+    '\u0633\u0637\u0627\u0645':'Sattam','\u0633\u0639\u062F':'Saad','\u0633\u0639\u0648\u062F':'Saud','\u0633\u0641\u064A\u0627\u0646':'Sufyan',
+    '\u0633\u0644\u0637\u0627\u0646':'Sultan','\u0633\u0644\u0645\u0627\u0646':'Salman','\u0633\u0644\u0645\u0649':'Salma','\u0633\u0644\u0645\u064A':'Salma',
+    '\u0633\u0644\u0648\u0649':'Salwa','\u0633\u0644\u0648\u064A':'Salwa','\u0633\u0644\u064A\u0645':'Saleem','\u0633\u0644\u064A\u0645\u0627\u0646':'Sulaiman',
+    '\u0633\u0645\u064A\u0629':'Sumaya','\u0633\u0645\u064A\u0631':'Samir','\u0633\u0645\u064A\u0631\u0629':'Samira','\u0633\u0645\u064A\u0631\u0647':'Samira',
+    '\u0633\u0645\u064A\u0647':'Sumaya','\u0633\u0646\u062F\u0633':'Sondos','\u0633\u0647\u064A\u0644':'Suhail','\u0633\u064A\u0641':'Saif',
+    '\u0634\u0627\u062F\u064A':'Shadi','\u0634\u0627\u0643\u0631':'Shaker','\u0634\u0627\u0647\u064A\u0646':'Shaheen','\u0634\u0630\u0649':'Shatha',
+    '\u0634\u0630\u064A':'Shatha','\u0634\u0631\u0648\u0642':'Shorouq','\u0634\u0631\u064A\u0641':'Sharif','\u0634\u0631\u064A\u0641\u0629':'Sharifa',
+    '\u0634\u0631\u064A\u0641\u0647':'Sharifa','\u0634\u0647\u062F':'Shahad','\u0634\u064A\u062E\u0629':'Sheikha','\u0634\u064A\u062E\u0647':'Sheikha',
+    '\u0634\u064A\u0645\u0627\u0621':'Shaima','\u0635\u0627\u0628\u0631\u064A\u0646':'Sabreen','\u0635\u0627\u0644\u062D':'Saleh','\u0635\u0628\u0627\u062D':'Sabah',
+    '\u0635\u0642\u0631':'Saqer','\u0635\u0644\u0627\u062D':'Salah','\u0635\u0647\u064A\u0628':'Suhaib','\u0636\u0627\u0631\u064A':'Dhari',
+    '\u0637\u0627\u0631\u0642':'Tariq','\u0637\u0644\u0627\u0644':'Talal','\u0637\u0647':'Taha','\u0637\u064A\u0641':'Taif',
+    '\u0639\u0627\u0626\u0634\u0629':'Aisha','\u0639\u0627\u0626\u0634\u0647':'Aisha','\u0639\u0627\u062F\u0644':'Adel','\u0639\u0627\u0645\u0631':'Amer',
+    '\u0639\u0627\u064A\u0634\u0629':'Aisha','\u0639\u0627\u064A\u0634\u0647':'Aisha','\u0639\u0628\u062F\u0627\u0644\u0625\u0644\u0647':'Abdulelah','\u0639\u0628\u062F\u0627\u0644\u062C\u0644\u064A\u0644':'Abduljalil',
+    '\u0639\u0628\u062F\u0627\u0644\u062D\u0645\u064A\u062F':'Abdulhamid','\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u0645\u0646':'Abdulrahman','\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u064A\u0645':'Abdulrahim','\u0639\u0628\u062F\u0627\u0644\u0633\u062A\u0627\u0631':'Abdulsattar',
+    '\u0639\u0628\u062F\u0627\u0644\u0633\u0644\u0627\u0645':'Abdulsalam','\u0639\u0628\u062F\u0627\u0644\u0639\u0632\u064A\u0632':'Abdulaziz','\u0639\u0628\u062F\u0627\u0644\u063A\u0646\u064A':'Abdulghani','\u0639\u0628\u062F\u0627\u0644\u0641\u062A\u0627\u062D':'Abdulfattah',
+    '\u0639\u0628\u062F\u0627\u0644\u0642\u0627\u062F\u0631':'Abdulqader','\u0639\u0628\u062F\u0627\u0644\u0643\u0631\u064A\u0645':'Abdulkarim','\u0639\u0628\u062F\u0627\u0644\u0644\u0637\u064A\u0641':'Abdullatif','\u0639\u0628\u062F\u0627\u0644\u0644\u0647':'Abdullah',
+    '\u0639\u0628\u062F\u0627\u0644\u0645\u062C\u064A\u062F':'Abdulmajeed','\u0639\u0628\u062F\u0627\u0644\u0645\u062D\u0633\u0646':'Abdulmohsen','\u0639\u0628\u062F\u0627\u0644\u0645\u0644\u0643':'Abdulmalik','\u0639\u0628\u062F\u0627\u0644\u0646\u0627\u0635\u0631':'Abdulnasser',
+    '\u0639\u0628\u062F\u0627\u0644\u0647\u0627\u062F\u064A':'Abdulhadi','\u0639\u0628\u062F\u0627\u0644\u0648\u0647\u0627\u0628':'Abdulwahab','\u0639\u0628\u064A\u062F':'Obaid','\u0639\u0628\u064A\u0631':'Abeer',
+    '\u0639\u062B\u0645\u0627\u0646':'Othman','\u0639\u062F\u0646\u0627\u0646':'Adnan','\u0639\u062F\u064A':'Oday','\u0639\u0632\u064A\u0632':'Aziz',
+    '\u0639\u0644\u0627\u0621':'Alaa','\u0639\u0644\u064A':'Ali','\u0639\u0645\u0627\u062F':'Emad','\u0639\u0645\u0627\u0631':'Ammar',
+    '\u0639\u0645\u0631':'Omar','\u0639\u0645\u0631\u0648':'Amr','\u0639\u0647\u0648\u062F':'Ohoud','\u0639\u064A\u0633\u0649':'Essa',
+    '\u0639\u064A\u0633\u064A':'Essa','\u063A\u0627\u062F\u0629':'Ghada','\u063A\u0627\u062F\u0647':'Ghada','\u063A\u0627\u0632\u064A':'Ghazi',
+    '\u063A\u0627\u0644\u064A\u0629':'Ghalia','\u063A\u0627\u0644\u064A\u0647':'Ghalia','\u063A\u0627\u0646\u0645':'Ghanem','\u063A\u062F\u064A\u0631':'Ghadeer',
+    '\u063A\u0633\u0627\u0646':'Ghassan','\u0641\u0624\u0627\u062F':'Fouad','\u0641\u0627\u062F\u064A':'Fadi','\u0641\u0627\u0631\u0633':'Faris',
+    '\u0641\u0627\u0637\u0645\u0629':'Fatima','\u0641\u0627\u0637\u0645\u0647':'Fatima','\u0641\u0627\u0644\u062D':'Faleh','\u0641\u062C\u0631':'Fajer',
+    '\u0641\u0631\u0627\u0633':'Firas','\u0641\u0631\u062D':'Farah','\u0641\u0647\u062F':'Fahad','\u0641\u0648\u0627\u0632':'Fawaz',
+    '\u0641\u0648\u0632\u064A':'Fawzi','\u0641\u064A\u0635\u0644':'Faisal','\u0642\u0635\u064A':'Qusai','\u0642\u064A\u0633':'Qais',
+    '\u0643\u0627\u0645\u0644':'Kamel','\u0643\u0631\u064A\u0645':'Karim','\u0643\u0645\u0627\u0644':'Kamal','\u0644\u0624\u064A':'Louay',
+    '\u0644\u0628\u0646\u0649':'Lubna','\u0644\u0628\u0646\u064A':'Lubna','\u0644\u0637\u064A\u0641\u0629':'Latifa','\u0644\u0637\u064A\u0641\u0647':'Latifa',
+    '\u0644\u0645\u0649':'Lama','\u0644\u0645\u064A':'Lama','\u0644\u0645\u064A\u0633':'Lamees','\u0644\u0648\u0644\u0648':'Lulu',
+    '\u0644\u0648\u0644\u0648\u0629':'Lulwa','\u0644\u0648\u0644\u0648\u0647':'Lulwa','\u0644\u064A\u062B':'Laith','\u0644\u064A\u0644\u0649':'Layla',
+    '\u0644\u064A\u0644\u064A':'Layla','\u0644\u064A\u0646\u0627':'Lina','\u0645\u0627\u062C\u062F':'Majed','\u0645\u0627\u0632\u0646':'Mazen',
+    '\u0645\u0627\u0644\u0643':'Malek','\u0645\u0628\u0627\u0631\u0643':'Mubarak','\u0645\u062D\u0633\u0646':'Mohsen','\u0645\u062D\u0645\u062F':'Mohammed',
+    '\u0645\u062D\u0645\u0648\u062F':'Mahmoud','\u0645\u0631\u0627\u062F':'Murad','\u0645\u0631\u0627\u0645':'Maram','\u0645\u0631\u0648\u0627\u0646':'Marwan',
+    '\u0645\u0631\u0648\u0629':'Marwa','\u0645\u0631\u0648\u0647':'Marwa','\u0645\u0631\u064A\u0645':'Mariam','\u0645\u0633\u0627\u0639\u062F':'Musaed',
+    '\u0645\u0634\u0627\u0631\u064A':'Mishari','\u0645\u0634\u0627\u0639\u0644':'Mashael','\u0645\u0634\u0639\u0644':'Meshal','\u0645\u0635\u0637\u0641\u0649':'Mustafa',
+    '\u0645\u0635\u0637\u0641\u064A':'Mustafa','\u0645\u0637\u0644\u0642':'Mutlaq','\u0645\u0639\u0627\u0630':'Muath','\u0645\u0639\u062A\u0632':'Motaz',
+    '\u0645\u0645\u062F\u0648\u062D':'Mamdouh','\u0645\u0646\u0627\u0644':'Manal','\u0645\u0646\u0635\u0648\u0631':'Mansour','\u0645\u0646\u0649':'Mona',
+    '\u0645\u0646\u064A':'Mona','\u0645\u0646\u064A\u0631':'Munir','\u0645\u0646\u064A\u0631\u0629':'Munira','\u0645\u0646\u064A\u0631\u0647':'Munira',
+    '\u0645\u0647\u0627':'Maha','\u0645\u0647\u062F\u064A':'Mahdi','\u0645\u0647\u0646\u062F':'Mohanad','\u0645\u0648\u0633\u0649':'Musa',
+    '\u0645\u0648\u0633\u064A':'Musa','\u0645\u0648\u0636\u064A':'Moudhi','\u0645\u064A':'Mai','\u0645\u064A\u0631\u0627':'Mira',
+    '\u0646\u0627\u062C\u064A':'Naji','\u0646\u0627\u062F\u0631':'Nader','\u0646\u0627\u062F\u064A\u0629':'Nadia','\u0646\u0627\u062F\u064A\u0647':'Nadia',
+    '\u0646\u0627\u0635\u0631':'Nasser','\u0646\u0627\u064A\u0641':'Naif','\u0646\u0628\u064A\u0644':'Nabil','\u0646\u062C\u0644\u0627\u0621':'Najla',
+    '\u0646\u062F\u0649':'Nada','\u0646\u062F\u064A':'Nada','\u0646\u062F\u064A\u0645':'Nadim','\u0646\u0632\u0627\u0631':'Nizar',
+    '\u0646\u0647\u0644\u0629':'Nahla','\u0646\u0647\u0644\u0647':'Nahla','\u0646\u0648\u0627\u0641':'Nawaf','\u0646\u0648\u0627\u0644':'Nawal',
+    '\u0646\u0648\u0631':'Noor','\u0646\u0648\u0631\u0629':'Noura','\u0646\u0648\u0631\u0647':'Noura','\u0646\u0648\u0641':'Nouf',
+    '\u0647\u0627\u062C\u0631':'Hajar','\u0647\u0627\u0631\u0648\u0646':'Haroon','\u0647\u0627\u0634\u0645':'Hashem','\u0647\u0627\u0644\u0629':'Hala',
+    '\u0647\u0627\u0644\u0647':'Hala','\u0647\u0627\u0646\u064A':'Hani','\u0647\u062F\u0649':'Huda','\u0647\u062F\u064A':'Huda',
+    '\u0647\u0634\u0627\u0645':'Hisham','\u0647\u0644\u0627':'Hala','\u0647\u0646\u062F':'Hind','\u0647\u064A\u0627':'Haya',
+    '\u0647\u064A\u062B\u0645':'Haitham','\u0648\u0627\u0626\u0644':'Wael','\u0648\u062C\u062F\u0627\u0646':'Wejdan','\u0648\u062D\u064A\u062F':'Waheed',
+    '\u0648\u062F\u0627\u062F':'Widad','\u0648\u0633\u0627\u0645':'Wisam','\u0648\u0633\u064A\u0645':'Wasim','\u0648\u0636\u062D\u0629':'Wadha',
+    '\u0648\u0636\u062D\u0647':'Wadha','\u0648\u0636\u062D\u0649':'Wadha','\u0648\u0636\u062D\u064A':'Wadha','\u0648\u0641\u0627\u0621':'Wafa',
+    '\u0648\u0644\u064A\u062F':'Waleed','\u064A\u0627\u0633\u0631':'Yasser','\u064A\u0627\u0633\u0645\u064A\u0646':'Yasmin','\u064A\u062D\u064A\u0649':'Yahya',
+    '\u064A\u062D\u064A\u064A':'Yahya','\u064A\u0632\u0646':'Yazan','\u064A\u0632\u064A\u062F':'Yazeed','\u064A\u0639\u0642\u0648\u0628':'Yaqoub',
+    '\u064A\u0648\u0633\u0641':'Yousef','\u064A\u0648\u0646\u0633':'Younes'
+  };
+  const NAME_EN_TO_AR = {
+    'aamer':'\u0639\u0627\u0645\u0631','abdallah':'\u0639\u0628\u062F\u0627\u0644\u0644\u0647','abdelaziz':'\u0639\u0628\u062F\u0627\u0644\u0639\u0632\u064A\u0632','abdelfattah':'\u0639\u0628\u062F\u0627\u0644\u0641\u062A\u0627\u062D',
+    'abdelghani':'\u0639\u0628\u062F\u0627\u0644\u063A\u0646\u064A','abdelhadi':'\u0639\u0628\u062F\u0627\u0644\u0647\u0627\u062F\u064A','abdelhamid':'\u0639\u0628\u062F\u0627\u0644\u062D\u0645\u064A\u062F','abdelkader':'\u0639\u0628\u062F\u0627\u0644\u0642\u0627\u062F\u0631',
+    'abdelkarim':'\u0639\u0628\u062F\u0627\u0644\u0643\u0631\u064A\u0645','abdellah':'\u0639\u0628\u062F\u0627\u0644\u0644\u0647','abdellatif':'\u0639\u0628\u062F\u0627\u0644\u0644\u0637\u064A\u0641','abdelmajid':'\u0639\u0628\u062F\u0627\u0644\u0645\u062C\u064A\u062F',
+    'abdelnasser':'\u0639\u0628\u062F\u0627\u0644\u0646\u0627\u0635\u0631','abdelrahim':'\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u064A\u0645','abdelrahman':'\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u0645\u0646','abdelsalam':'\u0639\u0628\u062F\u0627\u0644\u0633\u0644\u0627\u0645',
+    'abdelsattar':'\u0639\u0628\u062F\u0627\u0644\u0633\u062A\u0627\u0631','abdelwahab':'\u0639\u0628\u062F\u0627\u0644\u0648\u0647\u0627\u0628','abdulazeez':'\u0639\u0628\u062F\u0627\u0644\u0639\u0632\u064A\u0632','abdulaziz':'\u0639\u0628\u062F\u0627\u0644\u0639\u0632\u064A\u0632',
+    'abdulelah':'\u0639\u0628\u062F\u0627\u0644\u0625\u0644\u0647','abdulfattah':'\u0639\u0628\u062F\u0627\u0644\u0641\u062A\u0627\u062D','abdulghani':'\u0639\u0628\u062F\u0627\u0644\u063A\u0646\u064A','abdulhadi':'\u0639\u0628\u062F\u0627\u0644\u0647\u0627\u062F\u064A',
+    'abdulhameed':'\u0639\u0628\u062F\u0627\u0644\u062D\u0645\u064A\u062F','abdulhamid':'\u0639\u0628\u062F\u0627\u0644\u062D\u0645\u064A\u062F','abdulilah':'\u0639\u0628\u062F\u0627\u0644\u0625\u0644\u0647','abduljaleel':'\u0639\u0628\u062F\u0627\u0644\u062C\u0644\u064A\u0644',
+    'abduljalil':'\u0639\u0628\u062F\u0627\u0644\u062C\u0644\u064A\u0644','abdulkader':'\u0639\u0628\u062F\u0627\u0644\u0642\u0627\u062F\u0631','abdulkareem':'\u0639\u0628\u062F\u0627\u0644\u0643\u0631\u064A\u0645','abdulkarim':'\u0639\u0628\u062F\u0627\u0644\u0643\u0631\u064A\u0645',
+    'abdulla':'\u0639\u0628\u062F\u0627\u0644\u0644\u0647','abdullah':'\u0639\u0628\u062F\u0627\u0644\u0644\u0647','abdullateef':'\u0639\u0628\u062F\u0627\u0644\u0644\u0637\u064A\u0641','abdullatif':'\u0639\u0628\u062F\u0627\u0644\u0644\u0637\u064A\u0641',
+    'abdulmajeed':'\u0639\u0628\u062F\u0627\u0644\u0645\u062C\u064A\u062F','abdulmajid':'\u0639\u0628\u062F\u0627\u0644\u0645\u062C\u064A\u062F','abdulmalek':'\u0639\u0628\u062F\u0627\u0644\u0645\u0644\u0643','abdulmalik':'\u0639\u0628\u062F\u0627\u0644\u0645\u0644\u0643',
+    'abdulmohsen':'\u0639\u0628\u062F\u0627\u0644\u0645\u062D\u0633\u0646','abdulmohsin':'\u0639\u0628\u062F\u0627\u0644\u0645\u062D\u0633\u0646','abdulmuhsen':'\u0639\u0628\u062F\u0627\u0644\u0645\u062D\u0633\u0646','abdulnasser':'\u0639\u0628\u062F\u0627\u0644\u0646\u0627\u0635\u0631',
+    'abdulqader':'\u0639\u0628\u062F\u0627\u0644\u0642\u0627\u062F\u0631','abdulraheem':'\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u064A\u0645','abdulrahim':'\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u064A\u0645','abdulrahman':'\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u0645\u0646',
+    'abdulsalam':'\u0639\u0628\u062F\u0627\u0644\u0633\u0644\u0627\u0645','abdulsattar':'\u0639\u0628\u062F\u0627\u0644\u0633\u062A\u0627\u0631','abdulwahab':'\u0639\u0628\u062F\u0627\u0644\u0648\u0647\u0627\u0628','abdulwahhab':'\u0639\u0628\u062F\u0627\u0644\u0648\u0647\u0627\u0628',
+    'abdurrahman':'\u0639\u0628\u062F\u0627\u0644\u0631\u062D\u0645\u0646','abdussalam':'\u0639\u0628\u062F\u0627\u0644\u0633\u0644\u0627\u0645','abeer':'\u0639\u0628\u064A\u0631','abir':'\u0639\u0628\u064A\u0631',
+    'adel':'\u0639\u0627\u062F\u0644','adil':'\u0639\u0627\u062F\u0644','adnan':'\u0639\u062F\u0646\u0627\u0646','afrah':'\u0623\u0641\u0631\u0627\u062D',
+    'ahmad':'\u0623\u062D\u0645\u062F','ahmed':'\u0623\u062D\u0645\u062F','aiman':'\u0623\u064A\u0645\u0646','aisha':'\u0639\u0627\u0626\u0634\u0629',
+    'aishah':'\u0639\u0627\u0626\u0634\u0629','akram':'\u0623\u0643\u0631\u0645','alaa':'\u0639\u0644\u0627\u0621','ali':'\u0639\u0644\u064A',
+    'amal':'\u0623\u0645\u0644','amani':'\u0623\u0645\u0627\u0646\u064A','amar':'\u0639\u0645\u0627\u0631','amer':'\u0639\u0627\u0645\u0631',
+    'amir':'\u0639\u0627\u0645\u0631','ammar':'\u0639\u0645\u0627\u0631','amr':'\u0639\u0645\u0631\u0648','amro':'\u0639\u0645\u0631\u0648',
+    'anas':'\u0623\u0646\u0633','anfal':'\u0623\u0646\u0641\u0627\u0644','anwar':'\u0623\u0646\u0648\u0631','areej':'\u0623\u0631\u064A\u062C',
+    'ashwaq':'\u0623\u0634\u0648\u0627\u0642','asma':'\u0623\u0633\u0645\u0627\u0621','asmaa':'\u0623\u0633\u0645\u0627\u0621','aya':'\u0622\u064A\u0629',
+    'ayah':'\u0622\u064A\u0629','ayesha':'\u0639\u0627\u0626\u0634\u0629','ayman':'\u0623\u064A\u0645\u0646','aymen':'\u0623\u064A\u0645\u0646',
+    'ayoub':'\u0623\u064A\u0648\u0628','aysha':'\u0639\u0627\u0626\u0634\u0629','ayub':'\u0623\u064A\u0648\u0628','azeez':'\u0639\u0632\u064A\u0632',
+    'aziz':'\u0639\u0632\u064A\u0632','badar':'\u0628\u062F\u0631','bader':'\u0628\u062F\u0631','badr':'\u0628\u062F\u0631',
+    'bandar':'\u0628\u0646\u062F\u0631','bander':'\u0628\u0646\u062F\u0631','barrak':'\u0628\u0631\u0627\u0643','basam':'\u0628\u0633\u0627\u0645',
+    'basel':'\u0628\u0627\u0633\u0644','bashaer':'\u0628\u0634\u0627\u064A\u0631','bashair':'\u0628\u0634\u0627\u064A\u0631','bashar':'\u0628\u0634\u0627\u0631',
+    'bashayer':'\u0628\u0634\u0627\u064A\u0631','basil':'\u0628\u0627\u0633\u0644','bassam':'\u0628\u0633\u0627\u0645','bassel':'\u0628\u0627\u0633\u0644',
+    'belal':'\u0628\u0644\u0627\u0644','bilal':'\u0628\u0644\u0627\u0644','dalal':'\u062F\u0644\u0627\u0644','dalia':'\u062F\u0627\u0644\u064A\u0627',
+    'dalya':'\u062F\u0627\u0644\u064A\u0627','dana':'\u062F\u0627\u0646\u0629','danah':'\u062F\u0627\u0646\u0629','daoud':'\u062F\u0627\u0648\u062F',
+    'dawood':'\u062F\u0627\u0648\u062F','dawoud':'\u062F\u0627\u0648\u062F','deema':'\u062F\u064A\u0645\u0627','dema':'\u062F\u064A\u0645\u0627',
+    'dhari':'\u0636\u0627\u0631\u064A','dima':'\u062F\u064A\u0645\u0627','duaij':'\u062F\u0639\u064A\u062C','ebrahim':'\u0625\u0628\u0631\u0627\u0647\u064A\u0645',
+    'ebtisam':'\u0627\u0628\u062A\u0633\u0627\u0645','eisa':'\u0639\u064A\u0633\u0649','emad':'\u0639\u0645\u0627\u062F','eman':'\u0625\u064A\u0645\u0627\u0646',
+    'esmail':'\u0625\u0633\u0645\u0627\u0639\u064A\u0644','esraa':'\u0625\u0633\u0631\u0627\u0621','essa':'\u0639\u064A\u0633\u0649','eyad':'\u0625\u064A\u0627\u062F',
+    'fadi':'\u0641\u0627\u062F\u064A','fady':'\u0641\u0627\u062F\u064A','fahad':'\u0641\u0647\u062F','fahd':'\u0641\u0647\u062F',
+    'fahed':'\u0641\u0647\u062F','faisal':'\u0641\u064A\u0635\u0644','faisel':'\u0641\u064A\u0635\u0644','fajar':'\u0641\u062C\u0631',
+    'fajer':'\u0641\u062C\u0631','fajr':'\u0641\u062C\u0631','faleh':'\u0641\u0627\u0644\u062D','farah':'\u0641\u0631\u062D',
+    'fares':'\u0641\u0627\u0631\u0633','faris':'\u0641\u0627\u0631\u0633','fatema':'\u0641\u0627\u0637\u0645\u0629','fatemah':'\u0641\u0627\u0637\u0645\u0629',
+    'fatima':'\u0641\u0627\u0637\u0645\u0629','fatimah':'\u0641\u0627\u0637\u0645\u0629','fatma':'\u0641\u0627\u0637\u0645\u0629','fawaz':'\u0641\u0648\u0627\u0632',
+    'fawwaz':'\u0641\u0648\u0627\u0632','fawzi':'\u0641\u0648\u0632\u064A','faysal':'\u0641\u064A\u0635\u0644','feisal':'\u0641\u064A\u0635\u0644',
+    'feras':'\u0641\u0631\u0627\u0633','firas':'\u0641\u0631\u0627\u0633','fouad':'\u0641\u0624\u0627\u062F','fuad':'\u0641\u0624\u0627\u062F',
+    'ghada':'\u063A\u0627\u062F\u0629','ghadeer':'\u063A\u062F\u064A\u0631','ghadir':'\u063A\u062F\u064A\u0631','ghalia':'\u063A\u0627\u0644\u064A\u0629',
+    'ghaliah':'\u063A\u0627\u0644\u064A\u0629','ghalya':'\u063A\u0627\u0644\u064A\u0629','ghanem':'\u063A\u0627\u0646\u0645','ghanim':'\u063A\u0627\u0646\u0645',
+    'ghassan':'\u063A\u0633\u0627\u0646','ghazi':'\u063A\u0627\u0632\u064A','habib':'\u062D\u0628\u064A\u0628','haia':'\u0647\u064A\u0627',
+    'haidar':'\u062D\u064A\u062F\u0631','haider':'\u062D\u064A\u062F\u0631','haitham':'\u0647\u064A\u062B\u0645','haithem':'\u0647\u064A\u062B\u0645',
+    'hajar':'\u0647\u0627\u062C\u0631','hajer':'\u0647\u0627\u062C\u0631','hala':'\u0647\u0644\u0627','haleema':'\u062D\u0644\u064A\u0645\u0629',
+    'halima':'\u062D\u0644\u064A\u0645\u0629','hamad':'\u062D\u0645\u062F','hamed':'\u062D\u0627\u0645\u062F','hameed':'\u062D\u0645\u064A\u062F',
+    'hamid':'\u062D\u0627\u0645\u062F','hamoud':'\u062D\u0645\u0648\u062F','hamza':'\u062D\u0645\u0632\u0629','hamzah':'\u062D\u0645\u0632\u0629',
+    'hanan':'\u062D\u0646\u0627\u0646','hani':'\u0647\u0627\u0646\u064A','hany':'\u0647\u0627\u0646\u064A','haroon':'\u0647\u0627\u0631\u0648\u0646',
+    'harun':'\u0647\u0627\u0631\u0648\u0646','hasan':'\u062D\u0633\u0646','hashem':'\u0647\u0627\u0634\u0645','hashim':'\u0647\u0627\u0634\u0645',
+    'hassan':'\u062D\u0633\u0646','hatem':'\u062D\u0627\u062A\u0645','hatim':'\u062D\u0627\u062A\u0645','haya':'\u0647\u064A\u0627',
+    'hayah':'\u0647\u064A\u0627','haydar':'\u062D\u064A\u062F\u0631','haytham':'\u0647\u064A\u062B\u0645','hesham':'\u0647\u0634\u0627\u0645',
+    'hessa':'\u062D\u0635\u0629','hind':'\u0647\u0646\u062F','hisham':'\u0647\u0634\u0627\u0645','hissa':'\u062D\u0635\u0629',
+    'hmoud':'\u062D\u0645\u0648\u062F','hoda':'\u0647\u062F\u0649','hoor':'\u062D\u0648\u0631','hossam':'\u062D\u0633\u0627\u0645',
+    'houda':'\u0647\u062F\u0649','hour':'\u062D\u0648\u0631','huda':'\u0647\u062F\u0649','humaid':'\u062D\u0645\u064A\u062F',
+    'humoud':'\u062D\u0645\u0648\u062F','husain':'\u062D\u0633\u064A\u0646','husam':'\u062D\u0633\u0627\u0645','hussa':'\u062D\u0635\u0629',
+    'hussain':'\u062D\u0633\u064A\u0646','hussam':'\u062D\u0633\u0627\u0645','hussein':'\u062D\u0633\u064A\u0646','hussien':'\u062D\u0633\u064A\u0646',
+    'ibraheem':'\u0625\u0628\u0631\u0627\u0647\u064A\u0645','ibrahim':'\u0625\u0628\u0631\u0627\u0647\u064A\u0645','ibtisam':'\u0627\u0628\u062A\u0633\u0627\u0645','imad':'\u0639\u0645\u0627\u062F',
+    'iman':'\u0625\u064A\u0645\u0627\u0646','isa':'\u0639\u064A\u0633\u0649','ismaeel':'\u0625\u0633\u0645\u0627\u0639\u064A\u0644','ismail':'\u0625\u0633\u0645\u0627\u0639\u064A\u0644',
+    'isra':'\u0625\u0633\u0631\u0627\u0621','israa':'\u0625\u0633\u0631\u0627\u0621','issa':'\u0639\u064A\u0633\u0649','iyad':'\u0625\u064A\u0627\u062F',
+    'jaber':'\u062C\u0627\u0628\u0631','jabir':'\u062C\u0627\u0628\u0631','jad':'\u062C\u0627\u062F','jamal':'\u062C\u0645\u0627\u0644',
+    'jana':'\u062C\u0646\u0649','janah':'\u062C\u0646\u0649','jarrah':'\u062C\u0631\u0627\u062D','jasem':'\u062C\u0627\u0633\u0645',
+    'jasim':'\u062C\u0627\u0633\u0645','jassem':'\u062C\u0627\u0633\u0645','jassim':'\u062C\u0627\u0633\u0645','jawad':'\u062C\u0648\u0627\u062F',
+    'jawaher':'\u062C\u0648\u0627\u0647\u0631','jawahir':'\u062C\u0648\u0627\u0647\u0631','jood':'\u062C\u0648\u062F','joori':'\u062C\u0648\u0631\u064A',
+    'jori':'\u062C\u0648\u0631\u064A','joud':'\u062C\u0648\u062F','joumana':'\u062C\u0645\u0627\u0646\u0629','jouri':'\u062C\u0648\u0631\u064A',
+    'joury':'\u062C\u0648\u0631\u064A','jumana':'\u062C\u0645\u0627\u0646\u0629','jumanah':'\u062C\u0645\u0627\u0646\u0629','kais':'\u0642\u064A\u0633',
+    'kamal':'\u0643\u0645\u0627\u0644','kamel':'\u0643\u0627\u0645\u0644','kamil':'\u0643\u0627\u0645\u0644','kareem':'\u0643\u0631\u064A\u0645',
+    'karim':'\u0643\u0631\u064A\u0645','khadeeja':'\u062E\u062F\u064A\u062C\u0629','khadeejah':'\u062E\u062F\u064A\u062C\u0629','khadija':'\u062E\u062F\u064A\u062C\u0629',
+    'khadijah':'\u062E\u062F\u064A\u062C\u0629','khaled':'\u062E\u0627\u0644\u062F','khaleed':'\u062E\u0627\u0644\u062F','khaleel':'\u062E\u0644\u064A\u0644',
+    'khalid':'\u062E\u0627\u0644\u062F','khalifa':'\u062E\u0644\u064A\u0641\u0629','khalifah':'\u062E\u0644\u064A\u0641\u0629','khalil':'\u062E\u0644\u064A\u0644',
+    'khattab':'\u062E\u0637\u0627\u0628','khawla':'\u062E\u0648\u0644\u0629','khawlah':'\u062E\u0648\u0644\u0629','kholod':'\u062E\u0644\u0648\u062F',
+    'kholoud':'\u062E\u0644\u0648\u062F','khulood':'\u062E\u0644\u0648\u062F','laila':'\u0644\u064A\u0644\u0649','laith':'\u0644\u064A\u062B',
+    'lama':'\u0644\u0645\u0649','lamees':'\u0644\u0645\u064A\u0633','lamis':'\u0644\u0645\u064A\u0633','lateefa':'\u0644\u0637\u064A\u0641\u0629',
+    'latifa':'\u0644\u0637\u064A\u0641\u0629','latifah':'\u0644\u0637\u064A\u0641\u0629','layla':'\u0644\u064A\u0644\u0649','layth':'\u0644\u064A\u062B',
+    'leena':'\u0644\u064A\u0646\u0627','leila':'\u0644\u064A\u0644\u0649','leith':'\u0644\u064A\u062B','lina':'\u0644\u064A\u0646\u0627',
+    'loai':'\u0644\u0624\u064A','loay':'\u0644\u0624\u064A','louay':'\u0644\u0624\u064A','loulou':'\u0644\u0648\u0644\u0648',
+    'loulwa':'\u0644\u0648\u0644\u0648\u0629','luay':'\u0644\u0624\u064A','lubna':'\u0644\u0628\u0646\u0649','lulu':'\u0644\u0648\u0644\u0648',
+    'lulwa':'\u0644\u0648\u0644\u0648\u0629','lulwah':'\u0644\u0648\u0644\u0648\u0629','lyla':'\u0644\u064A\u0644\u0649','maged':'\u0645\u0627\u062C\u062F',
+    'maha':'\u0645\u0647\u0627','mahdi':'\u0645\u0647\u062F\u064A','mahmood':'\u0645\u062D\u0645\u0648\u062F','mahmoud':'\u0645\u062D\u0645\u0648\u062F',
+    'mahmud':'\u0645\u062D\u0645\u0648\u062F','mai':'\u0645\u064A','majed':'\u0645\u0627\u062C\u062F','majid':'\u0645\u0627\u062C\u062F',
+    'malek':'\u0645\u0627\u0644\u0643','malik':'\u0645\u0627\u0644\u0643','mamdouh':'\u0645\u0645\u062F\u0648\u062D','manal':'\u0645\u0646\u0627\u0644',
+    'mansoor':'\u0645\u0646\u0635\u0648\u0631','mansour':'\u0645\u0646\u0635\u0648\u0631','mansur':'\u0645\u0646\u0635\u0648\u0631','maram':'\u0645\u0631\u0627\u0645',
+    'mariam':'\u0645\u0631\u064A\u0645','marriam':'\u0645\u0631\u064A\u0645','marwa':'\u0645\u0631\u0648\u0629','marwah':'\u0645\u0631\u0648\u0629',
+    'marwan':'\u0645\u0631\u0648\u0627\u0646','maryam':'\u0645\u0631\u064A\u0645','mashael':'\u0645\u0634\u0627\u0639\u0644','mashail':'\u0645\u0634\u0627\u0639\u0644',
+    'mashayel':'\u0645\u0634\u0627\u0639\u0644','may':'\u0645\u064A','mazen':'\u0645\u0627\u0632\u0646','mazin':'\u0645\u0627\u0632\u0646',
+    'meera':'\u0645\u064A\u0631\u0627','mehdi':'\u0645\u0647\u062F\u064A','meriem':'\u0645\u0631\u064A\u0645','meshaal':'\u0645\u0634\u0639\u0644',
+    'meshal':'\u0645\u0634\u0639\u0644','meshari':'\u0645\u0634\u0627\u0631\u064A','mira':'\u0645\u064A\u0631\u0627','mirah':'\u0645\u064A\u0631\u0627',
+    'mishaal':'\u0645\u0634\u0639\u0644','mishal':'\u0645\u0634\u0639\u0644','mishari':'\u0645\u0634\u0627\u0631\u064A','moataz':'\u0645\u0639\u062A\u0632',
+    'moath':'\u0645\u0639\u0627\u0630','modhi':'\u0645\u0648\u0636\u064A','mohamad':'\u0645\u062D\u0645\u062F','mohamed':'\u0645\u062D\u0645\u062F',
+    'mohammad':'\u0645\u062D\u0645\u062F','mohammed':'\u0645\u062D\u0645\u062F','mohanad':'\u0645\u0647\u0646\u062F','mohannad':'\u0645\u0647\u0646\u062F',
+    'mohsen':'\u0645\u062D\u0633\u0646','mona':'\u0645\u0646\u0649','mostafa':'\u0645\u0635\u0637\u0641\u0649','motaz':'\u0645\u0639\u062A\u0632',
+    'moudhi':'\u0645\u0648\u0636\u064A','mouna':'\u0645\u0646\u0649','mounira':'\u0645\u0646\u064A\u0631\u0629','mousa':'\u0645\u0648\u0633\u0649',
+    'moussa':'\u0645\u0648\u0633\u0649','moustafa':'\u0645\u0635\u0637\u0641\u0649','mshari':'\u0645\u0634\u0627\u0631\u064A','muadh':'\u0645\u0639\u0627\u0630',
+    'muath':'\u0645\u0639\u0627\u0630','mubarak':'\u0645\u0628\u0627\u0631\u0643','muhammad':'\u0645\u062D\u0645\u062F','muhammed':'\u0645\u062D\u0645\u062F',
+    'muhannad':'\u0645\u0647\u0646\u062F','muhsin':'\u0645\u062D\u0633\u0646','muna':'\u0645\u0646\u0649','muneer':'\u0645\u0646\u064A\u0631',
+    'muneera':'\u0645\u0646\u064A\u0631\u0629','munir':'\u0645\u0646\u064A\u0631','munira':'\u0645\u0646\u064A\u0631\u0629','munirah':'\u0645\u0646\u064A\u0631\u0629',
+    'murad':'\u0645\u0631\u0627\u062F','musa':'\u0645\u0648\u0633\u0649','musaad':'\u0645\u0633\u0627\u0639\u062F','musaed':'\u0645\u0633\u0627\u0639\u062F',
+    'mustafa':'\u0645\u0635\u0637\u0641\u0649','mutaz':'\u0645\u0639\u062A\u0632','mutlak':'\u0645\u0637\u0644\u0642','mutlaq':'\u0645\u0637\u0644\u0642',
+    'nabeel':'\u0646\u0628\u064A\u0644','nabil':'\u0646\u0628\u064A\u0644','nada':'\u0646\u062F\u0649','nadeem':'\u0646\u062F\u064A\u0645',
+    'nader':'\u0646\u0627\u062F\u0631','nadia':'\u0646\u0627\u062F\u064A\u0629','nadim':'\u0646\u062F\u064A\u0645','nadir':'\u0646\u0627\u062F\u0631',
+    'nadya':'\u0646\u0627\u062F\u064A\u0629','naef':'\u0646\u0627\u064A\u0641','nahla':'\u0646\u0647\u0644\u0629','naif':'\u0646\u0627\u064A\u0641',
+    'naji':'\u0646\u0627\u062C\u064A','najla':'\u0646\u062C\u0644\u0627\u0621','najlaa':'\u0646\u062C\u0644\u0627\u0621','naser':'\u0646\u0627\u0635\u0631',
+    'nasir':'\u0646\u0627\u0635\u0631','nasser':'\u0646\u0627\u0635\u0631','nassir':'\u0646\u0627\u0635\u0631','nawaf':'\u0646\u0648\u0627\u0641',
+    'nawal':'\u0646\u0648\u0627\u0644','nawwaf':'\u0646\u0648\u0627\u0641','nayef':'\u0646\u0627\u064A\u0641','nayif':'\u0646\u0627\u064A\u0641',
+    'nizar':'\u0646\u0632\u0627\u0631','noor':'\u0646\u0648\u0631','noorah':'\u0646\u0648\u0631\u0629','nora':'\u0646\u0648\u0631\u0629',
+    'norah':'\u0646\u0648\u0631\u0629','nouf':'\u0646\u0648\u0641','nour':'\u0646\u0648\u0631','noura':'\u0646\u0648\u0631\u0629',
+    'nourah':'\u0646\u0648\u0631\u0629','nur':'\u0646\u0648\u0631','obaid':'\u0639\u0628\u064A\u062F','obeid':'\u0639\u0628\u064A\u062F',
+    'odai':'\u0639\u062F\u064A','oday':'\u0639\u062F\u064A','ohood':'\u0639\u0647\u0648\u062F','ohoud':'\u0639\u0647\u0648\u062F',
+    'ohud':'\u0639\u0647\u0648\u062F','omar':'\u0639\u0645\u0631','omer':'\u0639\u0645\u0631','osama':'\u0623\u0633\u0627\u0645\u0629',
+    'osamah':'\u0623\u0633\u0627\u0645\u0629','osman':'\u0639\u062B\u0645\u0627\u0646','ossama':'\u0623\u0633\u0627\u0645\u0629','othman':'\u0639\u062B\u0645\u0627\u0646',
+    'qais':'\u0642\u064A\u0633','qays':'\u0642\u064A\u0633','qusai':'\u0642\u0635\u064A','qusay':'\u0642\u0635\u064A',
+    'raad':'\u0631\u0639\u062F','raed':'\u0631\u0627\u0626\u062F','raghad':'\u0631\u063A\u062F','raghd':'\u0631\u063A\u062F',
+    'rahaf':'\u0631\u0647\u0641','rakan':'\u0631\u0627\u0643\u0627\u0646','rami':'\u0631\u0627\u0645\u064A','ramy':'\u0631\u0627\u0645\u064A',
+    'ramzi':'\u0631\u0645\u0632\u064A','ramzy':'\u0631\u0645\u0632\u064A','rana':'\u0631\u0646\u0627','rania':'\u0631\u0627\u0646\u064A\u0627',
+    'ranya':'\u0631\u0627\u0646\u064A\u0627','rasha':'\u0631\u0634\u0627','rashed':'\u0631\u0627\u0634\u062F','rasheed':'\u0631\u0627\u0634\u062F',
+    'rashid':'\u0631\u0627\u0634\u062F','rawan':'\u0631\u0648\u0627\u0646','rayan':'\u0631\u064A\u0627\u0646','rayyan':'\u0631\u064A\u0627\u0646',
+    'razan':'\u0631\u0632\u0627\u0646','reem':'\u0631\u064A\u0645','reema':'\u0631\u064A\u0645\u0627','rema':'\u0631\u064A\u0645\u0627',
+    'remas':'\u0631\u064A\u0645\u0627\u0633','renad':'\u0631\u0646\u0627\u062F','riad':'\u0631\u064A\u0627\u0636','rim':'\u0631\u064A\u0645',
+    'rima':'\u0631\u064A\u0645\u0627','rimas':'\u0631\u064A\u0645\u0627\u0633','riyad':'\u0631\u064A\u0627\u0636','riyadh':'\u0631\u064A\u0627\u0636',
+    'ruba':'\u0631\u0628\u0649','rukaya':'\u0631\u0642\u064A\u0629','ruqaya':'\u0631\u0642\u064A\u0629','ruqayah':'\u0631\u0642\u064A\u0629',
+    'ruqayya':'\u0631\u0642\u064A\u0629','ryan':'\u0631\u064A\u0627\u0646','saad':'\u0633\u0639\u062F','sabah':'\u0635\u0628\u0627\u062D',
+    'sabreen':'\u0635\u0627\u0628\u0631\u064A\u0646','sabrin':'\u0635\u0627\u0628\u0631\u064A\u0646','sadeem':'\u0633\u062F\u064A\u0645','sadim':'\u0633\u062F\u064A\u0645',
+    'sager':'\u0635\u0642\u0631','sahar':'\u0633\u062D\u0631','saif':'\u0633\u064A\u0641','salah':'\u0635\u0644\u0627\u062D',
+    'saleem':'\u0633\u0644\u064A\u0645','saleh':'\u0635\u0627\u0644\u062D','salem':'\u0633\u0627\u0644\u0645','salih':'\u0635\u0627\u0644\u062D',
+    'salim':'\u0633\u0627\u0644\u0645','salma':'\u0633\u0644\u0645\u0649','salman':'\u0633\u0644\u0645\u0627\u0646','salwa':'\u0633\u0644\u0648\u0649',
+    'sameer':'\u0633\u0645\u064A\u0631','sameera':'\u0633\u0645\u064A\u0631\u0629','sameh':'\u0633\u0627\u0645\u062D','sami':'\u0633\u0627\u0645\u064A',
+    'samir':'\u0633\u0645\u064A\u0631','samira':'\u0633\u0645\u064A\u0631\u0629','saoud':'\u0633\u0639\u0648\u062F','saqer':'\u0635\u0642\u0631',
+    'saqr':'\u0635\u0642\u0631','sara':'\u0633\u0627\u0631\u0629','sarah':'\u0633\u0627\u0631\u0629','sarra':'\u0633\u0627\u0631\u0629',
+    'sattam':'\u0633\u0637\u0627\u0645','saud':'\u0633\u0639\u0648\u062F','sayf':'\u0633\u064A\u0641','seif':'\u0633\u064A\u0641',
+    'shadi':'\u0634\u0627\u062F\u064A','shady':'\u0634\u0627\u062F\u064A','shahad':'\u0634\u0647\u062F','shahd':'\u0634\u0647\u062F',
+    'shaheen':'\u0634\u0627\u0647\u064A\u0646','shahin':'\u0634\u0627\u0647\u064A\u0646','shaikha':'\u0634\u064A\u062E\u0629','shaima':'\u0634\u064A\u0645\u0627\u0621',
+    'shaimaa':'\u0634\u064A\u0645\u0627\u0621','shaker':'\u0634\u0627\u0643\u0631','shakir':'\u0634\u0627\u0643\u0631','shareef':'\u0634\u0631\u064A\u0641',
+    'shareefa':'\u0634\u0631\u064A\u0641\u0629','sharif':'\u0634\u0631\u064A\u0641','sharifa':'\u0634\u0631\u064A\u0641\u0629','shatha':'\u0634\u0630\u0649',
+    'shayma':'\u0634\u064A\u0645\u0627\u0621','shaymaa':'\u0634\u064A\u0645\u0627\u0621','sheikha':'\u0634\u064A\u062E\u0629','shekha':'\u0634\u064A\u062E\u0629',
+    'sherif':'\u0634\u0631\u064A\u0641','shorooq':'\u0634\u0631\u0648\u0642','shorouq':'\u0634\u0631\u0648\u0642','shrouq':'\u0634\u0631\u0648\u0642',
+    'shurooq':'\u0634\u0631\u0648\u0642','sofyan':'\u0633\u0641\u064A\u0627\u0646','sohaib':'\u0635\u0647\u064A\u0628','sohail':'\u0633\u0647\u064A\u0644',
+    'solaiman':'\u0633\u0644\u064A\u0645\u0627\u0646','somaya':'\u0633\u0645\u064A\u0629','sondos':'\u0633\u0646\u062F\u0633','sufian':'\u0633\u0641\u064A\u0627\u0646',
+    'sufyan':'\u0633\u0641\u064A\u0627\u0646','suhaib':'\u0635\u0647\u064A\u0628','suhail':'\u0633\u0647\u064A\u0644','sulaiman':'\u0633\u0644\u064A\u0645\u0627\u0646',
+    'sulayman':'\u0633\u0644\u064A\u0645\u0627\u0646','suleiman':'\u0633\u0644\u064A\u0645\u0627\u0646','sultan':'\u0633\u0644\u0637\u0627\u0646','sumaya':'\u0633\u0645\u064A\u0629',
+    'sumayya':'\u0633\u0645\u064A\u0629','sundos':'\u0633\u0646\u062F\u0633','sundus':'\u0633\u0646\u062F\u0633','taha':'\u0637\u0647',
+    'tahani':'\u062A\u0647\u0627\u0646\u064A','taif':'\u0637\u064A\u0641','tala':'\u062A\u0627\u0644\u0627','talah':'\u062A\u0627\u0644\u0627',
+    'talal':'\u0637\u0644\u0627\u0644','tamer':'\u062A\u0627\u0645\u0631','tamir':'\u062A\u0627\u0645\u0631','tarek':'\u0637\u0627\u0631\u0642',
+    'tareq':'\u0637\u0627\u0631\u0642','tarik':'\u0637\u0627\u0631\u0642','tariq':'\u0637\u0627\u0631\u0642','tawfeeq':'\u062A\u0648\u0641\u064A\u0642',
+    'tawfiq':'\u062A\u0648\u0641\u064A\u0642','tayf':'\u0637\u064A\u0641','thamer':'\u062B\u0627\u0645\u0631','thamir':'\u062B\u0627\u0645\u0631',
+    'thuraya':'\u062B\u0631\u064A\u0627','thurayya':'\u062B\u0631\u064A\u0627','toufic':'\u062A\u0648\u0641\u064A\u0642','turki':'\u062A\u0631\u0643\u064A',
+    'turky':'\u062A\u0631\u0643\u064A','ubaid':'\u0639\u0628\u064A\u062F','uday':'\u0639\u062F\u064A','uhood':'\u0639\u0647\u0648\u062F',
+    'umar':'\u0639\u0645\u0631','usama':'\u0623\u0633\u0627\u0645\u0629','uthman':'\u0639\u062B\u0645\u0627\u0646','wadha':'\u0648\u0636\u062D\u0629',
+    'wadhah':'\u0648\u0636\u062D\u0629','wadhha':'\u0648\u0636\u062D\u0629','wael':'\u0648\u0627\u0626\u0644','wafa':'\u0648\u0641\u0627\u0621',
+    'wafaa':'\u0648\u0641\u0627\u0621','waheed':'\u0648\u062D\u064A\u062F','wahid':'\u0648\u062D\u064A\u062F','wail':'\u0648\u0627\u0626\u0644',
+    'waleed':'\u0648\u0644\u064A\u062F','walid':'\u0648\u0644\u064A\u062F','wasim':'\u0648\u0633\u064A\u0645','wassim':'\u0648\u0633\u064A\u0645',
+    'wejdan':'\u0648\u062C\u062F\u0627\u0646','wesam':'\u0648\u0633\u0627\u0645','widad':'\u0648\u062F\u0627\u062F','wijdan':'\u0648\u062C\u062F\u0627\u0646',
+    'wisam':'\u0648\u0633\u0627\u0645','yacoub':'\u064A\u0639\u0642\u0648\u0628','yahia':'\u064A\u062D\u064A\u0649','yahya':'\u064A\u062D\u064A\u0649',
+    'yakoub':'\u064A\u0639\u0642\u0648\u0628','yaqoub':'\u064A\u0639\u0642\u0648\u0628','yaqub':'\u064A\u0639\u0642\u0648\u0628','yaser':'\u064A\u0627\u0633\u0631',
+    'yasir':'\u064A\u0627\u0633\u0631','yasmeen':'\u064A\u0627\u0633\u0645\u064A\u0646','yasmin':'\u064A\u0627\u0633\u0645\u064A\u0646','yasmine':'\u064A\u0627\u0633\u0645\u064A\u0646',
+    'yasser':'\u064A\u0627\u0633\u0631','yazan':'\u064A\u0632\u0646','yazeed':'\u064A\u0632\u064A\u062F','yazid':'\u064A\u0632\u064A\u062F',
+    'yehia':'\u064A\u062D\u064A\u0649','yosef':'\u064A\u0648\u0633\u0641','younes':'\u064A\u0648\u0646\u0633','younis':'\u064A\u0648\u0646\u0633',
+    'yousef':'\u064A\u0648\u0633\u0641','yousif':'\u064A\u0648\u0633\u0641','youssef':'\u064A\u0648\u0633\u0641','yunus':'\u064A\u0648\u0646\u0633',
+    'yusuf':'\u064A\u0648\u0633\u0641','zaher':'\u0632\u0627\u0647\u0631','zahir':'\u0632\u0627\u0647\u0631','zahra':'\u0632\u0647\u0631\u0627\u0621',
+    'zahraa':'\u0632\u0647\u0631\u0627\u0621','zahrah':'\u0632\u0647\u0631\u0627\u0621','zaid':'\u0632\u064A\u062F','zain':'\u0632\u064A\u0646',
+    'zainab':'\u0632\u064A\u0646\u0628','zakaria':'\u0632\u0643\u0631\u064A\u0627','zakariya':'\u0632\u0643\u0631\u064A\u0627','zaki':'\u0632\u0643\u064A',
+    'zaky':'\u0632\u0643\u064A','zayd':'\u0632\u064A\u062F','zayed':'\u0632\u0627\u064A\u062F','zayn':'\u0632\u064A\u0646',
+    'zaynab':'\u0632\u064A\u0646\u0628','zeid':'\u0632\u064A\u062F','zein':'\u0632\u064A\u0646','zeinab':'\u0632\u064A\u0646\u0628',
+    'ziad':'\u0632\u064A\u0627\u062F','ziyad':'\u0632\u064A\u0627\u062F','zohair':'\u0632\u0647\u064A\u0631','zuhair':'\u0632\u0647\u064A\u0631',
+    'zuhayr':'\u0632\u0647\u064A\u0631','zyad':'\u0632\u064A\u0627\u062F'
+  };
+
+  const AR_LETTER_MAP = {
+    '\u0627':'a','\u0623':'a','\u0625':'i','\u0622':'aa','\u0621':"'",
+    '\u0628':'b','\u062A':'t','\u062B':'th','\u062C':'j',
+    '\u062D':'h','\u062E':'kh','\u062F':'d','\u0630':'th',
+    '\u0631':'r','\u0632':'z','\u0633':'s','\u0634':'sh',
+    '\u0635':'s','\u0636':'d','\u0637':'t','\u0638':'z',
+    '\u0639':"'",'\u063A':'gh','\u0641':'f','\u0642':'q',
+    '\u0643':'k','\u0644':'l','\u0645':'m','\u0646':'n',
+    '\u0647':'h','\u0648':'w','\u064A':'y','\u0649':'a',
+    '\u0629':'h','\u0624':"'",'\u0626':"'",' ':' '
+  };
+  function hasArabic(str){ return /[\u0600-\u06FF]/.test(str); }
+  function hasEnglish(str){ return /[A-Za-z]/.test(str); }
+  function translit(str) {
+    let out = '';
+    for (const ch of str) out += (AR_LETTER_MAP[ch] !== undefined ? AR_LETTER_MAP[ch] : ch);
+    out = out.replace(/\s+/g, ' ').trim();
+    return out.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  }
+  function localName(raw, targetLang) {
+    if (!raw || raw.indexOf('{{') === 0) return raw;
+    const t = raw.trim();
+    if (!t) return raw;
+    if (targetLang === 'en') {
+      if (hasArabic(t)) {
+        const key = t.replace(/[\s.\-]+/g, '');
+        return NAME_AR_TO_EN[key] || translit(t);
+      }
+      return t;
+    } else {
+      if (hasEnglish(t)) {
+        const key = t.toLowerCase().replace(/[\s.\-]+/g, '');
+        return NAME_EN_TO_AR[key] || t;
+      }
+      return t;
+    }
+  }
+  function renderName() {
+    document.querySelectorAll('.name').forEach(function(el){
+      if (typeof el.dataset.original === 'undefined') {
+        el.dataset.original = (el.textContent || '').trim();
+      }
+      var raw = el.dataset.original;
+      // Resolution order: URL params > GHL paragraph bridge > textContent
+      if (window.GHL_URL && window.GHL_URL.firstName) raw = window.GHL_URL.firstName;
+      else if (window.GHL_BRIDGE && window.GHL_BRIDGE.firstName) raw = window.GHL_BRIDGE.firstName;
+      var slot = el.closest('.name-slot');
+      var isEmpty = !raw || raw.indexOf('{{') !== -1;
+      if (isEmpty) {
+        el.textContent = '';
+        if (slot) slot.style.display = 'none';
+      } else {
+        el.textContent = localName(raw, lang);
+        if (slot) slot.style.display = '';
+      }
+    });
+  }
+  renderName();
+
+  // ---------- ADD-TO-CALENDAR DROPDOWN (below the video; GHL-powered) ----------
+  (function(){
+    var wrap = document.getElementById('mah-atc');
+    if (!wrap) return;
+    var btn = document.getElementById('mah-atc-btn');
+    var gEl = document.getElementById('mah-atc-google');
+    var aEl = document.getElementById('mah-atc-apple');
+    var oEl = document.getElementById('mah-atc-outlook');
+    var TITLE = 'Mahara Media \u2014 Strategy Demo';
+    var DETAILS = 'Your strategy demo call with Mahara Media.';
+    function ghlCalLink(){
+      var cl = (window.GHL_URL && window.GHL_URL.calLink) || (window.GHL_BRIDGE && window.GHL_BRIDGE.calLink) || '';
+      if (!cl) {
+        var sp = document.getElementById('ghl-cal-link');
+        var t = sp ? (sp.textContent || '').trim() : '';
+        if (t && t.indexOf('{{') === -1) cl = t;
+      }
+      return cl;
+    }
+    function z2(n){ return (n < 10 ? '0' : '') + n; }
+    function utc(x){
+      return x.getUTCFullYear() + z2(x.getUTCMonth()+1) + z2(x.getUTCDate()) + 'T' + z2(x.getUTCHours()) + z2(x.getUTCMinutes()) + z2(x.getUTCSeconds()) + 'Z';
+    }
+    function refresh(){
+      var raw = getApptRaw();
+      var d = raw ? new Date(('' + raw).trim()) : null;
+      var ok = !!(d && !isNaN(d.getTime()));
+      var cl = ghlCalLink();
+      var outer = wrap.closest('.atc-wrap');
+      if (!ok && !cl) { if (outer) outer.style.display = 'none'; return; }
+      if (outer) outer.style.display = '';
+      gEl.setAttribute('href', cl || buildGoogleCalLink(raw));
+      if (ok) {
+        var end = new Date(d.getTime() + 60 * 60000);
+        var ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Mahara Media//EN\r\nBEGIN:VEVENT\r\nUID:' + utc(d) + '@maharamedia.com\r\nDTSTAMP:' + utc(new Date()) + '\r\nDTSTART:' + utc(d) + '\r\nDTEND:' + utc(end) + '\r\nSUMMARY:' + TITLE + '\r\nDESCRIPTION:' + DETAILS + '\r\nEND:VEVENT\r\nEND:VCALENDAR';
+        aEl.setAttribute('href', 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics));
+        aEl.style.display = '';
+        oEl.setAttribute('href', 'https://outlook.live.com/calendar/0/deeplink/compose?path=%2Fcalendar%2Faction%2Fcompose&rru=addevent&subject=' + encodeURIComponent(TITLE) + '&body=' + encodeURIComponent(DETAILS) + '&startdt=' + encodeURIComponent(d.toISOString()) + '&enddt=' + encodeURIComponent(end.toISOString()));
+        oEl.style.display = '';
+      } else {
+        aEl.style.display = 'none';
+        oEl.style.display = 'none';
+      }
+    }
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      if (!wrap.classList.contains('open')) refresh();
+      wrap.classList.toggle('open');
+      btn.setAttribute('aria-expanded', wrap.classList.contains('open') ? 'true' : 'false');
+    });
+    document.addEventListener('click', function(e){ if (!wrap.contains(e.target)) wrap.classList.remove('open'); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') wrap.classList.remove('open'); });
+    refresh();
+    window.addEventListener('message', function(){ setTimeout(refresh, 60); });
+  })();
+
+  // ---------- LANGUAGE TOGGLE ----------
+  const body = document.body;
+  const buttons = document.querySelectorAll('[data-lang-btn]');
+  function setLang(next) {
+    if (next === lang) return;
+    lang = next;
+    body.setAttribute('data-lang', lang);
+    body.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+    document.documentElement.setAttribute('lang', lang);
+    document.documentElement.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+    document.title = lang === 'ar'
+      ? '\u0645\u0647\u0627\u0631\u0629 \u0645\u064A\u062F\u064A\u0627 \u2014 \u0623\u0643\u0651\u062F \u062F\u064A\u0645\u0648 \u0627\u0644\u0645\u0643\u0627\u0644\u0645\u0629'
+      : 'Mahara Media \u2014 Confirm Your Demo Call';
+    buttons.forEach(b => {
+      const on = b.dataset.langBtn === lang;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    renderAppt();
+    renderName();
+    if (typeof updateCountdown === "function") updateCountdown();
+  }
+  buttons.forEach(b => b.addEventListener('click', () => setLang(b.dataset.langBtn)));
+
+  // ---------- POSTMESSAGE BRIDGE (for sandboxed GHL embeds) ----------
+  // If GHL renders this page inside a sandboxed iframe (its "Custom Code"
+  // widget does this), the page CANNOT read the parent URL's query string.
+  // A tiny top-level script on the GHL page (added in the funnel Tracking
+  // Code) posts the params in. We receive them here, populate GHL_URL, and
+  // re-render the name + appointment + countdown + calendar link.
+  window.addEventListener('message', function(ev){
+    var d = ev && ev.data;
+    if (!d) return;
+    var fn = '', at = '', cl = '';
+    // PREFERRED CHANNEL: a structured object whose fields are discrete strings.
+    // Because the values never travel through a URL query string, weird first
+    // names (with & # % spaces, Arabic, apostrophes) can never corrupt them.
+    var obj = (d.MAHARA_DATA && typeof d.MAHARA_DATA === 'object') ? d.MAHARA_DATA : null;
+    if (obj) {
+      fn = ((obj.first_name || obj.firstName || '') + '').trim();
+      at = ((obj.appt_time || obj.apptTime || obj.appointment_time || obj.appointment_start_time || obj.start_time || obj.roasform_start || '') + '').trim();
+      cl = ((obj.cal_link || obj.calLink || obj.add_to_calendar || obj.calendar_link || '') + '').trim();
+      if (fn.indexOf('{{') !== -1) fn = '';
+      if (at.indexOf('{{') !== -1) at = '';
+      if (cl.indexOf('{{') !== -1) cl = '';
+    } else {
+      // FALLBACK CHANNEL: a URL-style query string (?first_name=...&appt_time=...).
+      var qs = (typeof d === 'string') ? d : (d.MAHARA_PARAMS || d.mahara_params || '');
+      if (!qs || qs.indexOf('=') === -1) return;
+      var p;
+      try { p = new URLSearchParams(qs.charAt(0) === '?' ? qs : ('?' + qs)); } catch(e){ return; }
+      fn = (p.get('first_name') || p.get('firstName') || p.get('fname') || '').trim();
+      at = (p.get('appt_time') || p.get('apptTime') || p.get('appointment_time') || p.get('appointment_start_time') || p.get('start_time') || p.get('roasform_start') || '').trim();
+      cl = (p.get('cal_link') || p.get('calLink') || p.get('add_to_calendar') || p.get('calendar_link') || '').trim();
+    }
+    if (!fn && !at && !cl) return;
+    window.GHL_URL = window.GHL_URL || { firstName:'', apptTime:'', calLink:'' };
+    if (fn) window.GHL_URL.firstName = fn;
+    if (at) window.GHL_URL.apptTime = at;
+    if (cl) window.GHL_URL.calLink = cl;
+    renderName();
+    renderAppt();
+    if (typeof updateCountdown === 'function') updateCountdown();
+  });
+  // Ping the top-level page so it sends params even if it loaded before us.
+  try { if (window.parent && window.parent !== window) window.parent.postMessage({ MAHARA_READY: true }, '*'); } catch(e){}
+
+  // ---------- REVEAL OBSERVER ----------
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0, rootMargin: '0px 0px -8% 0px' });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  window.__mahReveal = 1; // signal: main script reached reveal setup OK
+
+  // ---------- FAQ ACCORDIONS ----------
+  document.querySelectorAll('.faq-trigger').forEach(trigger => {
+    trigger.addEventListener('click', () => {
+      const item = trigger.closest('.faq-item');
+      const isOpen = item.classList.contains('open');
+      document.querySelectorAll('.faq-item.open').forEach(o => {
+        o.classList.remove('open');
+        const b = o.querySelector('.faq-body');
+        b.style.maxHeight = '0px';
+      });
+      if (!isOpen) {
+        item.classList.add('open');
+        const body = item.querySelector('.faq-body');
+        body.style.maxHeight = body.scrollHeight + 'px';
+        setTimeout(() => {
+          if (item.classList.contains('open')) body.style.maxHeight = body.scrollHeight + 'px';
+        }, 400);
+      }
+      trigger.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
+    });
+  });
+
+  // ---------- SMOOTH SCROLL FOR ANCHORS ----------
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      const id = a.getAttribute('href');
+      if (id.length > 1) {
+        const el = document.querySelector(id);
+        if (el) {
+          e.preventDefault();
+          const y = el.getBoundingClientRect().top + window.scrollY - 72;
+          window.scrollTo({ top: y, behavior: 'smooth' });
+        }
+      }
+    });
+  });
+
+  // ---------- STICKY BAR SHOW ON SCROLL ----------
+  const stickyBar = document.getElementById('sticky-bar');
+  function updateSticky() {
+    if (window.scrollY > 400) stickyBar.classList.add('visible');
+    else stickyBar.classList.remove('visible');
+  }
+  window.addEventListener('scroll', updateSticky, { passive: true });
+  updateSticky();
+
+  // ---------- CONFETTI ON CONFIRM ----------
+  const confirmBtn = document.getElementById('confirm-btn');
+
+  function fireConfetti() {
+    if (!window.confetti) return;
+    const colors = ['#00CFC8', '#2E5BD6', '#FFD400', '#ffffff'];
+    // burst from center
+    window.confetti({
+      particleCount: 140,
+      spread: 100,
+      startVelocity: 50,
+      origin: { y: 0.6 },
+      colors
+    });
+    // side bursts
+    setTimeout(() => {
+      window.confetti({
+        particleCount: 70, angle: 60, spread: 70, startVelocity: 60,
+        origin: { x: 0, y: 0.7 }, colors
+      });
+      window.confetti({
+        particleCount: 70, angle: 120, spread: 70, startVelocity: 60,
+        origin: { x: 1, y: 0.7 }, colors
+      });
+    }, 220);
+    // gentle rain
+    setTimeout(() => {
+      window.confetti({
+        particleCount: 100, spread: 160, startVelocity: 28,
+        ticks: 260, gravity: 0.55, origin: { y: -0.1 }, colors
+      });
+    }, 620);
+  }
+
+  let confirmed = false;
+  confirmBtn.addEventListener('click', () => {
+    if (confirmed) {
+      // allow re-celebrate
+      fireConfetti();
+      return;
+    }
+    confirmed = true;
+    confirmBtn.classList.add('confirmed');
+    // swap label
+    const label = confirmBtn.querySelector('.confirm-label');
+    label.innerHTML = `
+      <span data-only="ar">\u0645\u0643\u0627\u0644\u0645\u062A\u0643 \u0645\u0624\u0643\u0651\u062F\u0629. \u0634\u0643\u0631\u0627\u064B!</span>
+      <span data-only="en">Call confirmed. Thank you!</span>
+    `;
+    fireConfetti();
+    // hide the sticky reminder once confirmed
+    stickyBar.classList.add('confirmed');
+  });
+
+  // ---------- LIVE COUNTDOWN ----------
+  function updateCountdown() {
+    var raw = null;
+    if (window.GHL_URL && window.GHL_URL.apptTime) raw = window.GHL_URL.apptTime;
+    else if (window.GHL_BRIDGE && window.GHL_BRIDGE.apptTime) raw = window.GHL_BRIDGE.apptTime;
+    if (!raw) {
+      var apptSpan = document.getElementById('ghl-appt-time');
+      raw = apptSpan ? (apptSpan.textContent || '').trim() : '';
+      if (!raw || raw.indexOf('{{') !== -1) raw = null;
+    }
+    document.querySelectorAll('.countdown').forEach(el => {
+      if (!raw) { el.style.display = 'none'; return; }
+      const d = new Date(raw.trim());
+      if (isNaN(d.getTime())) { el.style.display = 'none'; return; }
+      const diff = d - new Date();
+      const text = el.querySelector('.countdown-text');
+      el.classList.remove('urgent', 'live');
+      if (diff < -30 * 60000) {
+        // call was >30min ago, hide
+        el.style.display = 'none';
+        return;
+      }
+      if (diff < 60000) {
+        text.textContent = lang === 'ar' ? '\u0627\u0644\u0645\u0643\u0627\u0644\u0645\u0629 \u0628\u062F\u0623\u062A' : 'Call is live now';
+        el.classList.add('live');
+      } else if (diff < 15 * 60000) {
+        const mins = Math.max(1, Math.floor(diff / 60000));
+        text.textContent = lang === 'ar' ? `\u062A\u0628\u062F\u0623 \u0628\u0639\u062F ${mins} \u062F` : `Starts in ${mins} min`;
+        el.classList.add('urgent');
+      } else if (diff < 60 * 60000) {
+        const mins = Math.floor(diff / 60000);
+        text.textContent = lang === 'ar' ? `\u062A\u0628\u062F\u0623 \u0628\u0639\u062F ${mins} \u062F` : `Starts in ${mins} min`;
+      } else if (diff < 24 * 3600000) {
+        const hours = Math.floor(diff / 3600000);
+        const mins = Math.floor((diff % 3600000) / 60000);
+        text.textContent = lang === 'ar'
+          ? `\u062A\u0628\u062F\u0623 \u0628\u0639\u062F ${hours} \u0633 ${mins} \u062F`
+          : `Starts in ${hours}h ${mins}m`;
+      } else {
+        const days = Math.floor(diff / 86400000);
+        const hours = Math.floor((diff % 86400000) / 3600000);
+        text.textContent = lang === 'ar'
+          ? `\u062A\u0628\u062F\u0623 \u0628\u0639\u062F ${days} \u064A ${hours} \u0633`
+          : `Starts in ${days}d ${hours}h`;
+      }
+      if (lang === 'ar') text.textContent = toArDigits(text.textContent);
+    });
+  }
+  updateCountdown();
+  setInterval(updateCountdown, 30000);
+  // Convert digits inside all static Arabic-only text to Arabic-Indic numerals.
+  function arabizeArText(root){
+    (root || document).querySelectorAll('[data-only="ar"]').forEach(function(el){
+      var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n;
+      while ((n = w.nextNode())) { if (/[0-9]/.test(n.nodeValue)) n.nodeValue = toArDigits(n.nodeValue); }
+    });
+  }
+  arabizeArText(document);
+
+
+  // ---------- CHECKLIST ----------
+  const checkInputs = document.querySelectorAll('.check-input');
+  const statusEl = document.getElementById('checklist-status');
+  let checklistCelebrated = false;
+  function updateChecklist() {
+    if (!checkInputs.length || !statusEl) return;
+    const total = checkInputs.length;
+    const done = Array.from(checkInputs).filter(c => c.checked).length;
+    if (done === total) {
+      statusEl.classList.add('ready');
+      if (!checklistCelebrated) {
+        checklistCelebrated = true;
+        if (window.confetti) {
+          window.confetti({
+            particleCount: 60, spread: 80, startVelocity: 35,
+            origin: { y: 0.7 },
+            colors: ['#00CFC8','#2E5BD6','#FFD400','#ffffff']
+          });
+        }
+      }
+    } else {
+      statusEl.classList.remove('ready');
+      checklistCelebrated = false;
+    }
+    statusEl.querySelectorAll('.check-count').forEach(el => el.textContent = el.closest('[data-only="ar"]') ? toArDigits(`${done}/${total}`) : `${done}/${total}`);
+  }
+  checkInputs.forEach(c => c.addEventListener('change', updateChecklist));
+  updateChecklist();
+
+})();
+</script>
+
+<script>
+  // SAFETY NET: independent of the main script. If the main script ever throws
+  // before it finishes reveal setup (e.g. a strict sandbox blocking something),
+  // the page would otherwise stay blank because .reveal.fade-in starts at
+  // opacity:0. After a short delay, if the main script didn't signal completion,
+  // force-reveal all content so the page is never blank.
+  setTimeout(function(){
+    if (window.__mahReveal) return; // main script ran fine -> keep scroll animations
+    try {
+      document.documentElement.classList.remove('js-reveal');
+      var els = document.querySelectorAll('.reveal');
+      for (var i = 0; i < els.length; i++) els[i].classList.add('in');
+    } catch(e){}
+  }, 1500);
+</script>
+
+
+<!-- ============ OFFER DOC MODAL (opens in-page instead of redirecting) ============ -->
+<div class="doc-modal" id="doc-modal" role="dialog" aria-modal="true" aria-label="Offer Explainer Doc">
+  <div class="doc-modal-bar">
+    <span class="doc-modal-title">Project To Profit Funnel &#183; Offer Doc</span>
+    <button type="button" class="doc-modal-close" id="doc-modal-close" aria-label="Close">&#10005;</button>
+  </div>
+  <iframe id="doc-modal-frame" src="about:blank" title="Offer Explainer Doc" loading="lazy"></iframe>
+</div>
+<script>
+(function(){
+  var DOC='https://funnel.maharamedia.com/explainer-doc';
+  var m=document.getElementById('doc-modal'), f=document.getElementById('doc-modal-frame');
+  var open=document.getElementById('open-offer-doc'), close=document.getElementById('doc-modal-close');
+  function show(){ if(f.getAttribute('src')!==DOC) f.setAttribute('src',DOC);
+    m.classList.add('open'); document.body.classList.add('doc-open'); }
+  function hide(){ m.classList.remove('open'); document.body.classList.remove('doc-open'); }
+  if(open) open.addEventListener('click', function(e){ e.preventDefault(); show(); });
+  if(close) close.addEventListener('click', hide);
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') hide(); });
+})();
+</script>
+<script>
+(function(){
+  var frames = [].slice.call(document.querySelectorAll('iframe[data-src]'));
+  function load(f){ f.src = f.getAttribute('data-src'); f.removeAttribute('data-src'); }
+  if (!('IntersectionObserver' in window)) { frames.forEach(load); return; }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if (en.isIntersecting) { load(en.target); io.unobserve(en.target); }
+    });
+  }, { rootMargin: '600px 0px' });
+  frames.forEach(function(f){ io.observe(f); });
+})();
+</script>
+</body>
+</html>
