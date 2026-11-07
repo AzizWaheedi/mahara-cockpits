@@ -129,6 +129,16 @@ export function treeSql(from7, from30, to) {
     where l.ad_id is not null
       and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
     group by 1),
+  ${alias}_intro_showed as (
+    select ad_id, count(*) as intro_showed_leads from (
+      select distinct on (c.contact_id) c.contact_id, c.ad_id
+      from credited_calls c
+      where c.call_type='intro' and nullif(c.contact_id,'') is not null and c.ad_id is not null
+        and exists (select 1 from public.meta_ad_snapshots s where s.ad_id=c.ad_id and s.date <= ${day(to)})
+        and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+        and c.start_at <= now() and c.status in ('showed','confirmed')
+      order by c.contact_id, c.start_at desc, c.ad_id
+    ) shown group by ad_id),
   ${alias}_calls as (
     -- The dashboard's dating (b2b_window_metrics): a booking counts on the
     -- day it was booked; due, shown, qualified and cancelled count on the
@@ -179,6 +189,7 @@ export function treeSql(from7, from30, to) {
     coalesce(${a}_leads.leads_to_demo,0) as ${a}_leads_to_demo,
     coalesce(${a}_leads.leads_to_progressed_demo,0) as ${a}_leads_to_progressed_demo,
     coalesce(${a}_leads.leads_to_demo_attended,0) as ${a}_leads_to_demo_attended,
+    coalesce(${a}_intro_showed.intro_showed_leads,0) as ${a}_intro_showed_leads,
     coalesce(${a}_calls.intros_booked,0) as ${a}_intros_booked,
     coalesce(${a}_calls.intros_due,0) as ${a}_intros_due,
     coalesce(${a}_calls.intros_shown,0) as ${a}_intros_shown,
@@ -267,10 +278,12 @@ select ident.*, public.b2b_campaign_type(ident.campaign_name) as campaign_type,
 from ident
 left join w7_ads on w7_ads.ad_id = ident.ad_id
 left join w7_leads on w7_leads.ad_id = ident.ad_id
+left join w7_intro_showed on w7_intro_showed.ad_id = ident.ad_id
 left join w7_calls on w7_calls.ad_id = ident.ad_id
 left join w7_deals on w7_deals.ad_id = ident.ad_id
 left join w30_ads on w30_ads.ad_id = ident.ad_id
 left join w30_leads on w30_leads.ad_id = ident.ad_id
+left join w30_intro_showed on w30_intro_showed.ad_id = ident.ad_id
 left join w30_calls on w30_calls.ad_id = ident.ad_id
 left join w30_deals on w30_deals.ad_id = ident.ad_id
 left join setters on setters.ad_id = ident.ad_id
@@ -294,6 +307,7 @@ const COUNTS = [
     "leadsToDemo",
     "leadsToProgressedDemo",
     "leadsToDemoAttended",
+    "introShowedLeads",
     "introsBooked",
     "introsDue",
     "introsShown",
@@ -320,6 +334,7 @@ const COLUMN = {
     leadsToDemo: "leads_to_demo",
     leadsToProgressedDemo: "leads_to_progressed_demo",
     leadsToDemoAttended: "leads_to_demo_attended",
+    introShowedLeads: "intro_showed_leads",
     introsBooked: "intros_booked",
     introsDue: "intros_due",
     introsShown: "intros_shown",
