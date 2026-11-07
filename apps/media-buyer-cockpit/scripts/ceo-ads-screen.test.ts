@@ -31,6 +31,9 @@ import {
   FIT_HINT,
   INTROS_HINT,
   introFigures,
+  introShowedFigures,
+  INTRO_SHOWED_HINT,
+  DEMO_SHOW_RATE_HINT,
   LEAD_TO_INTRO_HINT,
   LEADS_HINT,
   NA_REFRESH,
@@ -169,8 +172,9 @@ describe("the funnel's hints", () => {
     expect(src).toContain("hint: LEAD_TO_INTRO_HINT,");
     expect(src).toContain("hint: INTROS_HINT,");
     expect(src).toContain("hint: CONFIRMED_INTROS_HINT,");
-    expect(src).toContain('label: "Confirmed intros",');
-    expect(src).toContain('label="Cost per confirmed intro"');
+    expect(src).toContain('label: "Intros showed",');
+    expect(src).toContain('label="Cost per intro showed"');
+    expect(src).toContain('label="Demo show rate"');
   });
 
   test("the setter and closer lines say their own days and rule on the screen, not only in a hover title", () => {
@@ -239,8 +243,6 @@ describe("the funnel's hints", () => {
     const src = read("src/pages/ceo/AdsTab.tsx");
     for (const gone of [
       "demosBooked",
-      "demosShown",
-      "demoShowRate",
       "costPerDemo",
       "closeRate",
       '"Demos shown"',
@@ -248,8 +250,6 @@ describe("the funnel's hints", () => {
       '"Close rate"',
       "Intros booked",
       "introsBooked",
-      "introsShown",
-      "costPerIntroShown",
     ])
       expect(src).not.toContain(gone);
     expect(src).toContain('label: "Demos booked"');
@@ -280,6 +280,14 @@ describe("the funnel's hints", () => {
     expect(src).toContain('"intros to confirmed intros": "confirmed",');
     expect(src).toContain('"leads to intros": "intros",');
     expect(TONE["intros do not confirm"]).toBe("serious");
+  });
+
+  test("showed intros and demo rate remain unknown until the new data arrives", () => {
+    expect(introShowedFigures({ spend: 100, demoShowRate: 0.5 } as B2bAdWindow)).toMatchObject({ shown: null, cost: null, demoRate: null, na: NA_REFRESH });
+    expect(introShowedFigures({ spend: 150, introShowedLeads: 3, demoShowRate: 0.5 } as B2bAdWindow)).toMatchObject({ shown: 3, cost: 50, demoRate: 0.5 });
+    expect(introShowedFigures({ spend: 100, introShowedLeads: 0, demoShowRate: null } as B2bAdWindow)).toMatchObject({ shown: 0, cost: null, demoRate: null });
+    expect(INTRO_SHOWED_HINT).toContain("Each person is counted once");
+    expect(DEMO_SHOW_RATE_HINT).toContain("including no-shows and cancellations");
   });
 
   test("a payload stored before 2026-10-18 shows the intro figures as n/a until the refresh, never 0", () => {
